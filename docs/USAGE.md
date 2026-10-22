@@ -33,10 +33,19 @@ $env:WORKBENCH_DATA_DIR='C:\Restored\WorkbenchData'
 ## 排错
 
 - 端口占用：先关闭另一份工作台或开发后台。不会为了启动而杀掉无关进程。
-- 外部数据未连接：在连接说明中核对 URL、版本与凭据配置；本地项目、执行单仍可使用。
+- 外部数据未连接：Token Monitor 默认 local 模式没有 HTTP 服务。推荐双击根目录“连接Token Monitor.cmd”；已有服务方案需开启 Host 并重启。详见 [连接说明](INTEGRATIONS.md)。
 - 额度停止更新：查看来源时间；离线缓存会保留，可按需手动核对。
 - 无法打开成果目录：文件可能已移动，使用“打开归档文件夹”查看已保存副本。
 - 页面太小：Ctrl 与加号/减号缩放，Ctrl+0 恢复自动大小。
 - 启动报错：查看本机 data/desktop-server.log 与 data/desktop-lifecycle.jsonl。分享日志前移除私人信息。
 
 配置示例在 config/example.json。复制为 config/local.json 后按需填写端口、时区和集成；authorizedRoots 留空表示需要在页面显式登记项目，不要填整盘根目录。
+
+## 从 v0.1.0 升级到 v0.1.1
+
+1. 在设置里创建私人备份，并退出工作台。若单独启动过工作台的数据服务，先运行旧版 scripts/停止数据服务.ps1。
+2. 下载并核对 v0.1.1 便携包的 SHA256，解压到一个临时文件夹。
+3. 将新包里的程序文件复制到原工作台目录，覆盖同名程序文件，保留原路径。新包不包含 data、config/local.json 或 .agent-workbench；保留这三处原有内容。
+4. 从原目录打开工作台，检查项目、任务和额度。原已接通的 Token Monitor 配置可继续使用，无需再次运行连接工具。
+
+升级包不带破坏性数据库迁移。不要用空文件夹替换整个 data，也不要将旧 data 上传到问题反馈中。需要回退时关闭工作台，用 v0.1.0 程序文件配合升级前备份恢复。

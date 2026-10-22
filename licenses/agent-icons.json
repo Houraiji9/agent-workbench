@@ -10,8 +10,11 @@
     },
     {
       "name": "zcode",
-      "source": "Project-generated text identifier, not an official logo",
-      "license": "MIT"
+      "ext": "png",
+      "url": "https://zcode.z.ai/favicon-192x192.png?v=20260707-transparent",
+      "license": "Brand asset; rights retained by Z.ai",
+      "source": "Official Zcode website favicon",
+      "sha256": "089bdfa74910eaed241eac46bf5d02bb5718f15d8d6b247a1ee61b3372c9c82c"
     },
     {
       "name": "grok",
@@ -21,8 +24,11 @@
     },
     {
       "name": "grok-bot",
-      "source": "Project-generated text identifier, not an official logo",
-      "license": "MIT"
+      "ext": "svg",
+      "url": "https://asvg.app/assets/svg/grok-bot/grok-bot-logomark-mono.svg",
+      "license": "Brand asset; rights retained by xAI",
+      "source": "ASVG Grok Bot brand mark catalog; https://asvg.app/icons/grok-bot",
+      "sha256": "c6fd58c4c484ade5795a48f584f0138e6d863849a66a7ed58f84ff64a307f415"
     },
     {
       "name": "antigravity",
@@ -62,8 +68,11 @@
     },
     {
       "name": "bolt",
-      "source": "Project-generated text identifier, not an official logo",
-      "license": "MIT"
+      "ext": "png",
+      "url": "https://bolt.new/static/favicon-192x192.png",
+      "license": "Brand asset; rights retained by StackBlitz",
+      "source": "Official Bolt website favicon",
+      "sha256": "37370b90aa0fff27b6ed17e2aa3149aadc54138bef841ee294eca5bdb1f06bb3"
     },
     {
       "name": "chatgpt",
@@ -109,8 +118,11 @@
     },
     {
       "name": "glm",
-      "source": "Project-generated text identifier, not an official logo",
-      "license": "MIT"
+      "ext": "svg",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/zhipu-color.svg",
+      "license": "MIT",
+      "source": "Lobe Icons Zhipu brand artwork",
+      "sha256": "8174e65ff71647d5c705c920c953a82bd723d9e3e42887bdd4ffc9dfe51207a0"
     },
     {
       "name": "junie",
@@ -126,8 +138,11 @@
     },
     {
       "name": "lingma",
-      "source": "Project-generated text identifier, not an official logo",
-      "license": "MIT"
+      "ext": "png",
+      "url": "https://img.alicdn.com/imgextra/i1/O1CN01BN6Jtc1lCfJNviV7H_!!6000000004783-2-tps-134-133.png",
+      "license": "Brand asset; rights retained by Alibaba",
+      "source": "Official Lingma website CDN",
+      "sha256": "9837f4084455ee8aa93c5d3adf290931d63e481339478ae673709394cefd1b07"
     },
     {
       "name": "lovable",

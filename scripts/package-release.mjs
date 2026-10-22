@@ -6,7 +6,7 @@ if(process.platform!=='win32'||process.arch!=='x64')throw Error('Windows x64 bui
 if(fs.existsSync(stage))throw Error('Release staging already exists. Inspect and remove it before rebuilding.');
 if(!fs.existsSync(path.join(root,'桌面版/工作台/工作台.exe')))throw Error('Run npm run desktop:build first');
 fs.mkdirSync(stage,{recursive:true});
-const entries=['src','dist','desktop','migrations','vendor','licenses','docs','scripts','config/example.json','package.json','package-lock.json','README.md','LICENSE','THIRD_PARTY_NOTICES.md','SECURITY.md','AGENTS.md','启动工作台.ps1','停止工作台.ps1','关闭桌面工作台.ps1','桌面版'];
+const entries=['src','dist','desktop','migrations','vendor','licenses','docs','scripts','config/example.json','package.json','package-lock.json','README.md','LICENSE','THIRD_PARTY_NOTICES.md','SECURITY.md','AGENTS.md','启动工作台.ps1','停止工作台.ps1','关闭桌面工作台.ps1','桌面版','连接Token Monitor.cmd'];
 function copy(from,to){const st=fs.lstatSync(from);if(st.isSymbolicLink())throw Error('No links allowed: '+from);if(st.isDirectory()){fs.mkdirSync(to,{recursive:true});for(const name of fs.readdirSync(from))copy(path.join(from,name),path.join(to,name));}else{fs.mkdirSync(path.dirname(to),{recursive:true});fs.copyFileSync(from,to);}}
 for(const item of entries)copy(path.join(root,item),path.join(stage,item));
 const npm=path.join(path.dirname(process.execPath),'node_modules/npm/bin/npm-cli.js');

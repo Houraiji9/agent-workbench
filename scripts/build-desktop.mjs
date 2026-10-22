@@ -10,10 +10,10 @@ if(!fs.existsSync(path.join(electron,'electron.exe')))throw new Error('请先运
 fs.mkdirSync(out,{recursive:true});
 fs.cpSync(electron,out,{recursive:true});
 fs.renameSync(path.join(out,'electron.exe'),path.join(out,'工作台.exe'));
-await rcedit(path.join(out,'工作台.exe'),{icon:path.join(root,'desktop/icon.ico'),'version-string':{ProductName:'Agent 工作台',FileDescription:'Agent 工作台',OriginalFilename:'工作台.exe',CompanyName:'本地工作空间'},'file-version':'0.1.0','product-version':'0.1.0'});
+await rcedit(path.join(out,'工作台.exe'),{icon:path.join(root,'desktop/icon.ico'),'version-string':{ProductName:'Agent 工作台',FileDescription:'Agent 工作台',OriginalFilename:'工作台.exe',CompanyName:'本地工作空间'},'file-version':'0.1.1','product-version':'0.1.1'});
 const app=path.join(out,'resources/app');fs.mkdirSync(app,{recursive:true});
 for(const file of ['main.cjs','lifecycle.cjs','external-links.cjs','preload.cjs','loading.html','icon.png'])fs.copyFileSync(path.join(root,'desktop',file),path.join(app,file));
-fs.writeFileSync(path.join(app,'package.json'),JSON.stringify({name:'agent-workbench-desktop',productName:'工作台',version:'0.1.0',main:'main.cjs'}));
+fs.writeFileSync(path.join(app,'package.json'),JSON.stringify({name:'agent-workbench-desktop',productName:'工作台',version:'0.1.1',main:'main.cjs'}));
 fs.mkdirSync(path.join(out,'resources/runtime'),{recursive:true});
 const runtime=path.join(out,'resources/runtime/node.exe');
 const digest=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
