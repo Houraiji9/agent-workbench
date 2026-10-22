@@ -1,0 +1,1 @@
+-- Reserved migration version for compatibility. No personal roster mutations.

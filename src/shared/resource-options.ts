@@ -1,0 +1,3 @@
+export const workKinds = [['engineering','开发'],['frontend_light','前端设计'],['review','审查'],['research','研究与写作'],['operations','办公与自动化']] as const;
+export const quotaMetrics = [['percent','剩余百分比'],['points','积分'],['currency','账户余额'],['count','剩余次数']] as const;
+export const agentIconKeys = ['auto','codex','claude','antigravity','gemini','deepseek','kimi','workbuddy','zcode','grok-build','grok-bot','grok-search','bolt','chatgpt','cline','codebuddy','coze','cursor','devin','doubao','github-copilot','glm','junie','kiro','lingma','lovable','manus','minimax','openclaw','opencode','perplexity','qoder','qwen','qwen-code','replit','trae','trae-cn','v0','windsurf','yuanbao'] as const;

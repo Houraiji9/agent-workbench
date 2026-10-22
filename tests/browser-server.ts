@@ -1,0 +1,5 @@
+import {seedTestData} from './fixtures.ts';
+import fs from 'node:fs';import path from 'node:path';import {ROOT} from '../src/core/config.ts';import {createApp} from '../src/server/app.ts';
+const root=path.join(ROOT,'.test-tmp','browser-'+Date.now(),'app'),dataDir=path.join(root,'data');
+fs.mkdirSync(dataDir,{recursive:true});fs.cpSync(path.join(ROOT,'dist'),path.join(root,'dist'),{recursive:true});
+const {app,wb}=await createApp({root,dataDir,authorizedRoots:[root],port:14318,timezone:'America/Los_Angeles',integrations:{tokenMonitor:{baseUrl:''},agentsView:{baseUrl:''}}},{background:false});seedTestData(wb);await app.listen({host:'127.0.0.1',port:14318});

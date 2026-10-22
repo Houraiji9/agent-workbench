@@ -1,0 +1,116 @@
+import { test, expect } from '@playwright/test';
+import fs from 'node:fs';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { api, makeTask, shot, drawer } from './support.ts';
+
+test('项目资料可编辑并在刷新后保留；打开的旧表单不会覆盖别处的新修改', async ({ page }) => {
+  const m = await makeTask(page, { title: '资料编辑测试' });
+  await page.goto('/#/projects/' + m.project.id);
+  await page.getByRole('button', { name: '编辑资料' }).click();
+  const d = page.getByRole('dialog', { name: '编辑项目资料' });
+  await d.getByLabel('现在处在什么阶段').fill('测试阶段：设计');
+  await d.getByLabel('下一步打算').fill('测试下一步：开始实现');
+  await d.getByRole('button', { name: '保存' }).click();
+  await page.reload();
+  await expect(page.getByText('测试阶段：设计')).toBeVisible();
+  await expect(page.getByText('测试下一步：开始实现')).toBeVisible();
+  await page.getByRole('button', { name: '编辑资料' }).click();
+  const p = (await m.get('/state')).projects.find((x: any) => x.id === m.project.id);
+  await m.post('/projects/' + m.project.id + '/edit', { version: p.version, changes: { name: p.name, goal: '别处写的新目标', stage: p.stage, next_step: p.next_step } });
+  await page.getByRole('dialog', { name: '编辑项目资料' }).getByLabel('项目目标').fill('旧表单的目标');
+  await page.getByRole('dialog', { name: '编辑项目资料' }).getByRole('button', { name: '保存' }).click();
+  await expect(page.getByRole('dialog', { name: '编辑项目资料' }).getByRole('alert')).toContainText('版本冲突');
+  expect((await m.get('/state')).projects.find((x: any) => x.id === m.project.id).goal).toBe('别处写的新目标');
+});
+
+test('从会话发现的文件夹登记项目：不在授权范围时先授权，再登记，会话自动归入', async ({ page }) => {
+  const { root } = await api(page);
+  const outside = path.join(path.dirname(root), '发现的文件夹-' + randomUUID().slice(0, 6));
+  fs.mkdirSync(outside, { recursive: true });
+  const fake = { id: 'S-found', native_id: 'codex:found', agent: 'codex', title: '测试会话：在新文件夹里工作', source_cwd: outside, source_project: '发现的项目', updated_at: new Date().toISOString(), association: 'pending_confirmation', sources: [{ source: 'fixture', source_id: 'found' }], project_id: null };
+  const patch = async (route: any) => { const r = await route.fetch(); const j = await r.json(); j.sessions = [...j.sessions, fake]; await route.fulfill({ response: r, json: j }); };
+  await page.route('**/api/bootstrap', patch);
+  await page.route('**/api/state', patch);
+  await page.goto('/#/projects');
+  const sug = page.locator('.suggest').filter({ hasText: '发现的项目' });
+  await expect(sug).toContainText(outside);
+  await sug.getByRole('button', { name: '登记为项目' }).click();
+  const d = page.getByRole('dialog', { name: '登记为项目' });
+  await expect(d.getByLabel('项目名称')).toHaveValue('发现的项目');
+  await expect(d.getByLabel('文件夹的完整路径')).toHaveValue(outside);
+  await d.getByRole('button', { name: '登记项目' }).click();
+  await expect(d.getByRole('alert')).toContainText('还不在工作台的授权范围里');
+  await shot(page, '新版-登记项目需要授权');
+  await d.getByRole('button', { name: '授权这个文件夹并登记' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: '发现的项目' })).toBeVisible();
+  const state = await (await page.request.get('/api/state')).json();
+  expect(state.authorized_roots).toContain(fs.realpathSync.native(outside));
+  await page.goto('/#/settings');
+  await expect(page.getByText(fs.realpathSync.native(outside))).toBeVisible();
+});
+
+test('项目页签：成果集中可查、经验可记录（必须有来源）、文件夹可复制并导出上下文', async ({ page }) => {
+  const m = await makeTask(page, { title: '项目页签测试', stage: 'submitted' });
+  await page.goto('/#/projects/' + m.project.id + '?tab=files');
+  await expect(page.getByRole('button', { name: /RESULT\.md/ })).toBeVisible();
+  await page.getByRole('button', { name: /RESULT\.md/ }).click();
+  await expect(page.getByRole('dialog', { name: 'RESULT.md' })).toContainText('测试结果报告');
+  await page.keyboard.press('Escape');
+  await page.getByRole('tab', { name: /经验/ }).click();
+  await page.getByRole('button', { name: '记一条' }).click();
+  const d = page.getByRole('dialog', { name: '记下一条项目经验' });
+  await d.getByText('走过的弯路').click();
+  await d.getByLabel('内容').fill('测试经验：直接改生产库不行');
+  await expect(d.getByLabel('来自哪里')).toHaveValue(m.tid);
+  await d.getByRole('button', { name: '记下' }).click();
+  await expect(d).toHaveCount(0);
+  await expect(page.locator('.memory').getByText('测试经验：直接改生产库不行')).toBeVisible();
+  await expect(page.locator('.memory').filter({ hasText: '测试经验' })).toContainText('候选');
+  await page.getByRole('tab', { name: '文件夹与资料' }).click();
+  await expect(page.getByText(m.root)).toBeVisible();
+  const download = page.waitForEvent('download');
+  await page.getByRole('link', { name: '导出项目上下文' }).click();
+  const file = await download;
+  const head = await page.request.get('/api/projects/' + m.project.id + '/context?download=1');
+  expect(decodeURIComponent(head.headers()['content-disposition'])).toContain('项目上下文.json');
+  const context = JSON.parse(fs.readFileSync(await file.path(), 'utf8'));
+  expect(context.project.id).toBe(m.project.id);
+  expect(context.warning).toContain('不可信');
+});
+
+test('HTML 成果在完全隔离的框里预览；Markdown 中的 HTML 只当文字显示', async ({ page }) => {
+  const m = await makeTask(page, { title: '隔离预览测试', stage: 'running' });
+  fs.writeFileSync(path.join(m.root, 'page.html'), '<!doctype html><h1>预览</h1><script>parent.document.title="被注入"</script>');
+  fs.writeFileSync(path.join(m.root, 'note.md'), '# 标题\n\n<img src=x onerror="document.title=\'被注入\'"> 普通文字');
+  await m.report('submitted', { artifacts: [{ path: path.join(m.root, 'page.html'), label: 'page.html' }, { path: path.join(m.root, 'note.md'), label: 'note.md' }] });
+  await page.goto('/#/today?task=' + m.tid);
+  const d = drawer(page);
+  await d.getByRole('button', { name: /page\.html/ }).click();
+  await expect(page.locator('iframe[title="page.html"]')).toHaveAttribute('sandbox', '');
+  await page.keyboard.press('Escape');
+  await d.getByRole('button', { name: /note\.md/ }).click();
+  await expect(page.getByRole('dialog', { name: 'note.md' }).getByText('<img src=x', { exact: false })).toBeVisible();
+  await page.waitForTimeout(300);
+  expect(await page.title()).not.toBe('被注入');
+});
+
+test('项目图解：固定入口可达，由 Archify 生成后隔离预览，刷新后仍能找回', async ({ page }) => {
+  test.skip(!process.env.ARCHIFY_CHROME && process.platform !== 'win32', 'Archify 生成需要本机浏览器');
+  const m = await makeTask(page, { title: '图解测试', stage: 'ready' });
+  await page.goto('/');
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  await page.keyboard.press('Control+k');
+  await page.keyboard.type('图解测试 · 图解');
+  await page.getByRole('option', { name: new RegExp('测试项目 图解测试 · 图解') }).click();
+  await expect(page.getByRole('tab', { name: /图解/ })).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('button', { name: '生成项目总览' }).click();
+  const viewer = page.getByRole('dialog', { name: /项目总览/ });
+  await expect(viewer).toBeVisible({ timeout: 60000 });
+  await expect(viewer.locator('iframe')).toHaveAttribute('sandbox', 'allow-scripts');
+  await shot(page, '新版-项目图解');
+  await page.keyboard.press('Escape');
+  await page.reload();
+  await expect(page.locator('.diagram-card').filter({ hasText: '项目总览' })).toBeVisible();
+  void m;
+});

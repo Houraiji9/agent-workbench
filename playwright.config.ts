@@ -1,0 +1,3 @@
+import {defineConfig} from '@playwright/test';
+// 新界面浏览器测试。默认使用本机 Chrome；在没有 Chrome 的环境里设 PW_CHROMIUM=1 使用 Playwright 自带 Chromium。
+export default defineConfig({testDir:'tests/browser',workers:1,timeout:45000,expect:{timeout:8000},use:{baseURL:'http://127.0.0.1:14318',...(process.env.PW_CHROMIUM?{}:{channel:'chrome'}),headless:true,permissions:['clipboard-read','clipboard-write'],viewport:{width:1440,height:1000},trace:'retain-on-failure'},reporter:[['list']],webServer:{command:'node --import tsx tests/browser-server.ts',url:'http://127.0.0.1:14318/api/health',reuseExistingServer:false,timeout:30000}});

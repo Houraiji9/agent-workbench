@@ -1,0 +1,25 @@
+import {test,expect} from '@playwright/test';import {api,shot,noHorizontalScroll} from './support.ts';
+
+test('独立积分卡，WorkBuddy 填写修改清空和冲突提示，明暗窄屏可用',async({page})=>{
+ const {get,post}=await api(page);await page.goto('/#/resources');
+ const card=page.getByRole('article',{name:'WorkBuddy 额度',exact:true});
+ await expect(card.getByRole('button',{name:'填写积分'})).toBeVisible();await expect(card.getByText('待填写').first()).toBeVisible();await expect(card.getByRole('progressbar')).toHaveCount(0);
+ await card.getByRole('button',{name:'填写积分'}).click();let d=page.getByRole('dialog',{name:'WorkBuddy 积分'});await expect(d.getByRole('spinbutton',{name:'总剩余积分'})).toHaveValue('');
+ await d.getByRole('spinbutton').fill('0');await d.getByRole('button',{name:'保存',exact:true}).click();await expect(d).toHaveCount(0);await page.reload();await expect(card).toContainText('0 积分');await expect(card).toContainText('手动记录');
+ await card.getByRole('button',{name:'修改积分'}).click();d=page.getByRole('dialog',{name:'WorkBuddy 积分'});await d.getByRole('spinbutton').fill('1800.125');await d.getByRole('button',{name:'保存',exact:true}).click();await expect(d).toHaveCount(0);await page.reload();await expect(card).toContainText('1,800.125 积分');
+ await shot(page,'WorkBuddy-已填写');await card.getByRole('button',{name:'修改积分'}).click();d=page.getByRole('dialog',{name:'WorkBuddy 积分'});const p=(await get('/state')).quota_pools.find((p:any)=>p.points_editable);await post('/manual-points/workbuddy',{version:p.points_version,remaining:900});await d.getByRole('button',{name:'保存',exact:true}).click();await expect(d.getByRole('alert')).toContainText('积分已更新');await d.getByRole('button',{name:'取消'}).click();await page.reload();await expect(card).toContainText('900 积分');
+ await page.getByRole('button',{name:'切换到深色外观'}).click();for(const width of [1440,900,390]){await page.setViewportSize({width,height:1000});expect(await noHorizontalScroll(page)).toBe(true)}await shot(page,'WorkBuddy-窄屏深色');
+ await card.getByRole('button',{name:'修改积分'}).click();d=page.getByRole('dialog',{name:'WorkBuddy 积分'});await d.getByRole('button',{name:'清空记录'}).click();await expect(d).toHaveCount(0);await page.reload();await expect(card.getByRole('button',{name:'填写积分'})).toBeVisible();
+});
+
+test('DeepSeek 的金额和 WorkBuddy 的积分在独立卡片各自显示，手填积分不会显示为实时采集',async({page})=>{
+ const stamp=new Date().toISOString();const patch=async(route:any)=>{const response=await route.fetch(),s=await response.json();s.integrations=s.integrations.map((i:any)=>i.id==='tokenMonitor'?{...i,status:'connected',last_success:stamp}:i);s.quota_pools=[{id:'deepseek',name:'DeepSeek',provider:'deepseek',source:'token_monitor',status:'ok',balance:{amount:160.25,currency:'CNY'},source_updated_at:stamp,freshness:'stale'},{id:'MANUAL-workbuddy-points',provider:'workbuddy',name:'WorkBuddy',source:'user_entered',status:'ok',points_editable:true,points_amount:888,points_version:1,display_state:'manual',freshness:'fresh',source_updated_at:stamp}];s.quota_windows=[{id:'points',pool_id:'MANUAL-workbuddy-points',metric:'points',remaining:888,unit:'积分'}];await route.fulfill({response,json:s})};
+ await page.route('**/api/bootstrap',patch);await page.route('**/api/state',patch);await page.goto('/#/resources');const group=page.locator('.quota-grid').first();await expect(group.getByRole('article')).toHaveCount(2);await expect(group).toContainText('160.25 CNY');await expect(group).toContainText('888 积分');await expect(group.getByRole('article',{name:'DeepSeek 额度'})).toContainText('上次记录');await expect(group.getByRole('article',{name:'WorkBuddy 额度'})).toContainText('手动记录');await expect(page.locator('.source-line')).toContainText('等待 Token Monitor 刷新');
+});
+
+test('只有 DeepSeek 保持新鲜时，其他工具旧额度仍留在折叠区',async({page})=>{
+ const stamp=new Date().toISOString(),old=new Date(Date.now()-3600000).toISOString();
+ const patch=async(route:any)=>{const response=await route.fetch(),s=await response.json();s.integrations=s.integrations.map((i:any)=>i.id==='tokenMonitor'?{...i,status:'connected',last_success:stamp}:i);s.quota_pools=[{id:'d',provider:'deepseek',name:'DeepSeek',source:'token_monitor',status:'ok',freshness:'fresh',source_updated_at:stamp,balance:{amount:100,currency:'CNY'}},{id:'c',provider:'codex',name:'Codex',source:'token_monitor',status:'ok',freshness:'stale',source_updated_at:old},{id:'m',provider:'workbuddy',name:'WorkBuddy',source:'user_entered',status:'ok',freshness:'fresh',points_editable:true,display_state:'manual',points_amount:888}];s.quota_windows=[{id:'w',pool_id:'c',remaining_percent:23,kind:'weekly',source:'token_monitor',source_updated_at:old}];await route.fulfill({response,json:s})};
+ await page.route('**/api/bootstrap',patch);await page.route('**/api/state',patch);await page.goto('/#/resources');
+ await expect(page.getByRole('article',{name:'DeepSeek 额度'})).toBeVisible();await expect(page.getByRole('article',{name:'Codex 额度',includeHidden:true})).toBeHidden();await page.getByText('较早的记录（1）',{exact:true}).click();await expect(page.getByRole('article',{name:'Codex 额度'})).toBeVisible();await expect(page.getByRole('article',{name:'DeepSeek 额度'})).toHaveCount(1);
+});

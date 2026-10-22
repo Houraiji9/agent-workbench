@@ -1,0 +1,223 @@
+{
+  "upstream": "https://github.com/lobehub/lobe-icons",
+  "commit": "ab8cbcc6ce806b923c547628132957c8a8b61509",
+  "files": [
+    {
+      "name": "codex",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/codex-color.svg",
+      "license": "MIT",
+      "sha256": "4a2f43ce46b5b6e3722c95088f88d26ef91e6a8c2e598e70642a1c54367386e4"
+    },
+    {
+      "name": "zcode",
+      "source": "Project-generated text identifier, not an official logo",
+      "license": "MIT"
+    },
+    {
+      "name": "grok",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/grok.svg",
+      "license": "MIT",
+      "sha256": "9175fc90c22655160231976c849f25a03b888d7cc0e04c5f1b987b659bb07c95"
+    },
+    {
+      "name": "grok-bot",
+      "source": "Project-generated text identifier, not an official logo",
+      "license": "MIT"
+    },
+    {
+      "name": "antigravity",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/antigravity-color.svg",
+      "license": "MIT",
+      "sha256": "652128cf55a28bb958563ee372d0bd00208d9e6fd446f523f77aafd811eef8ca"
+    },
+    {
+      "name": "deepseek",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/deepseek-color.svg",
+      "license": "MIT",
+      "sha256": "deba5f98a5c1796e20fcac3149bcd7eb8a32f0bdd04d048819400b1f28bd1439"
+    },
+    {
+      "name": "gemini",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/gemini-color.svg",
+      "license": "MIT",
+      "sha256": "8ab0a9bafec11f7e69bcb9fc4ffd8f1bc927d1ddcbbb6ff36dee5ae8b5a9d602"
+    },
+    {
+      "name": "kimi",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/kimi-color.svg",
+      "license": "MIT",
+      "sha256": "0bdb95375d7c6e90a1850e91cd36770da2bc98fa33ec2d783f4a8fed027da85f"
+    },
+    {
+      "name": "workbuddy",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/workbuddy-color.svg",
+      "license": "MIT",
+      "sha256": "dd8aa855627024a5217836cdaebecb8adf220e84cb6b50fec2dbac115abb326c"
+    },
+    {
+      "name": "claude",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/claude-color.svg",
+      "license": "MIT",
+      "sha256": "a3101f3047a119aa11825ad9369510f0c472428c8c52d420e31bc62db44a8364"
+    },
+    {
+      "name": "bolt",
+      "source": "Project-generated text identifier, not an official logo",
+      "license": "MIT"
+    },
+    {
+      "name": "chatgpt",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/openai.svg",
+      "license": "MIT",
+      "sha256": "a595df6b423920c67a7f8f73c063e4bfb72d415948097b6cac063a2366bb5186"
+    },
+    {
+      "name": "cline",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/cline.svg",
+      "license": "MIT",
+      "sha256": "9003d2cdce82b016147b732abb4def60af55c348ba2cea2ba0b69a3c7d159b19"
+    },
+    {
+      "name": "codebuddy",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/codebuddy-color.svg",
+      "license": "MIT",
+      "sha256": "033d5da624460e686046f22b4e242b6b86484ad84ec4877e4efa15a9fb642b97"
+    },
+    {
+      "name": "coze",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/coze.svg",
+      "license": "MIT",
+      "sha256": "bd0dce025396aecf8091ada8de90a0fbf5f0fa923f5ede9f3320e9bf990bc868"
+    },
+    {
+      "name": "cursor",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/cursor.svg",
+      "license": "MIT",
+      "sha256": "0cb51bddf264ae108926fd554c063ef40fc1aac3c5c921ddb39ad184e4e5d0ef"
+    },
+    {
+      "name": "devin",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/devin-color.svg",
+      "license": "MIT",
+      "sha256": "beb58575f94fda57a6c1f9ed5624e6407bff405f55b6258b53032b674aadd8c8"
+    },
+    {
+      "name": "doubao",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/doubao-color.svg",
+      "license": "MIT",
+      "sha256": "3cd31ba03ae44b8c29561597a3b863809efecb13fcdfd08407a086df86a69b55"
+    },
+    {
+      "name": "glm",
+      "source": "Project-generated text identifier, not an official logo",
+      "license": "MIT"
+    },
+    {
+      "name": "junie",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/junie-color.svg",
+      "license": "MIT",
+      "sha256": "cec54c8be10ba733af250feb2bd78523d2aa2bab6b3599f0717faf1a740bb031"
+    },
+    {
+      "name": "kiro",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/kiro-color.svg",
+      "license": "MIT",
+      "sha256": "4eae4d6e818da7342c32c7d443ab7c97b93c544db9af379d5b5bf7f0a3127d66"
+    },
+    {
+      "name": "lingma",
+      "source": "Project-generated text identifier, not an official logo",
+      "license": "MIT"
+    },
+    {
+      "name": "lovable",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/lovable-color.svg",
+      "license": "MIT",
+      "sha256": "ab3b36b92ef69561b00f963eb3edaef9afdd598d67424991d74157419cd1d44e"
+    },
+    {
+      "name": "manus",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/manus.svg",
+      "license": "MIT",
+      "sha256": "8f70464df09b5b9e1643dcb7c0f2c6a2cfe3322b965b35d8e78b041f858b81b0"
+    },
+    {
+      "name": "minimax",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/minimax-color.svg",
+      "license": "MIT",
+      "sha256": "7f7187fa6d9b341ac5f22f6c5a970523afb439dc45566d64eb4f4b9b604d6b01"
+    },
+    {
+      "name": "openclaw",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/openclaw-color.svg",
+      "license": "MIT",
+      "sha256": "4123c0c75dda5b28e3e0d38075514085bf546178a620776344813c08fa41277c"
+    },
+    {
+      "name": "opencode",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/opencode.svg",
+      "license": "MIT",
+      "sha256": "7cfa6e9d6726f7c9fa26c7d9aef0dfec52d20a137380454340f30f12ccbfd302"
+    },
+    {
+      "name": "perplexity",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/perplexity-color.svg",
+      "license": "MIT",
+      "sha256": "8353f3ab20822f1a933224b0ea32cc39f0c32d5740f4af8c254b0f418e0a3a70"
+    },
+    {
+      "name": "qoder",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/qoder-color.svg",
+      "license": "MIT",
+      "sha256": "396596d247477e2a036c141a16ec266df7b14c0130b777a68fd04bc89af50bc8"
+    },
+    {
+      "name": "qwen",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/qwen-color.svg",
+      "license": "MIT",
+      "sha256": "a158a0e3ed5b541e4f91384ece02c3acf0a0d81b7b11a46d77bafb248b09e32c"
+    },
+    {
+      "name": "qwen-code",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/qwen-color.svg",
+      "license": "MIT",
+      "sha256": "a158a0e3ed5b541e4f91384ece02c3acf0a0d81b7b11a46d77bafb248b09e32c"
+    },
+    {
+      "name": "replit",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/replit-color.svg",
+      "license": "MIT",
+      "sha256": "7d803ffdfc0d46aec134f656fd3c8815ee936a6726295eea5173d7122007eae5"
+    },
+    {
+      "name": "trae",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/trae-color.svg",
+      "license": "MIT",
+      "sha256": "e7aca314ce71b8fa0a7aece005d585772bac24266fc6688cf398e622d4acaf02"
+    },
+    {
+      "name": "trae-cn",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/trae-color.svg",
+      "license": "MIT",
+      "sha256": "e7aca314ce71b8fa0a7aece005d585772bac24266fc6688cf398e622d4acaf02"
+    },
+    {
+      "name": "v0",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/v0.svg",
+      "license": "MIT",
+      "sha256": "fc253b71563a3a4db26ebc5a7b5402b30fb52d3f1f600025381e4f734ef1a2c3"
+    },
+    {
+      "name": "windsurf",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/windsurf.svg",
+      "license": "MIT",
+      "sha256": "e3c836aae05a3741e33d5c5a38d4167aacfbb69e480d098b8b94cad8c90e0d08"
+    },
+    {
+      "name": "yuanbao",
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/ab8cbcc6ce806b923c547628132957c8a8b61509/packages/static-svg/icons/yuanbao-color.svg",
+      "license": "MIT",
+      "sha256": "522b9c3ee6f4136b3dd2f5e844a2273b6d599ae614329dbcaf96c74375b0fdd5"
+    }
+  ]
+}

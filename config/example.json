@@ -1,0 +1,12 @@
+{
+  "port": 4317,
+  "integrations": {
+    "tokenMonitor": {
+      "baseUrl": "",
+      "secretEnv": "WORKBENCH_TOKEN_MONITOR_SECRET"
+    },
+    "agentsView": {
+      "baseUrl": ""
+    }
+  }
+}

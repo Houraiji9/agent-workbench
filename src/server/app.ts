@@ -1,0 +1,128 @@
+import {Archify} from '../integrations/archify.ts';
+import Fastify from 'fastify';
+import fastifyStatic from '@fastify/static';
+import fs from 'node:fs';
+import {rejectAcceptance,reworkOrder} from '../core/acceptance-feedback.ts';
+import path from 'node:path';
+import {spawn} from 'node:child_process';
+import {z} from 'zod';
+import {Workbench} from '../core/workbench.ts';
+import {openArtifactFolder,revealFile} from '../core/artifact-folders.ts';
+import {saveRequest,deleteRequest,archiveProject} from '../core/request-management.ts';
+import {Integrations} from '../integrations/adapters.ts';
+import {editQuotaCache,editWorkBuddyPoints} from '../core/quota-cache.ts';
+import {saveAgent,archiveAgent,saveQuota,archiveQuota} from '../core/resource-management.ts';
+import {type Config} from '../core/config.ts';
+import {assert,DomainError,secret,same,safePath,readBounded,hash} from '../core/security.ts';
+import {createBackup} from '../../scripts/backup.ts';
+import {addAuthorizedRoot,authorizeProject} from '../core/roots.ts';
+import type {Row} from '../core/schema.ts';
+
+// 下载文件名：ASCII 兜底名 + UTF-8 中文名，兼容不同浏览器与桌面窗口。
+export function disposition(name:string){const clean=name.replace(/[\r\n"\\/:*?<>|]/g,'_');const ext=(clean.match(/\.[A-Za-z0-9]{1,8}$/)||[''])[0];const ascii=(clean.slice(0,clean.length-ext.length).replace(/[^\x20-\x7e]/g,'').replace(/\s+/g,' ').trim()||'workbench-file')+ext;return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(clean)}`}
+
+export async function createApp(config:Config,{background=true,revealArtifact=revealFile}={}){
+  const wb=new Workbench(config),integrations=new Integrations(wb),app=Fastify({logger:false,bodyLimit:2*1024*1024});
+  const archify=new Archify(wb);
+  const sessions=new Map<string,{csrf:string;created:number}>();
+  app.setErrorHandler((e:any,_req,res)=>res.code(e instanceof DomainError?e.status:e instanceof z.ZodError?400:e.statusCode||500).send({error:e instanceof z.ZodError?'输入格式不符合 schema：'+e.issues.map((i:Row)=>i.path.join('.')+' '+i.message).join('; '):e.statusCode===500?'服务内部错误，请检查运行日志':e.message}));
+  app.addHook('onRequest',async(req,res)=>{
+    const host=req.headers.host||'';const allowed=[`127.0.0.1:${config.port}`,`localhost:${config.port}`];assert(allowed.includes(host),'Host 不受信任',403);
+    const origin=req.headers.origin;assert(!origin||allowed.map(h=>'http://'+h).includes(origin),'Origin 不受信任',403);
+    const cross=req.headers['sec-fetch-site'];assert(cross!=='cross-site','拒绝跨站访问',403);
+    res.header('X-Content-Type-Options','nosniff').header('Referrer-Policy','no-referrer').header('Cache-Control','no-store');
+    res.header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    if(req.url.startsWith('/api/mcp/')||req.url==='/api/health')return;
+    if(req.url==='/api/bootstrap')return;
+    if(req.url.startsWith('/api/')){
+      const sid=req.headers.cookie?.match(/(?:^|; )wb_session=([a-f0-9]+)/)?.[1]||'';const session=sessions.get(sid);assert(session&&Date.now()-session.created<12*3600000,'会话失效，请刷新页面',401);
+      if(req.method!=='GET'&&req.method!=='HEAD')assert(same(String(req.headers['x-workbench-csrf']||''),session.csrf),'缺少合法的页面操作凭据',403);
+    }
+  });
+  app.get('/api/health',async()=>({ok:true,app:'agent-workbench',version:'0.1.0',pid:process.pid}));
+  app.get('/api/bootstrap',async(_req,res)=>{const sid=secret(),csrf=secret();for(const[k,v]of sessions)if(Date.now()-v.created>12*3600000)sessions.delete(k);sessions.set(sid,{csrf,created:Date.now()});res.header('Set-Cookie',`wb_session=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200`);return {csrf,...wb.snapshot()}});
+  app.get('/api/state',async()=>wb.snapshot());
+  app.get('/api/events',async(req,res)=>{
+    res.hijack();res.raw.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});res.raw.write('event: ready\ndata: {}\n\n');const onChange=()=>res.raw.write('event: changed\ndata: {}\n\n');wb.on('change',onChange);const timer=setInterval(()=>res.raw.write(': heartbeat\n\n'),20000);req.raw.on('close',()=>{clearInterval(timer);wb.off('change',onChange)});
+  });
+  app.post('/api/projects',async req=>wb.registerProject(req.body as Row));
+  app.post<{Body:Row}>('/api/projects/authorize',async req=>{
+    const r=authorizeProject(config,req.body,real=>wb.registerProject({...req.body,path:real,create:false}));
+    if(r.added)wb.transaction(()=>wb.audit('user','add_authorized_root',r.added!,{roots:r.roots}));
+    return r.value;
+  });
+  app.post<{Params:{id:string}}>('/api/projects/:id/edit',async req=>wb.editProject(req.params.id,req.body));
+  app.post<{Params:{id:string};Body:Row}>('/api/projects/:id/paths',async req=>wb.addProjectPath(req.params.id,req.body.path,req.body.version));
+  app.get<{Params:{id:string};Querystring:Row}>('/api/projects/:id/context',async(req,res)=>{const c=wb.projectContext(req.params.id);if(req.query.download){res.header('Content-Disposition',disposition(String(c.project.name)+'-项目上下文.json'));res.type('application/json; charset=utf-8');return JSON.stringify(c,null,2)}return c});
+  app.post<{Params:{id:string}}>('/api/projects/:id/open',async req=>{const p=wb.get('projects',req.params.id);const folder=safePath(p.paths[0],config.authorizedRoots);assert(process.platform==='win32','当前系统未实现目录打开');spawn('explorer.exe',[folder],{shell:false,windowsHide:true,detached:true,stdio:'ignore'}).unref();return {opened:true}});
+  app.post('/api/diagrams',async req=>archify.generate(req.body));
+  app.get<{Params:{id:string};Querystring:Row}>('/api/diagrams/:id/content',async(req,res)=>{
+    const {row,bytes}=archify.content(req.params.id);
+    res.header('Content-Security-Policy',"sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'");
+    res.type('text/html; charset=utf-8');if(req.query.download)res.header('Content-Disposition',disposition(row.title+'.html'));return bytes;
+  });
+  app.post('/api/requests',async req=>wb.request(req.body as Row));
+  app.post<{Params:{id:string}}>('/api/requests/:id/edit',async req=>saveRequest(wb,req.params.id,req.body));
+  app.post<{Params:{id:string}}>('/api/requests/:id/delete',async req=>deleteRequest(wb,req.params.id,req.body));
+  app.post<{Params:{id:string}}>('/api/projects/:id/archive',async req=>archiveProject(wb,req.params.id,req.body));
+  app.get<{Params:{id:string}}>('/api/requests/:id/entry',async req=>wb.planningEntry(req.params.id));
+  app.post('/api/plans',async req=>wb.submitPlan(req.body));
+  app.get<{Params:{id:string}}>('/api/tasks/:id',async req=>wb.taskDetail(req.params.id));
+  app.post<{Params:{id:string}}>('/api/tasks/:id/reply',async req=>wb.saveReply(req.params.id,req.body));
+  app.post<{Params:{id:string};Body:Row}>('/api/tasks/:id/export',async req=>wb.exportOrder(req.params.id,req.body.version,req.body.new_run,req.body.agent_id,req.body.expected_revision,req.body.requested_model));
+  app.post<{Params:{id:string};Body:Row}>('/api/tasks/:id/action',async req=>wb.manualAction(req.params.id,req.body.action,req.body.revision));
+  app.post<{Params:{id:string};Body:Row}>('/api/tasks/:id/accept',async req=>wb.accept(req.params.id,req.body));
+  app.post<{Params:{id:string}}>('/api/tasks/:id/reject',async req=>rejectAcceptance(wb,req.params.id,req.body));
+  app.post<{Params:{id:string}}>('/api/tasks/:id/rework',async req=>reworkOrder(wb,req.params.id,req.body));
+  app.post('/api/receipts',async req=>wb.event(req.body,undefined,'user_imported'));
+  app.post('/api/reviews',async req=>wb.review(req.body as Row));
+  app.post<{Params:{id:string};Body:Row}>('/api/subscriptions/:id/confirm',async req=>wb.confirmSubscription(req.params.id,req.body));
+  app.post('/api/subscriptions',async req=>wb.createSubscription(req.body));
+  app.post<{Params:{id:string}}>('/api/subscriptions/:id/delete',async req=>wb.deleteSubscription(req.params.id,req.body));
+  app.post('/api/memories',async req=>wb.memory(req.body as Row));
+  app.post<{Params:{table:string;id:string};Body:Row}>('/api/baseline/:table/:id',async req=>wb.updateBaseline(req.params.table,req.params.id,req.body.changes,req.body.version));
+  app.post('/api/backup',async()=>createBackup(wb));
+  app.post<{Body:Row}>('/api/settings/roots',async req=>{const r=addAuthorizedRoot(config,req.body?.path);if(r.added)wb.transaction(()=>wb.audit('user','add_authorized_root',r.added!,{roots:r.roots}));return r});
+  app.get<{Querystring:Row}>('/api/history',async req=>wb.history(req.query));
+  app.get<{Querystring:Row}>('/api/history/external',async req=>integrations.search(req.query));
+  app.post<{Params:{id:string};Body:Row}>('/api/sessions/:id/link',async req=>wb.linkSession(req.params.id,req.body.run_id));
+  app.get<{Params:{id:string};Querystring:Row}>('/api/sessions/:id/messages',async req=>integrations.sessionPage(req.params.id,Number(req.query.from)||0));
+  app.post<{Params:{id:string};Body:Row}>('/api/integrations/:id/refresh',async req=>integrations.refresh(req.params.id,req.body?.cursor||''));
+  app.post<{Params:{provider:string};Body:Row}>('/api/quota-cache/:provider',async req=>editQuotaCache(wb,req.params.provider,req.body));
+  app.post('/api/manual-points/workbuddy',async req=>editWorkBuddyPoints(wb,req.body));
+  app.post('/api/agents',async req=>saveAgent(wb,null,req.body));
+  app.post<{Params:{id:string}}>('/api/agents/:id/edit',async req=>saveAgent(wb,req.params.id,req.body));
+  app.post<{Params:{id:string}}>('/api/agents/:id/delete',async req=>archiveAgent(wb,req.params.id,req.body));
+  app.post<{Params:{id:string}}>('/api/agents/:id/restore',async req=>archiveAgent(wb,req.params.id,req.body,true));
+  app.post('/api/quotas',async req=>saveQuota(wb,null,req.body));
+  app.post('/api/quotas/hide-source',async req=>saveQuota(wb,null,req.body,true));
+  app.post<{Params:{id:string}}>('/api/quotas/:id/edit',async req=>saveQuota(wb,req.params.id,req.body));
+  app.post<{Params:{id:string}}>('/api/quotas/:id/delete',async req=>archiveQuota(wb,req.params.id,req.body));
+  app.post<{Params:{id:string}}>('/api/quotas/:id/restore',async req=>archiveQuota(wb,req.params.id,req.body,true));
+  app.post<{Params:{id:string}}>('/api/artifacts/:id/open-folder',async req=>{
+    const v=z.object({target:z.enum(['original','archive'])}).strict().parse(req.body);
+    return openArtifactFolder(wb,req.params.id,v.target,revealArtifact);
+  });
+  app.get<{Params:{id:string};Querystring:Row}>('/api/artifacts/:id/content',async(req,res)=>{
+    const a=wb.get('artifacts',req.params.id);const file=safePath(a.archive_path,[path.join(config.dataDir,'artifacts')]);const bytes=readBounded(file,20*1024*1024);assert(hash(bytes)===a.sha256,'归档产物完整性校验失败',409);
+    const types:Record<string,string>={'.md':'text/plain; charset=utf-8','.txt':'text/plain; charset=utf-8','.json':'text/plain; charset=utf-8','.csv':'text/plain; charset=utf-8','.diff':'text/plain; charset=utf-8','.patch':'text/plain; charset=utf-8','.html':'text/html; charset=utf-8','.htm':'text/html; charset=utf-8','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.gif':'image/gif'};
+    res.header('Content-Security-Policy',"sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'");
+    res.type(types[a.extension]||'application/octet-stream');if(req.query.download||!types[a.extension])res.header('Content-Disposition',disposition(a.label));return bytes;
+  });
+  app.post<{Params:{tool:string};Body:Row}>('/api/mcp/:tool',async req=>{
+    const token=req.headers.authorization?.replace(/^Bearer /,'')||'';let role:string|undefined,scope:string|undefined;if(same(token,wb.keys.planner))role='planner';else if(typeof req.body?.run_id==='string'){const rid=req.body.run_id;assert(/^R-[a-f0-9-]{36}$/.test(rid),'MCP Run ID 无效',401);const run=wb.maybe('runs',rid);if(run){const f=path.join(config.dataDir,'run-keys',rid+'.json');if(fs.existsSync(f)&&same(token,JSON.parse(fs.readFileSync(f,'utf8')).token)){role='runner';scope=rid}}}assert(role,'MCP 认证失败',401);
+    const tool=req.params.tool,b=req.body;const isReport=['report_run_event','submit_run_result'].includes(tool);if(role==='runner')assert(isReport||tool==='get_run_feedback','执行凭据仅可回报或查询自己的 Run',403);
+    if(tool==='get_run_feedback'){const v=z.object({run_id:z.string().regex(/^R-[a-f0-9-]{36}$/)}).strict().parse(b);if(role==='runner')assert(scope===v.run_id,'禁止跨执行查询回答',403);return wb.runFeedback(v.run_id)}
+    if(tool==='create_project_diagram')return archify.generate(b);
+    if(tool==='get_dispatch_context')return wb.dispatchContext();
+    if(tool==='get_project_context')return wb.projectContext(b.project_id);
+    if(tool==='search_execution_history')return wb.history(b);
+    if(tool==='submit_task_plan')return wb.submitPlan(b);
+    if(tool==='export_execution_order')return wb.exportOrder(b.task_id,b.expected_version,b.new_run,b.agent_id,b.expected_revision,b.requested_model);
+    if(isReport){assert(role==='runner'&&scope===b.run_id,'执行回报必须使用该 Run 的独立凭据',403);if(tool==='submit_run_result')assert(b.event_type==='submitted','结果工具仅接收 submitted');return wb.event(b,scope,'mcp_'+role)}
+    throw new DomainError('工具不在允许清单',403);
+  });
+  const dist=path.join(config.root,'dist');if(fs.existsSync(dist)){await app.register(fastifyStatic,{root:dist,wildcard:false});app.setNotFoundHandler((req,res)=>(req.url.startsWith('/api/')||path.extname(req.url.split('?')[0]))?res.code(404).send({error:'接口不存在'}):res.type('text/html').send(fs.readFileSync(path.join(dist,'index.html'))))}
+  let receiptTimer:NodeJS.Timeout|undefined;if(background){wb.scanReceipts();receiptTimer=setInterval(()=>wb.scanReceipts(),1500);receiptTimer.unref();integrations.start()}
+  app.addHook('onClose',async()=>{clearInterval(receiptTimer);integrations.stop();await archify.close();wb.close()});return {app,wb,integrations};
+}
