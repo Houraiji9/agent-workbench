@@ -20,5 +20,5 @@ export function safePath(input:string,roots:string[],allowNew=false):string {
 }
 export function atomicWrite(file:string,content:string|Buffer){fs.mkdirSync(path.dirname(file),{recursive:true});const tmp=file+'.'+crypto.randomUUID()+'.tmp';try{fs.writeFileSync(tmp,content);fs.renameSync(tmp,file)}catch(e){try{fs.unlinkSync(tmp)}catch{}throw e}}
 export function readBounded(file:string,max=2*1024*1024){assert(fs.statSync(file).isFile(),'需要普通文件');assert(fs.statSync(file).size<=max,'文件过大，请从目录入口查看');return fs.readFileSync(file)}
-export function protectedName(file:string){return file.split(/[\\/]/).some(part=>/^(?:\.env(?:\..*)?|credentials?(?:[._-].*)?|secrets?(?:[._-].*)?|auth\.json|config\.toml|keys\.json|run-keys|id_rsa(?:\..*)?|id_ed25519(?:\..*)?|node_modules|\.git|\.codex|\.ssh|\.aws|\.gnupg|\.kube)$/i.test(part))}
+export function protectedName(file:string){return file.split(/[\\/]/).some(part=>/^(?:\.env(?:\..*)?|credentials?(?:[._-].*)?|secrets?(?:[._-].*)?|auth\.json|config\.toml|keys\.json|run-keys|review-keys|id_rsa(?:\..*)?|id_ed25519(?:\..*)?|node_modules|\.git|\.codex|\.ssh|\.aws|\.gnupg|\.kube)$/i.test(part))}
 export function signReceipt(event:unknown,key:string){return crypto.createHmac('sha256',key).update(JSON.stringify(event)).digest('hex')}

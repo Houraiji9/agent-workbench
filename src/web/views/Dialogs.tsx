@@ -1,13 +1,14 @@
-import {RequestContentDialog} from '../ui/RequestPreview.js';
 // 对话框路由：所有表单在打开时冻结版本号，实时刷新不会悄悄覆盖你正在填写的内容。
 import React from 'react';
+import {ReviewOrderDialog,ReviewReceiptDialog} from './dialogs/ReviewOrderDialog.js';
 import { QuotaDialog,WorkBuddyPointsDialog } from './dialogs/QuotaDialog.js';
 import { useStore } from '../app/store.js';
-import { RequestDialog, ImportPlanDialog, ReceiptDialog, ReviewDialog, AcceptDialog, RejectDialog, RetryDialog, CancelDialog, ArtifactDialog } from './dialogs/TaskDialogs.js';
+import { RequestDialog, ImportPlanDialog, ReceiptDialog, ReviewDialog, GrokReviewDialog, RevokeReviewDialog, AcceptDialog, RejectDialog, RetryDialog, CancelDialog, ArtifactDialog } from './dialogs/TaskDialogs.js';
 import { RegisterProjectDialog, EditProjectDialog, ArchiveProjectDialog, AddPathDialog, MemoryDialog, DiagramDialog, AddRootDialog } from './dialogs/ProjectDialogs.js';
 import { SubscriptionEditDialog, SubscriptionDeleteDialog, SubscriptionConfirmDialog, SessionDialog } from './dialogs/ResourceDialogs.js';
 import {AgentManageDialog,QuotaManageDialog,RemoveResourceDialog} from './dialogs/ManagementDialogs.js';
 import {RequestActionDialog,RequestHandoffDialog} from './dialogs/RequestDialog.js';
+import {RequestContentDialog} from '../ui/RequestPreview.js';
 
 export function Dialogs() {
   const s = useStore();
@@ -23,7 +24,11 @@ export function Dialogs() {
     case 'request': return <RequestDialog key={key} projectId={p.projectId} request={p.request} onClose={close} />;
     case 'import-plan': return <ImportPlanDialog key={key} onClose={close} />;
     case 'receipt': return <ReceiptDialog key={key} onClose={close} />;
+    case 'review-order': return <ReviewOrderDialog key={p.detail.task.id} detail={p.detail} onClose={close}/>;
+    case 'review-receipt': return <ReviewReceiptDialog key={p.detail.task.id} detail={p.detail} onClose={close}/>;
     case 'review': return <ReviewDialog key={key} detail={p.detail} onClose={close} />;
+    case 'grok-review': return <GrokReviewDialog key={p.detail.task.id} detail={p.detail} onClose={close} />;
+    case 'revoke-review': return <RevokeReviewDialog key={p.review.id} detail={p.detail} review={p.review} onClose={close} />;
     case 'accept': return <AcceptDialog key={key} detail={p.detail} onClose={close} />;
     case 'reject': return <RejectDialog key={key} detail={p.detail} onClose={close} />;
     case 'retry': return <RetryDialog key={key} detail={p.detail} onClose={close} />;

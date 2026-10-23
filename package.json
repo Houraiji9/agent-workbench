@@ -1,6 +1,6 @@
 {
   "name": "agent-workbench",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "type": "module",
   "engines": {
@@ -19,7 +19,8 @@
     "integrations:provision": "node scripts/provision-integrations.mjs",
     "desktop:build": "npm run build && node scripts/build-desktop.mjs",
     "desktop:dev": "electron desktop/main.cjs",
-    "test:public": "tsx --test tests/public-start.test.ts"
+    "test:public": "tsx --test tests/public-start.test.ts",
+    "review": "tsx scripts/review.ts"
   },
   "dependencies": {
     "@fastify/static": "10.1.6",

@@ -64,9 +64,9 @@ export function ReviewDialog({ detail, onClose }: { detail: R; onClose(): void }
   const [evidence, setEvidence] = useState('');
   const [findings, setFindings] = useState('');
   const { error, saving, run } = useSubmit();
-  return <Dialog title="登记审查结果" sub={`审查者：${s.name(t.reviewer_id)}。只在它真的审查过本次成果后登记。`} onClose={onClose} label="登记审查结果">
+  return <Dialog title="登记审查结果" sub={`任务：${t.title}。审查者：${s.name(t.reviewer_id)}。只登记这项任务的审查。`} onClose={onClose} label="登记审查结果">
     <form className="form" onSubmit={e => { e.preventDefault(); void run(() => api('/reviews', {
-      run_id: t.current_run_id, reviewer_id: t.reviewer_id, performed, evidence, findings, verdict,
+      task_id:t.id, revision:t.revision, run_id: t.current_run_id, reviewer_id: t.reviewer_id, performed, evidence, findings, verdict,
       artifact_hashes: artifacts.map(a => a.sha256),
     }), '审查结果已登记'); }}>
       <fieldset className="radio-cards" aria-label="审查结论">
@@ -76,13 +76,40 @@ export function ReviewDialog({ detail, onClose }: { detail: R; onClose(): void }
       </fieldset>
       <Field label="审查依据" hint="比如它的会话编号、审查报告放在哪里。至少 10 个字。"><textarea required minLength={10} rows={3} value={evidence} onChange={e => setEvidence(e.target.value)} /></Field>
       <Field label="它提出的问题（可选）"><textarea rows={3} value={findings} onChange={e => setFindings(e.target.value)} /></Field>
-      <label className="check"><input type="checkbox" required checked={performed} onChange={e => setPerformed(e.target.checked)} />我已完成本次审查</label>
+      <label className="check"><input type="checkbox" required checked={performed} onChange={e => setPerformed(e.target.checked)} />我确认独立审查者已审查这项任务的当前成果</label>
       <details className="fold"><summary>这次审查对应的文件（{artifacts.length} 个）</summary>
         {artifacts.map(a => <p key={a.id} className="small"><b>{a.label}</b><br /><code className="hash">{a.sha256}</code></p>)}
         <p className="muted small">本次审查对应当前交付版本。</p>
       </details>
       {error && <Notice tone="error">{error}</Notice>}
       <footer className="dialog-foot inline"><Foot onClose={onClose} saving={saving} label="登记结果" /></footer>
+    </form>
+  </Dialog>;
+}
+
+export function GrokReviewDialog({detail,onClose}:{detail:R;onClose():void}){
+  const [task]=useState(detail.task),[session,setSession]=useState('');
+  const {error,saving,run}=useSubmit();
+  return <Dialog title="读取 Grok 审查" sub={task.title} onClose={onClose} label="读取 Grok 审查">
+    <form className="form" onSubmit={e=>{e.preventDefault();void run(()=>api('/reviews/grok',{run_id:task.current_run_id,session_id:session.trim()}),'Grok 审查已核验并登记')}}>
+      <p>填写实际完成审查的 Grok 会话编号。工作台会读取原始结论，核对任务和交付版本。</p>
+      <Field label="Grok 会话编号"><input required value={session} onChange={e=>setSession(e.target.value)} placeholder="审查工具返回的 sessionId"/></Field>
+      <p className="muted small">执行 Agent 可通过工作台接口自动回传，无需你粘贴报告。旧报告没有版本绑定时，需要先由 Grok 补充确认。</p>
+      {error&&<Notice tone="error">{error}</Notice>}
+      <footer className="dialog-foot inline"><Foot onClose={onClose} saving={saving} label="读取并登记"/></footer>
+    </form>
+  </Dialog>;
+}
+
+export function RevokeReviewDialog({detail,review,onClose}:{detail:R;review:R;onClose():void}){
+  const [task]=useState(detail.task),[reason,setReason]=useState('');
+  const {error,saving,run}=useSubmit();
+  return <Dialog title="撤回误登记的审查" sub={task.title} onClose={onClose} label="撤回审查">
+    <form className="form" onSubmit={e=>{e.preventDefault();void run(()=>api('/reviews/'+review.id+'/revoke',{run_id:task.current_run_id,revision:task.revision,reason}),'误登记已撤回，原记录和原因已保留')}}>
+      <p>这条记录将保留，并注明已撤回。如果它是最新审查，任务会恢复为等待审查。</p>
+      <Field label="撤回原因"><textarea required minLength={5} maxLength={2000} value={reason} onChange={e=>setReason(e.target.value)} placeholder="例如：误贴了另一项任务的报告"/></Field>
+      {error&&<Notice tone="error">{error}</Notice>}
+      <footer className="dialog-foot inline"><Foot onClose={onClose} saving={saving} label="撤回这条审查"/></footer>
     </form>
   </Dialog>;
 }

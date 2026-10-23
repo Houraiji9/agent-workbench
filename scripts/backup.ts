@@ -2,7 +2,7 @@ import fs from 'node:fs';import path from 'node:path';import {backup,DatabaseSyn
 export async function createBackup(wb:Workbench){
  const finalDir=path.join(wb.config.dataDir,'backups',now().replace(/[:.]/g,'-')),dir=finalDir+'.partial';fs.mkdirSync(dir,{recursive:true});
  await backup(wb.db,path.join(dir,'workbench.sqlite'));
- for(const name of ['artifacts','run-keys','diagrams']){const src=path.join(wb.config.dataDir,name);if(fs.existsSync(src))fs.cpSync(src,path.join(dir,name),{recursive:true,filter:(p)=>!fs.lstatSync(p).isSymbolicLink()})}
+ for(const name of ['artifacts','run-keys','review-keys','diagrams']){const src=path.join(wb.config.dataDir,name);if(fs.existsSync(src))fs.cpSync(src,path.join(dir,name),{recursive:true,filter:(p)=>!fs.lstatSync(p).isSymbolicLink()})}
  fs.copyFileSync(path.join(wb.config.dataDir,'keys.json'),path.join(dir,'keys.json'));
  // Read the frozen database so concurrent HTTP work cannot alter the backup's run inventory.
  const snapshot=new DatabaseSync(path.join(dir,'workbench.sqlite'),{readOnly:true});const runs=(snapshot.prepare('SELECT data FROM runs').all() as any[]).map(x=>JSON.parse(x.data));snapshot.close();

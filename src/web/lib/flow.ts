@@ -79,7 +79,7 @@ export function relayOf(t: R, name: (id: string) => string, executor?: string): 
     case 'submitted':
       return skippedReview
         ? r(5, 'you', 'you', `${doer} 已交付，按你的要求不安排审查`, '打开成果试用一下，符合需求就确认完成')
-        : r(4, 'reviewer', 'review', `${doer} 已交付，等 ${reviewer} 独立审查`, `把审查请求发给 ${reviewer}；审查完成后在这里登记结果`);
+        : r(4, 'reviewer', 'review', `${doer} 已交付，等 ${reviewer} 独立审查`, t.review_stage==='running'?`${reviewer} 已接单，完成后会回传报告`:`把审查单发给 ${reviewer}，完成后报告会附在任务里`);
     case 'changes_requested': return r(4, 'you', 'problem', `${reviewer} 审查后要求修改`, '新开一次执行，让执行者按审查意见返工');
     case 'acceptance_rejected': return r(5,'you','problem','你已确认本次结果不通过',`复制返工要求，交给 ${doer} 修改`);
     case 'rework_linked': return r(3,'none','quiet','本次验收未通过，已由后续任务接替','查看后续任务的进展；原交付与意见保留在这里');

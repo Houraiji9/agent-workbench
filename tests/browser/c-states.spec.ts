@@ -112,8 +112,8 @@ test('审查要求修改：旧的通过审查不能套用到新交付', async ({
   const d = drawer(page);
   await expect(d.getByText('审查要求修改').first()).toBeVisible();
   await expect(d.getByText('测试意见：标题太小').first()).toBeVisible();
-  await d.getByRole('region', { name: '现在要做什么' }).getByRole('button', { name: '新开一次执行' }).click();
-  await page.getByRole('dialog', { name: '换人或重新做一次' }).getByRole('button', { name: '新开一次并复制执行单' }).click();
+  await d.getByRole('region', { name: '现在要做什么' }).getByRole('button', { name: '复制修改意见给执行者' }).click();
+  await expect.poll(async () => (await m.get('/tasks/' + m.tid)).task.current_run_id).not.toBe(m.rid);
   await expect(d.getByText('历史交付')).toBeVisible();
   await shot(page, '新版-返工后的审查标注');
 });

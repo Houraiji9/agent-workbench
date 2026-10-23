@@ -17,3 +17,5 @@
 - Git 提交仅包含源码、测试、示例配置与正式文档。发布包不得带本机 data、配置、截图、日志、执行历史或旧 Git 历史。
 
 接入与业务协议见 docs/CODEX_PLANNER.md、docs/EXECUTION_PROTOCOL.md。
+
+审查规划读取 reviewer_resources；有效窗口剩余不超过 10% 时换人，Grok 无默认优先权。交付后先 get_review_candidates，再 export_review_order，把返回 entry 交给用户。审查者按独立 RA 审查单接单并回传完整报告；执行者不能代写审查结论。Windows --import 加载器保留 file URL。测试夹具结束时回收本轮创建目录，避免累积副本。

@@ -35,6 +35,15 @@ export async function copyRework(s:Store,t:R){return s.act(async()=>{
  await s.copy(`本次验收未通过，请按下面的问题返工：\n${f.note}\n\n${r.entry}`,'返工要求已复制，粘贴给原执行者即可');return r;
 })}
 
+export async function copyReviewOrder(s:Store,detail:R){return s.act(async()=>{
+ const t=detail.task,c=await api('/tasks/'+t.id+'/review-candidates'),selected=c.candidates.find((a:R)=>a.agent_id===t.reviewer_id);
+ if(!selected?.assignable){s.openDialog('review-order',{detail});return}
+ const r=await api('/review-orders',{run_id:t.current_run_id,reviewer_id:t.reviewer_id,expected_revision:c.revision,reason:'按当前安排生成独立审查单'});
+ const copied=await s.copy(r.entry,'审查单已复制，粘贴给 '+s.name(t.reviewer_id));if(!copied)s.openDialog('review-order',{detail});return r;
+})}
+export async function copyReviewFeedback(s:Store,t:R){return s.act(async()=>{
+ const r=await api('/runs/'+t.current_run_id+'/review-feedback',{revision:t.revision});await s.copy(r.text,'审查反馈已复制，粘贴回原执行者即可');return r;
+})}
 /** 给审查者的说明文字。工作台不替审查者下结论，只提供要看的位置。 */
 export function reviewRequestText(t: R, run: R | undefined, artifacts: R[], name: (id: string) => string): string {
   const files = artifacts.map(a => `- ${a.label}（SHA256 ${a.sha256}）${a.original_path ? '：' + a.original_path : ''}`).join('\n') || '- 暂无归档文件';

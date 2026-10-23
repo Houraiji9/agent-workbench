@@ -7,7 +7,7 @@ import { type R, relayOf, eventText, dispositionText, reviewSkippedTask } from '
 import { relative, fullDate, bytes } from '../lib/format.js';
 import { Drawer, RelayTrack, Pill, Notice } from '../ui/kit.js';
 import { AgentIcon } from '../ui/AgentIcon.js';
-import { copyOrder, copyRework, markDispatched, reviewRequestText } from './actions.js';
+import { copyOrder, copyRework, markDispatched, copyReviewOrder, copyReviewFeedback } from './actions.js';
 import { userAcceptanceItems } from '../../core/acceptance.js';
 import {ArtifactLocation} from '../ui/ArtifactLocation.js';
 import {TaskOrder,OrderStatus} from '../ui/ExecutionOrder.js';
@@ -92,10 +92,13 @@ function TaskBody({ detail }: { detail: R }) {
     {detail.reviews.length > 0 && <section className="block" aria-label="审查记录">
       <h2>审查记录</h2>
       {detail.reviews.map((r: R) => <div key={r.id} className={'review-item ' + (r.verdict === 'passed' ? 'ok' : 'bad')}>
-        <strong>{s.name(r.reviewer_id)}：{r.verdict === 'passed' ? '通过' : '需要修改'}</strong>
+        <strong>{s.name(r.reviewer_id)}：{r.revoked_at ? '已撤回' : r.verdict === 'passed' ? '通过' : '需要修改'}</strong>
         <span className="muted small">{r.run_id === t.current_run_id ? '针对本次交付' : '历史交付'} · {relative(r.created_at, s.tz)}</span>
         {r.findings && <p>{r.findings}</p>}
-        <p className="muted small">由你登记的审查依据：{r.evidence}</p>
+        <p className="muted small">{r.source==='grok_session_import'?'Grok 会话已核验：':r.source==='reviewer_submission'?'审查者已回传：':r.source==='user_imported_review'?'已导入审查回执：':'手工登记：'}{r.evidence}</p>
+        {r.report_markdown&&<details className="fold"><summary>查看完整审查报告</summary><pre className="pre">{r.report_markdown}</pre><a className="link" href={'/api/reviews/'+r.id+'/report'} download>下载报告</a></details>}
+        {!!r.limitations?.length&&<details className="fold"><summary>审查范围与未验证项</summary><ul>{r.limitations.map((x:string,i:number)=><li key={i}>{x}</li>)}</ul></details>}
+        {r.revoked_at?<p className="muted small">撤回原因：{r.revocation_reason} · {fullDate(r.revoked_at,s.tz)}</p>:r.run_id===t.current_run_id&&['submitted','in_review','changes_requested'].includes(t.status)&&<button className="link" onClick={()=>s.openDialog('revoke-review',{detail,review:r})}>撤回误登记</button>}
       </div>)}
     </section>}
 
@@ -140,22 +143,26 @@ function NowCard({ detail, relay, run, who, current, lastMessage }: { detail: R;
         </div></>;
       break;
     case 'submitted':
-      body = noReview ? null : <>{steps([<>复制审查请求，发给 <b>{s.name(t.reviewer_id)}</b></>, <>它审查完会给出结论</>, <>回来点“登记审查结果”，填上它的结论</>])}
+      body = noReview ? null : <>
+        <p>{t.review_stage==='running'?s.name(t.reviewer_id)+' 已接单，正在审查。':'把审查单发给 '+s.name(t.reviewer_id)+'，它会按单回传报告。'}</p>
         <div className="now-actions">
-          <button className="btn primary" onClick={() => void s.copy(reviewRequestText(t, run, current, s.name), `审查请求已复制，粘贴给 ${s.name(t.reviewer_id)}`)}><Copy size={16} />复制审查请求</button>
-          <button className="btn" disabled={!current.length} onClick={() => s.openDialog('review', { detail })}><ClipboardCheck size={16} />登记审查结果</button>
-          <button className="btn ghost" disabled={!current.length} onClick={() => s.openDialog('reject', { detail })}>不通过，退回修改</button>
+          <button className="btn primary" disabled={s.busy} onClick={()=>void copyReviewOrder(s,detail)}><Copy size={16}/>复制审查单</button>
+          <button className="btn" onClick={()=>s.openDialog('review-order',{detail})}>更换审查者</button>
+          <button className="btn" onClick={()=>s.openDialog('review-receipt',{detail})}>导入审查回执</button>
+          {t.reviewer_id==='grok-build'&&<button className="btn" onClick={()=>s.openDialog('grok-review',{detail})}>读取 Grok 审查</button>}
+          <button className="btn ghost" disabled={!current.length} onClick={()=>s.openDialog('review',{detail})}>登记审查结果</button>
         </div></>;
       break;
     case 'changes_requested': {
-      const last = detail.reviews.filter((r: R) => r.run_id === t.current_run_id).slice(-1)[0];
+      const last = detail.reviews.filter((r: R) => r.run_id === t.current_run_id&&!r.revoked_at).slice(-1)[0];
       body = <>{last?.findings && <blockquote className="agent-says"><b>{s.name(last.reviewer_id)} 的意见：</b>{last.findings}</blockquote>}
-        <div className="now-actions"><button className="btn primary" onClick={() => s.openDialog('retry', { detail })}><Repeat size={16} />新开一次执行</button></div></>;
+        <div className="now-actions"><button className="btn primary" disabled={s.busy} onClick={()=>void copyReviewFeedback(s,t)}><Copy size={16}/>复制修改意见给执行者</button><button className="btn" onClick={()=>s.openDialog('review-order',{detail})}>重新安排审查</button></div></>;
       break;
     }
     case 'in_review': case 'awaiting_confirmation':
       body = <>{steps([<>打开下面的成果看一看、试一试</>, <>符合需求就确认完成；有问题可以退回修改</>])}
         <div className="now-actions"><button className="btn primary" disabled={!current.length} onClick={() => s.openDialog('accept', { detail })}><CircleCheckBig size={16} />试用后确认完成</button><button className="btn danger" disabled={!current.length} onClick={()=>s.openDialog('reject',{detail})}>不通过，退回修改</button></div>
+        {!noReview&&<button className="link" disabled={s.busy} onClick={()=>void copyReviewFeedback(s,t)}>复制审查反馈给执行者</button>}
         {noReview && <p className="muted small">本次审查：未安排。</p>}</>;
       break;
     case 'acceptance_rejected':
@@ -252,6 +259,7 @@ function MoreInfo({ detail, run }: { detail: R; run?: R }) {
       <div className="tool-row">
         {t.current_run_id && <button className="btn small" onClick={() => s.openDialog('receipt', { taskId: t.id })}><FileInput size={15} />导入回执</button>}
         {!noReview && ['submitted', 'in_review', 'changes_requested'].includes(t.status) && <button className="btn small" onClick={() => s.openDialog('review', { detail })}><ClipboardCheck size={15} />登记审查结果</button>}
+        {!noReview&&t.reviewer_id==='grok-build'&&['submitted','in_review','changes_requested'].includes(t.status)&&<button className="btn small" onClick={()=>s.openDialog('grok-review',{detail})}>读取 Grok 审查</button>}
         {!t.request_withdrawn&&['submitted', 'awaiting_confirmation', 'failed', 'cancelled', 'in_review', 'changes_requested', 'acceptance_rejected', 'blocked'].includes(t.status) && <button className="btn small" onClick={() => s.openDialog('retry', { detail })}><Repeat size={15} />换人或重新做一次</button>}
         {run?.directory && <button className="btn small" onClick={() => void s.copy(run.directory, '执行文件夹路径已复制')}><FolderOpen size={15} />复制执行文件夹路径</button>}
         {!['accepted', 'cancelled', 'rework_linked'].includes(t.status) && <button className="btn small danger" onClick={() => s.openDialog('cancel', { detail })}><Ban size={15} />取消这项任务</button>}

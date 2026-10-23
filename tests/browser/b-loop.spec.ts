@@ -56,7 +56,7 @@ test('完整闭环：粘贴计划 → 生成执行单 → 确认已发出 → �
   await receipt('started');
   await receipt('submitted');
   await expect(d.getByText('已交付，待审查').first()).toBeVisible();
-  await expect(d.getByRole('button', { name: '复制审查请求' })).toBeVisible();
+  await expect(d.getByRole('button', { name: '复制审查单' })).toBeVisible();
 
   await d.getByRole('button', { name: /RESULT\.md/ }).click();
   const viewer = page.getByRole('dialog', { name: 'RESULT.md' });
@@ -75,7 +75,7 @@ test('完整闭环：粘贴计划 → 生成执行单 → 确认已发出 → �
   const rv = page.getByRole('dialog', { name: '登记审查结果' });
   await rv.getByText('通过', { exact: true }).click();
   await rv.getByLabel('审查依据').fill('测试夹具：模拟审查结果，仅验证登记界面。');
-  await rv.getByLabel('我已完成本次审查').check();
+  await rv.getByLabel('我确认独立审查者已审查这项任务的当前成果').check();
   const reviewReq = page.waitForRequest(r => r.url().endsWith('/api/reviews') && r.method() === 'POST');
   await rv.getByRole('button', { name: '登记结果' }).click();
   const reviewPayload = (await reviewReq).postDataJSON();

@@ -64,7 +64,7 @@ test('回答 HTTP/MCP 权限：CSRF、planner只读、runner限自己，旧执�
   }finally{await app.close();}
 });
 
-test('真实 stdio MCP 可查询用户回答；执行者只暴露回报与自己回答查询',async()=>{
+test('真实 stdio MCP 可查询用户回答；执行者只暴露本 Run 回报、回答查询与可核验的审查回传',async()=>{
   const f=fixture();f.wb.close();const {app,wb}=await createApp(f.config,{background:false});
   const client=new Client({name:'isolated-feedback-test',version:'0.1.0'});
   try{const address=await app.listen({host:'127.0.0.1',port:0});f.config.port=Number(new URL(address).port);
@@ -73,7 +73,7 @@ test('真实 stdio MCP 可查询用户回答；执行者只暴露回报与自己
     const env=Object.fromEntries(Object.entries(process.env).filter((e):e is [string,string]=>typeof e[1]==='string'));
     Object.assign(env,{WORKBENCH_DATA_DIR:f.config.dataDir,WORKBENCH_PORT:String(f.config.port),WORKBENCH_RUN_ID:s.rid});
     await client.connect(new StdioClientTransport({command:process.execPath,args:['--import','tsx',path.join(ROOT,'src/mcp/index.ts')],cwd:ROOT,env,stderr:'pipe'}));
-    assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),['get_run_feedback','report_run_event','submit_run_result']);
+    assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),['export_review_order','get_review_candidates','get_review_context','get_run_feedback','report_run_event','submit_grok_review','submit_run_result']);
     const result=await client.callTool({name:'get_run_feedback',arguments:{run_id:s.rid}});assert(!result.isError);
     assert.equal(JSON.parse((result.content as any)[0].text).replies[0].message,'测试回答');
   }finally{await client.close();await app.close();}
