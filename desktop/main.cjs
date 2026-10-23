@@ -1,5 +1,6 @@
 const {stopBackend}=require('./lifecycle.cjs');
 const {installExternalLinks}=require('./external-links.cjs');
+const {installUpdater}=require('./updater.cjs');
 const {app, BrowserWindow, Tray, Menu, nativeImage, dialog, screen, ipcMain, shell} = require('electron');
 const {fork, spawn} = require('node:child_process');
 const fs = require('node:fs');
@@ -10,14 +11,14 @@ const crypto = require('node:crypto');
 const root = process.env.WORKBENCH_ROOT || (app.isPackaged
   ? path.resolve(__dirname, '../../../..')
   : path.resolve(__dirname, '..'));
-const dataDir = process.env.WORKBENCH_DATA_DIR || path.join(root, 'data');
 const settings = fs.existsSync(path.join(root, 'config/local.json'))
   ? JSON.parse(fs.readFileSync(path.join(root, 'config/local.json'), 'utf8')) : {};
+const dataDir = path.resolve(root, process.env.WORKBENCH_DATA_DIR || settings.dataDir || 'data');
 const port = Number(process.env.WORKBENCH_PORT || settings.port || 4317);
 const base = `http://127.0.0.1:${port}`;
 const node = app.isPackaged ? path.join(process.resourcesPath, 'runtime/node.exe') : process.env.WORKBENCH_NODE;
 const owner = crypto.randomUUID();
-let win, tray, trayMenu, backend, starting, booting, quitting = false, ready = false;
+let win, tray, trayMenu, backend, starting, booting, updater, quitting = false, ready = false;
 app.setName('工作台');
 app.setAppUserModelId('local.agent.workbench');
 app.setPath('userData', path.join(dataDir, 'desktop-profile'));
@@ -50,24 +51,25 @@ function restore() { if (!win || win.isDestroyed()) return; win.show(); if(win.i
 function powershell(file, args = []) {
   return new Promise((resolve, reject) => {
     const child=spawn('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',path.join(root,file),...args],
-      {cwd:root,windowsHide:true,stdio:['ignore','ignore','pipe'],env:{...process.env,WORKBENCH_NODE:node}});
+      {cwd:root,windowsHide:true,stdio:['ignore','ignore','pipe'],env:{...process.env,WORKBENCH_NODE:node,WORKBENCH_DATA_DIR:dataDir}});
     let error='';child.stderr.on('data', b=>error+=b.toString());
     child.on('error',reject);child.on('exit',code=>{child.stderr.destroy();code===0?resolve():reject(new Error(error.slice(-1500)||'本机数据服务未能启动'));});
   });
 }
-async function stop() {
-  if (quitting) return;
+async function stop(afterStop) {
+  if (quitting) return false;
   quitting=true;ready=false;log('exiting');
   if(win&&!win.isDestroyed())win.hide();
   // Explicit exit during indexing must wait before cleaning its owned children.
   await booting?.catch(()=>{});
   await starting?.catch(()=>{});
   try { await stopBackend(backend); }
-  catch(e) { log('backend_cleanup_failed',{message:e.message});quitting=false;restore();dialog.showErrorBox('工作台尚未退出','后台未能结束，请稍后重试。现有进程未被当作退出成功。');return; }
+  catch(e) { log('backend_cleanup_failed',{message:e.message});quitting=false;restore();dialog.showErrorBox('工作台尚未退出','后台未能结束，请稍后重试。现有进程未被当作退出成功。');return false; }
   if(!process.env.WORKBENCH_SKIP_INTEGRATIONS) {
     try { await powershell('scripts/停止数据服务.ps1',['-OwnerId',owner]); }
-    catch(e) { log('cleanup_failed',{message:e.message});dialog.showErrorBox('部分数据服务未能退出', '为避免停止其他程序，工作台保留了无法确认身份的进程。请查看 data/desktop-lifecycle.jsonl。'); }
+    catch(e) { log('cleanup_failed',{message:e.message});dialog.showErrorBox('部分数据服务未能退出', '为避免停止其他程序，工作台保留了无法确认身份的进程。请查看 data/desktop-lifecycle.jsonl。');if(afterStop){app.relaunch();tray?.destroy();app.exit(0);return false;} }
   }
+  if(afterStop)try{await afterStop();}catch(e){log('update_launch_failed',{message:e.message});dialog.showErrorBox('更新未能启动','程序文件保持原样，将重新打开工作台。');app.relaunch();}
   tray?.destroy();log('exited');app.exit(0);
 }
 async function startBackend() {
@@ -94,6 +96,7 @@ async function startBackend() {
   }
   if(quitting)return;
   await win.loadURL(base);if(quitting)return;ready=true;log('window_ready');
+  updater?.markReady();
   if(!process.env.WORKBENCH_SKIP_INTEGRATIONS) {
     // Optional sources never prevent access to the local ledger.
     starting=powershell('scripts/启动数据服务.ps1',['-OwnerId',owner]);
@@ -107,6 +110,7 @@ else {
   app.on('window-all-closed',()=>void stop());
   app.whenReady().then(async()=>{
     fs.mkdirSync(dataDir,{recursive:true});
+    if(fs.existsSync(path.join(dataDir,'updates/install.lock'))){dialog.showErrorBox('更新尚未结束','请等待安装完成后再打开工作台。如果上次更新被中断，请保留程序文件夹，按 docs/UPDATES.md 恢复。');app.exit(0);return;}
     const icon=nativeImage.createFromPath(path.join(__dirname,'icon.png'));
     tray=new Tray(icon);tray.setToolTip('工作台');
     trayMenu=Menu.buildFromTemplate([{id:'open-workbench',label:'打开工作台',click:restore},{type:'separator'},{id:'quit-workbench',label:'退出工作台',click:()=>void stop()}]);
@@ -119,6 +123,7 @@ else {
     win.on('minimize',()=>log('minimized_to_taskbar'));
     win.on('close',e=>{if(quitting)return;e.preventDefault();win.hide();log('closed_to_tray');});
     installExternalLinks({win,ipcMain,shell,dialog,base});
+    updater=installUpdater({win,ipcMain,base,root,dataDir,packaged:app.isPackaged,node,stop,openFolder:async folder=>{const error=await shell.openPath(folder);if(error)throw Error('文件夹未能打开');}});
     win.webContents.on('did-finish-load',applyZoom);
     win.on('moved',()=>{if(userZoom===null)applyZoom()});
     win.webContents.on('before-input-event',(e,input)=>{if(input.type==='keyDown'&&(input.control||input.meta)&&!input.alt&&changeZoom(input))e.preventDefault();});
@@ -132,4 +137,4 @@ else {
 }
 
 // Main-process diagnostics only; never exposed to the renderer.
-module.exports={getTray:()=>tray,getTrayMenu:()=>trayMenu};
+module.exports={getTray:()=>tray,getTrayMenu:()=>trayMenu,stopForUpdate:stop};

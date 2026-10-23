@@ -13,7 +13,7 @@ fs.cpSync(electron,out,{recursive:true});
 fs.renameSync(path.join(out,'electron.exe'),path.join(out,'工作台.exe'));
 await rcedit(path.join(out,'工作台.exe'),{icon:path.join(root,'desktop/icon.ico'),'version-string':{ProductName:'Agent 工作台',FileDescription:'Agent 工作台',OriginalFilename:'工作台.exe',CompanyName:'本地工作空间'},'file-version':version,'product-version':version});
 const app=path.join(out,'resources/app');fs.mkdirSync(app,{recursive:true});
-for(const file of ['main.cjs','lifecycle.cjs','external-links.cjs','preload.cjs','loading.html','icon.png'])fs.copyFileSync(path.join(root,'desktop',file),path.join(app,file));
+for(const file of ['main.cjs','lifecycle.cjs','external-links.cjs','preload.cjs','loading.html','icon.png','updater.cjs','update-files.cjs','update-install.cjs','update-extract.ps1'])fs.copyFileSync(path.join(root,'desktop',file),path.join(app,file));
 fs.writeFileSync(path.join(app,'package.json'),JSON.stringify({name:'agent-workbench-desktop',productName:'工作台',version,main:'main.cjs'}));
 fs.mkdirSync(path.join(out,'resources/runtime'),{recursive:true});
 const runtime=path.join(out,'resources/runtime/node.exe');

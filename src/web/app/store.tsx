@@ -42,6 +42,7 @@ export interface Store {
   toast(text: string, kind?: 'ok' | 'error'): void;
   copy(text: string, ok?: string): Promise<boolean>;
   name(agentId: string | null | undefined): string;
+  agentIconId(agentId: string | null | undefined): string;
   pname(projectId: string | null | undefined): string;
   executorOf(task: R): string;
   live: 'connecting' | 'live' | 'retrying';
@@ -148,6 +149,7 @@ export function StoreProvider({ children, fallback }: { children: (ready: boolea
   const store = useMemo<Store | null>(() => {
     if (!data) return null;
     const agents = new Map<string, R>(data.agents.map((a: R) => [a.id, a]));
+    const presetIcons = new Map<string, string>((data.agent_presets || []).map((p: R) => [p.id, p.icon_key]));
     const projects = new Map<string, R>(data.projects.map((p: R) => [p.id, p]));
     const runs = new Map<string, R>(data.runs.map((r: R) => [r.id, r]));
     const name = (id: string | null | undefined) => (id ? agents.get(id)?.name || id : '未指定');
@@ -180,6 +182,10 @@ export function StoreProvider({ children, fallback }: { children: (ready: boolea
         catch { toast('系统不允许写入剪贴板，请在文本框里手动复制', 'error'); return false; }
       },
       name,
+      agentIconId: id => {
+        const a = id ? agents.get(id) : undefined;
+        return a?.icon_key || presetIcons.get(a?.preset_id) || id || 'auto';
+      },
       pname: id => (id ? projects.get(id)?.name || '未知项目' : '未关联项目'),
       executorOf: t => (t.current_run_id && runs.get(t.current_run_id)?.agent_id) || t.agent_id,
       live, changeTick, theme, setTheme: setThemeState,

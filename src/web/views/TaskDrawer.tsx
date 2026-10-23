@@ -5,7 +5,8 @@ import { api } from '../api.js';
 import { useStore } from '../app/store.js';
 import { type R, relayOf, eventText, dispositionText, reviewSkippedTask } from '../lib/flow.js';
 import { relative, fullDate, bytes } from '../lib/format.js';
-import { Drawer, RelayTrack, Pill, Notice, Avatar } from '../ui/kit.js';
+import { Drawer, RelayTrack, Pill, Notice } from '../ui/kit.js';
+import { AgentIcon } from '../ui/AgentIcon.js';
 import { copyOrder, copyRework, markDispatched, reviewRequestText } from './actions.js';
 import { userAcceptanceItems } from '../../core/acceptance.js';
 import {ArtifactLocation} from '../ui/ArtifactLocation.js';
@@ -51,8 +52,8 @@ function TaskBody({ detail }: { detail: R }) {
     <h1 className="task-title">{t.title}</h1>
     <div className="task-people">
       <OrderStatus task={t}/>
-      <span><Avatar name={s.name(who)} id={who} size={22} />执行：{s.name(who)}{who !== t.agent_id && <small>（原计划 {s.name(t.agent_id)}）</small>}</span>
-      <span>审查：{reviewSkippedTask(t) ? '本次不安排' : s.name(t.reviewer_id)}</span>
+      <span><AgentIcon name={s.name(who)} id={s.agentIconId(who)} size={22} /><span>执行：{s.name(who)}{who !== t.agent_id && <small>（原计划 {s.name(t.agent_id)}）</small>}</span></span>
+      <span>{!reviewSkippedTask(t) && <AgentIcon name={s.name(t.reviewer_id)} id={s.agentIconId(t.reviewer_id)} size={22} />}<span>审查：{reviewSkippedTask(t) ? '本次不安排' : s.name(t.reviewer_id)}</span></span>
       <span className="muted">{relative(t.updated_at, s.tz)}更新</span>
     </div>
 

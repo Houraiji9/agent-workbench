@@ -6,6 +6,7 @@ import { useStore } from '../app/store.js';
 import type { R } from '../lib/flow.js';
 import { relative } from '../lib/format.js';
 import { Section, Notice } from '../ui/kit.js';
+import { UpdateCard } from '../ui/UpdateCard.js';
 
 export function Settings() {
   const s = useStore();
@@ -13,6 +14,7 @@ export function Settings() {
   return <div className="page-wrap settings-page">
     <header className="page-head"><div><h1>设置</h1><p>管理本机数据、项目文件夹和备份。</p></div></header>
     <div className="settings-cols">
+    <UpdateCard />
 
     <Section title="外观">
       <div className="seg" role="radiogroup" aria-label="外观">

@@ -1,11 +1,12 @@
 // 今天：接力棒在你手里的事放最前面，其次是 Agent 正在做的，再是最近完成。右侧是日程、额度与连接。
 import React from 'react';
-import { Copy, Send, ArrowRight, MessageCircleQuestion, CircleCheckBig, LifeBuoy, ClipboardPaste, Sparkles, CalendarClock, Gauge, PlugZap, PencilLine } from 'lucide-react';
+import { Copy, Send, ArrowRight, MessageCircleQuestion, CircleCheckBig, LifeBuoy, ClipboardPaste, Sparkles, CalendarClock, Gauge, PlugZap, PencilLine, Folder } from 'lucide-react';
 import { useStore } from '../app/store.js';
 import { type R, relayOf, requestRelay, byUrgency, isYourTurn, isTheirTurn } from '../lib/flow.js';
 import { greeting, todayLine, relative, daysUntil, dayCountText, plainDay } from '../lib/format.js';
 import { quotaPercent } from '../quota.js';
-import { Pill, RelayTrack, Avatar, Empty, Section } from '../ui/kit.js';
+import { Pill, RelayTrack, Empty, Section } from '../ui/kit.js';
+import { AgentIcon } from '../ui/AgentIcon.js';
 import { copyOrder, copyPlanning, copyRework, markDispatched } from './actions.js';
 import {waitingForDependencies} from '../../shared/execution-order.js';
 import {ExecutionList,OrderStep} from '../ui/ExecutionOrder.js';
@@ -52,11 +53,13 @@ export function Today() {
             {theirs.map((t: R) => {
               const who = s.executorOf(t), relay = relayOf(t, s.name, who);
               const holder = t.status === 'submitted' ? t.reviewer_id : who;
-              return <button key={t.id} className="row" onClick={() => s.openTask(t.id)}>
-                <Avatar name={s.name(holder)} id={holder || 'x'} />
+              const project = s.pname(t.project_id);
+              return <button key={t.id} className="row active-task" onClick={() => s.openTask(t.id)}>
+                <AgentIcon name={s.name(holder)} id={s.agentIconId(holder)} />
                 <span className="row-main">
-                  <strong>{t.title}</strong>
-                  <small>{relay.headline} · {s.pname(t.project_id)}</small>
+                  <ProjectTag name={project} />
+                  <strong title={t.title}>{t.title}</strong>
+                  <small title={relay.headline}>{relay.headline}</small>
                 </span>
                 <span className="row-side"><Pill status={t.status} /><small>{relative(t.updated_at, s.tz)}更新</small></span>
               </button>;
@@ -104,6 +107,21 @@ function Welcome() {
   </section>;
 }
 
+function ProjectTag({ name }: { name: string }) {
+  return <span className="active-project" title={name}><Folder size={13} aria-hidden="true" /><span>{name}</span></span>;
+}
+
+function TurnContext({ projectId, agentId, role }: { projectId: string; agentId: string; role: '执行' | '规划' }) {
+  const s = useStore();
+  return <div className="turn-context">
+    <ProjectTag name={s.pname(projectId)} />
+    <span className="turn-agent" title={`${role}：${s.name(agentId)}`}>
+      <AgentIcon name={s.name(agentId)} id={s.agentIconId(agentId)} size={24} />
+      <span><span className="turn-agent-role">{role}</span>{s.name(agentId)}</span>
+    </span>
+  </div>;
+}
+
 function TaskTurn({ t }: { t: R }) {
   const s = useStore();
   const who = s.executorOf(t);
@@ -121,11 +139,13 @@ function TaskTurn({ t }: { t: R }) {
   else actions = <button className="btn primary" onClick={open}><LifeBuoy size={16} />看看怎么处理</button>;
 
   return <article className={'turn clickable t-' + relay.tone} aria-label={t.title} onClick={e => { if (!(e.target as HTMLElement).closest('button')) open(); }}>
-    <div className="turn-top">
-      <Pill status={t.status} />
-      <OrderStep task={t}/>
-      <span className="turn-meta">{s.pname(t.project_id)} · 执行 {s.name(who)}</span>
-      <RelayTrack relay={relay} compact />
+    <div className="turn-heading">
+      <TurnContext projectId={t.project_id} agentId={who} role="执行" />
+      <div className="turn-top">
+        <Pill status={t.status} />
+        <OrderStep task={t}/>
+        <RelayTrack relay={relay} compact />
+      </div>
     </div>
     <button className="turn-title" onClick={open}>{t.title}</button>
     <p className="turn-next">{relay.next}</p>
@@ -137,10 +157,13 @@ function RequestTurn({ q }: { q: R }) {
   const s = useStore();
   const relay = requestRelay();
   return <article className="turn t-you" aria-label={q.text}>
-    <div className="turn-top">
-      <Pill tone="you">等待规划</Pill>
-      <span className="turn-meta">{s.pname(q.project_id)} · {relative(q.created_at, s.tz)}提出</span>
-      <RelayTrack relay={relay} compact />
+    <div className="turn-heading">
+      <TurnContext projectId={q.project_id} agentId="codex" role="规划" />
+      <div className="turn-top">
+        <Pill tone="you">等待规划</Pill>
+        <span className="turn-meta">{relative(q.created_at, s.tz)}提出</span>
+        <RelayTrack relay={relay} compact />
+      </div>
     </div>
     <RequestPreview request={q} className="turn-title as-text"/>
     <p className="turn-next">{relay.next}</p>

@@ -210,6 +210,12 @@ kbd { font: 600 11.5px var(--mono); padding: 2px 6px; border: 1px solid var(--li
 .turn.clickable { cursor: pointer; transition: border-color .12s; }
 .turn.clickable:hover { border-color: var(--line-2); }
 .turn.clickable:hover .turn-title { color: var(--brand); }
+.turn-heading { display: grid; gap: 9px; min-width: 0; }
+.turn-context { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; min-width: 0; }
+.turn-agent { display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; color: var(--ink-2); font-size: 14px; font-weight: 600; }
+.turn-agent > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+.turn-agent-role { margin-right: 6px; color: var(--ink-3); font-size: 12.5px; font-weight: 500; }
+.turn-heading .turn-top { flex-wrap: wrap; }
 .turn-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .turn-meta { color: var(--ink-3); font-size: 13px; min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .turn-top .pill, .turn-top .relay-mini { flex: none; }
@@ -236,6 +242,16 @@ kbd { font: 600 11.5px var(--mono); padding: 2px 6px; border: 1px solid var(--li
 .row-main small { color: var(--ink-3); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-side { display: grid; justify-items: end; gap: 3px; flex: none; }
 .row-side small { color: var(--ink-3); font-size: 12px; }
+.active-task { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; }
+.active-task .row-main { gap: 4px; }
+.active-task .row-main strong { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
+.active-project { display: inline-flex; align-items: center; gap: 5px; justify-self: start; max-width: 100%; min-width: 0; padding: 1px 7px; border-radius: 6px; background: var(--brand-soft); color: var(--brand); font-size: 12.5px; font-weight: 600; }
+.active-project svg { flex: none; }
+.active-project > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@container (max-width: 480px) {
+  .active-task { grid-template-columns: 40px minmax(0, 1fr); gap: 8px 12px; }
+  .active-task .row-side { grid-column: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+}
 .req-row > .pill:first-child { min-width: 88px; justify-content: center; }
 .row-tools { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; flex: none; }
 .done-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
@@ -596,7 +612,7 @@ kbd { font: 600 11.5px var(--mono); padding: 2px 6px; border: 1px solid var(--li
 .drawer-top { display: flex; justify-content: space-between; align-items: center; margin: 0 -8px 4px 0; }
 .task-title { font-size: 24px; font-weight: 700; line-height: 1.35; letter-spacing: -.01em; overflow-wrap: anywhere; }
 .task-people { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin-top: 10px; font-size: 13.5px; color: var(--ink-2); }
-.task-people > span { display: inline-flex; align-items: center; gap: 7px; }
+.task-people > span { display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .task-people small { color: var(--ink-3); }
 .now-card { padding: 18px 20px; border-radius: var(--r); background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--quiet); box-shadow: var(--shadow); }
 .now-card.t-you { border-left-color: var(--baton); }
@@ -850,3 +866,10 @@ kbd { font: 600 11.5px var(--mono); padding: 2px 6px; border: 1px solid var(--li
 .request-read-more { margin: 2px 0 8px; }
 .request-preview .request-text { margin: 8px 0; }
 .request-full-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.85; color: var(--ink-2); }
+
+.update-progress { display: flex; align-items: center; gap: 12px; margin: 14px 0; }
+.update-progress progress { width: 100%; height: 8px; accent-color: var(--brand); }
+.update-progress span { font-size: 13px; color: var(--ink-2); }
+.update-notes { margin-top: 16px; }
+.update-notes p { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; overflow: auto; }
+.update-error { color: var(--danger, #b94747); }
