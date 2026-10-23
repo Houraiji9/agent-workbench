@@ -3,7 +3,7 @@ import {test,expect} from '@playwright/test';import fs from 'node:fs';import pat
 test('项目选择可搜索，草稿备忘持久化、可修改再提交，旧表单提示版本冲突',async({page})=>{
  const {post,get,root}=await api(page);let project:any;
  for(let i=0;i<35;i++){const folder=path.join(root,'需求选择-'+i);fs.mkdirSync(folder,{recursive:true});project=await post('/projects',{name:'筛选测试项目 '+i,path:folder})}
- await page.goto('/#/requests');await page.getByRole('button',{name:'新建需求',exact:true}).click();let d=page.getByRole('dialog',{name:'提一个需求'});
+ await page.goto('/#/requests');await page.getByRole('button',{name:'提需求',exact:true}).click();let d=page.getByRole('dialog',{name:'提一个需求'});
  await expect(d.getByRole('listbox')).toHaveCount(0);await d.getByRole('combobox',{name:'属于哪个项目'}).click();await d.getByLabel('搜索项目').fill('筛选测试项目 34');await expect(d.getByRole('listbox').getByRole('option')).toHaveCount(1);await d.getByRole('listbox').getByRole('option').click();await expect(d.getByRole('listbox')).toHaveCount(0);
  await d.getByLabel('你想完成什么？').fill('测试草稿：下个月再做的项目整理');await d.getByRole('button',{name:'先记下来',exact:true}).click();await expect(d).toHaveCount(0);await page.reload();let card=page.getByRole('article',{name:'测试草稿：下个月再做的项目整理'});await expect(card).toContainText('待开始');await shot(page,'需求箱-未来计划');
  let q=(await get('/state')).requests.find((q:any)=>q.text==='测试草稿：下个月再做的项目整理');expect(q.status).toBe('draft');expect(q.project_id).toBe(project.id);
@@ -30,10 +30,10 @@ test('团队页签与各页面右上入口位置稳定；切换长短页面重�
  await page.setViewportSize({width:1440,height:900});await page.goto('/#/team?tab=presets');await page.locator('.preset-card').last().scrollIntoViewIfNeeded();expect(await page.evaluate(()=>scrollY)).toBeGreaterThan(0);await page.locator('nav').getByRole('button',{name:'项目',exact:true}).click();await expect.poll(()=>page.evaluate(()=>scrollY)).toBe(0);
 });
 
-test('额度按内容大小排序并逐行对齐，放大缩小无重叠或溢出',async({page})=>{
+test('同优先级额度保留大小排序，放大缩小无重叠或溢出',async({page})=>{
  const {post}=await api(page);for(let i=1;i<=4;i++)await post('/quotas',{version:0,source_ref:null,name:'测试不同高度额度 '+i,members:['codex'],windows:Array.from({length:i},(_,j)=>({label:'窗口 '+j,metric:'percent',remaining:90-i*10,limit:null,currency:null,unit:'%',resets_at:null}))});
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('/#/resources');
- for(const width of [2560,1440,900,390]){await page.setViewportSize({width,height:1000});await expect.poll(()=>page.locator('.quota-rows').first().evaluate(el=>{const boxes=[...el.children].map(c=>c.getBoundingClientRect());const area=el.getBoundingClientRect();return boxes.length>0&&boxes.every(b=>b.left>=area.left-1&&b.right<=area.right+1)&&boxes.every((b,i)=>boxes.slice(i+1).every(a=>a.left>=b.right-1||b.left>=a.right-1||a.top>=b.bottom+12||b.top>=a.bottom+12))})).toBe(true);await expect.poll(()=>page.locator('.quota-rows').first().evaluate(el=>{const heights=[...el.children].map(c=>c.getBoundingClientRect().height);return heights.every((h,i)=>!i||h<=heights[i-1]+1)})).toBe(true);expect(await noHorizontalScroll(page)).toBe(true);if(width===1440||width===390)await shot(page,'额度-按大小排列-'+width)}
+ for(const width of [2560,1440,900,390]){await page.setViewportSize({width,height:1000});await expect.poll(()=>page.locator('.quota-rows').first().evaluate(el=>{const boxes=[...el.children].map(c=>c.getBoundingClientRect());const area=el.getBoundingClientRect();return boxes.length>0&&boxes.every(b=>b.left>=area.left-1&&b.right<=area.right+1)&&boxes.every((b,i)=>boxes.slice(i+1).every(a=>a.left>=b.right-1||b.left>=a.right-1||a.top>=b.bottom+12||b.top>=a.bottom+12))})).toBe(true);await expect.poll(()=>page.getByRole('article',{name:/测试不同高度额度/}).evaluateAll(els=>els.map(el=>el.getAttribute('aria-label')))).toEqual([4,3,2,1].map(i=>'测试不同高度额度 '+i+' 额度'));expect(await noHorizontalScroll(page)).toBe(true);if(width===1440||width===390)await shot(page,'额度-按大小排列-'+width)}
  await page.getByRole('button',{name:'切换到深色外观'}).click();await page.setViewportSize({width:1440,height:1000});await shot(page,'额度-按大小排列-深色');expect(errors).toEqual([]);
 });
 

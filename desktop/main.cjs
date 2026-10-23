@@ -17,7 +17,7 @@ const port = Number(process.env.WORKBENCH_PORT || settings.port || 4317);
 const base = `http://127.0.0.1:${port}`;
 const node = app.isPackaged ? path.join(process.resourcesPath, 'runtime/node.exe') : process.env.WORKBENCH_NODE;
 const owner = crypto.randomUUID();
-let win, tray, backend, starting, booting, quitting = false, ready = false;
+let win, tray, trayMenu, backend, starting, booting, quitting = false, ready = false;
 app.setName('工作台');
 app.setAppUserModelId('local.agent.workbench');
 app.setPath('userData', path.join(dataDir, 'desktop-profile'));
@@ -59,7 +59,7 @@ async function stop() {
   if (quitting) return;
   quitting=true;ready=false;log('exiting');
   if(win&&!win.isDestroyed())win.hide();
-  // A close during indexing must wait for the start script before cleaning its owned children.
+  // Explicit exit during indexing must wait before cleaning its owned children.
   await booting?.catch(()=>{});
   await starting?.catch(()=>{});
   try { await stopBackend(backend); }
@@ -108,15 +108,16 @@ else {
   app.whenReady().then(async()=>{
     fs.mkdirSync(dataDir,{recursive:true});
     const icon=nativeImage.createFromPath(path.join(__dirname,'icon.png'));
-    tray=new Tray(icon);tray.setToolTip('工作台 · 最小化后继续运行');
-    tray.setContextMenu(Menu.buildFromTemplate([{label:'打开工作台',click:restore},{type:'separator'},{label:'退出工作台',click:()=>void stop()}]));
+    tray=new Tray(icon);tray.setToolTip('工作台');
+    trayMenu=Menu.buildFromTemplate([{id:'open-workbench',label:'打开工作台',click:restore},{type:'separator'},{id:'quit-workbench',label:'退出工作台',click:()=>void stop()}]);
+    tray.setContextMenu(trayMenu);
     tray.on('click',restore);tray.on('double-click',restore);
     win=new BrowserWindow({width:1360,height:900,minWidth:880,minHeight:600,title:'工作台',icon,
       backgroundColor:'#eef1f4',autoHideMenuBar:true,
       webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true,spellcheck:false,preload:path.join(__dirname,'preload.cjs')}});
     Menu.setApplicationMenu(null);
-    win.on('minimize',e=>{e.preventDefault();win.hide();log('minimized_to_tray');});
-    win.on('close',e=>{e.preventDefault();void stop();});
+    win.on('minimize',()=>log('minimized_to_taskbar'));
+    win.on('close',e=>{if(quitting)return;e.preventDefault();win.hide();log('closed_to_tray');});
     installExternalLinks({win,ipcMain,shell,dialog,base});
     win.webContents.on('did-finish-load',applyZoom);
     win.on('moved',()=>{if(userZoom===null)applyZoom()});
@@ -131,4 +132,4 @@ else {
 }
 
 // Main-process diagnostics only; never exposed to the renderer.
-module.exports={getTray:()=>tray};
+module.exports={getTray:()=>tray,getTrayMenu:()=>trayMenu};

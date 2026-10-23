@@ -10,3 +10,24 @@ export function quotaPercent(w: QuotaValue): number | null {
   if (typeof w.remaining === 'number' && Number.isFinite(w.remaining) && typeof w.limit === 'number' && Number.isFinite(w.limit) && w.limit > 0 && w.remaining >= 0 && w.remaining <= w.limit) return w.remaining / w.limit * 100;
   return null;
 }
+
+export interface WeeklyQuotaWindow extends QuotaValue {
+  kind?: string;
+  metric?: string;
+  label?: string;
+  resets_at?: string | null;
+}
+
+/** Remaining weekly quota to use per day before reset; shared windows are never summed. */
+export function weeklyQuotaPriority(windows: WeeklyQuotaWindow[], now: number): number {
+  return Math.max(0, ...windows.map(w => {
+    // Token Monitor labels Grok's weekly window as kind=billing, label=Weekly.
+    const weekly = w.kind === 'weekly' || ((!w.kind || w.kind === 'custom' || w.kind === 'billing') && /每周|周额度|周限额|\bweekly\b|\b7[ -]days?\b/i.test(w.label || ''));
+    if (!weekly || w.monthly || w.metric === 'currency' || !w.resets_at) return 0;
+    const remaining = quotaPercent(w), untilReset = Date.parse(w.resets_at) - now;
+    // Low quota (the same 15% threshold as the card) and expired records get no boost.
+    if (remaining === null || remaining <= 15 || !Number.isFinite(untilReset) || untilReset <= 0) return 0;
+    // A one-day floor prevents a nearly elapsed timer from outweighing available quota.
+    return remaining / Math.max(1, untilReset / 86_400_000);
+  }));
+}

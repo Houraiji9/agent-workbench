@@ -4,7 +4,7 @@ import { RefreshCw, PencilLine, CalendarCheck, ChevronsDown, Plus, Trash2, Setti
 import { api } from '../api.js';
 import { useStore } from '../app/store.js';
 import type { R } from '../lib/flow.js';
-import { quotaPercent } from '../quota.js';
+import { quotaPercent, weeklyQuotaPriority } from '../quota.js';
 import { relative, fullDate, daysUntil, dayCountText, plainDay, subscriptionPrice, bigNumber, num } from '../lib/format.js';
 import {QuotaGrid} from '../ui/QuotaGrid.js';
 import { AgentIcon } from '../ui/AgentIcon.js';
@@ -27,6 +27,9 @@ export function Resources() {
 
 function Quota() {
   const s = useStore();
+  const [, tick] = React.useReducer(n => n + 1, 0);
+  React.useEffect(() => { const timer = window.setInterval(tick, 60_000); return () => window.clearInterval(timer); }, []);
+  const now = Date.now();
   const { data } = s;
   const tm = (data.integrations as R[]).find(i => i.id === 'tokenMonitor');
   const connected = tm?.status === 'connected';
@@ -35,20 +38,26 @@ function Quota() {
   const unconfigured = live.filter(p => p.status === 'notConfigured' && !p.cache_editable && !p.points_editable&&!p.custom_quota);
   const stalePool=(p:R)=>!p.cache_editable&&!p.points_editable&&!p.custom_quota&&p.status!=='notConfigured'&&p.freshness==='stale';
   const old = live.filter(p => stalePool(p) && !balancePair.includes(p));
-  const lowest = (p: R) => Math.min(100, ...(data.quota_windows as R[]).filter(w => w.pool_id === p.id).map(w => quotaPercent(w) ?? 101));
-  const fresh = live.filter(p => !unconfigured.includes(p) && !stalePool(p) && !balancePair.includes(p)).sort((a, b) => lowest(a) - lowest(b));
+  const fresh = live.filter(p => !unconfigured.includes(p) && !stalePool(p) && !balancePair.includes(p));
   const hasLive = live.some(p => p.cache_editable ? (data.quota_windows as R[]).some(w=>w.pool_id===p.id&&w.display_state==='live') : p.source==='token_monitor'&&p.status==='ok'&&p.freshness==='fresh');
   // 全部过期时（例如 Token Monitor 一段时间没更新），把最近一天内的上次记录放在前面，标记为上次记录。
   const freshSignal=live.filter(p=>!unconfigured.includes(p)&&!stalePool(p)&&!p.points_editable&&!p.custom_quota);
-  const recent = freshSignal.some(p => !p.cache_editable) ? [] : old.filter(p => Date.now() - Date.parse(p.source_updated_at || '') < 86400000).sort((a, b) => lowest(a) - lowest(b));
+  const recent = freshSignal.some(p => !p.cache_editable) ? [] : old.filter(p => now - Date.parse(p.source_updated_at || '') < 86400000);
   const current = [...fresh, ...recent];
   const older = old.filter(p => !recent.includes(p));
   const lastUpdate = (data.quota_windows as R[]).filter(w => (w.source || live.find(p => p.id === w.pool_id)?.source) === 'token_monitor').map(w => String(w.source_updated_at || '')).filter(Boolean).sort().pop() || tm?.last_success;
   const usage = tm?.snapshot?.usage;
+  const priorities: Record<string, number> = {};
+  const card = (p: R) => {
+    const key = p.id + (p.quota_group || '');
+    const windows = (data.quota_windows as R[]).filter(w => w.pool_id === p.id && (!p.quota_group || antigravityGroup(w) === p.quota_group));
+    priorities[key] = weeklyQuotaPriority(windows, now);
+    return <PoolCard key={key} p={p} stale={!connected || !fresh.length} />;
+  };
   const cards=[...current,...balancePair].flatMap(p=>p.provider==='antigravity'?antigravityGroups.map(g=>{
     const ws=(data.quota_windows as R[]).filter(w=>w.pool_id===p.id&&antigravityGroup(w)===g.id),manual=ws.some(w=>w.source==='user_entered');
-    return <PoolCard key={p.id+g.id} p={{...p,name:p.name+' · '+g.name,quota_group:g.id,display_state:!ws.length?'empty':manual?'manual':ws.every(w=>w.display_state==='live')?'live':'cached',freshness:ws.length&&ws.every(w=>w.freshness==='fresh')?'fresh':'stale',source_updated_at:ws.map(w=>w.source_updated_at||'').sort().pop()||null}} stale={!connected||!fresh.length}/>;
-  }):[<PoolCard key={p.id} p={p} stale={!connected||!fresh.length}/>]);
+    return card({...p,name:p.name+' · '+g.name,quota_group:g.id,display_state:!ws.length?'empty':manual?'manual':ws.every(w=>w.display_state==='live')?'live':'cached',freshness:ws.length&&ws.every(w=>w.freshness==='fresh')?'fresh':'stale',source_updated_at:ws.map(w=>w.source_updated_at||'').sort().pop()||null});
+  }):[card(p)]);
   return <>
     <div className={'source-line' + (connected && fresh.length ? '' : ' warn')}>
       <span className={'dot c-' + (tm?.status || 'not_connected')} />
@@ -57,7 +66,7 @@ function Quota() {
       <button className="link" onClick={() => s.go({ page: 'resources', tab: 'connections' })}>连接设置</button>
       <button className="btn small" onClick={()=>s.openDialog('quota-manage')}><Plus size={15}/>添加额度</button>
     </div>
-    {cards.length ? <QuotaGrid>{cards}</QuotaGrid>
+    {cards.length ? <QuotaGrid priorities={priorities}>{cards}</QuotaGrid>
       : <Empty title="暂时没有可显示的额度">{connected ? '连接正常，但还没有读到可计算的额度窗口。' : '连接 Token Monitor 后，这里会显示每个工具的剩余额度。'}</Empty>}
 
     {usage && <Section title="今天的实际用量" label="今天的实际用量">
@@ -195,6 +204,6 @@ function Connections() {
         {i.snapshot?.next_cursor && <button className="btn small ghost" disabled={s.busy} onClick={() => void s.act(() => api('/integrations/' + i.id + '/refresh', { cursor: i.snapshot.next_cursor }), '已读取后续会话')}><ChevronsDown size={15} />读取更早的会话</button>}
       </div>
     </article>)}
-    <p className="muted small">两个数据服务由桌面版自动启动；关闭工作台时一起退出（Token Monitor 自己的采集程序保留）。</p>
+    <p className="muted small">两个数据服务由桌面版自动启动；从托盘退出工作台时一起结束（Token Monitor 自己的采集程序保留）。</p>
   </div>;
 }

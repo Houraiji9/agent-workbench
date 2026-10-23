@@ -203,7 +203,6 @@ function QuotaGlance() {
         <b>{Math.round(r.value)}%</b>
       </div>)}
       {balances.map(p => <div key={p.id} className="glance-row bal"><span>{p.name}<small>账户余额</small></span><b>{p.balance.amount ?? '未知'} {p.balance.currency}</b></div>)}
-      <p className="muted small">剩余最少的在前。打开额度页查看更新时间。</p>
     </div> : <p className="muted small">{connected ? '暂时没有可计算的额度窗口。' : 'Token Monitor 未连接，暂无额度数据。'}</p>}
   </section>;
 }

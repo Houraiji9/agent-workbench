@@ -10,7 +10,7 @@ if ((Test-Path -LiteralPath $desktopShortcutPath) -and $desktopShortcut.TargetPa
 $desktopShortcut.TargetPath = $desktopExe
 $desktopShortcut.WorkingDirectory = $desktopProject
 $desktopShortcut.IconLocation = $desktopExe + ',0'
-$desktopShortcut.Description = '项目、任务与 Agent 工作台；最小化到托盘，关闭退出。'
+$desktopShortcut.Description = '项目、任务与 Agent 工作台；最小化到任务栏，关闭到托盘，右键托盘退出。'
 $desktopShortcut.Save()
 $desktopVerify = $desktopShell.CreateShortcut($desktopShortcutPath)
 if ($desktopVerify.TargetPath -ne $desktopExe) { throw '快捷方式写入验证失败。' }
