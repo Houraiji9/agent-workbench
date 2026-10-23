@@ -7,6 +7,9 @@ import { greeting, todayLine, relative, daysUntil, dayCountText, plainDay } from
 import { quotaPercent } from '../quota.js';
 import { Pill, RelayTrack, Avatar, Empty, Section } from '../ui/kit.js';
 import { copyOrder, copyPlanning, copyRework, markDispatched } from './actions.js';
+import {waitingForDependencies} from '../../shared/execution-order.js';
+import {ExecutionList,OrderStep} from '../ui/ExecutionOrder.js';
+import {RequestPreview} from '../ui/RequestPreview.js';
 
 export function Today() {
   const s = useStore();
@@ -15,6 +18,7 @@ export function Today() {
     .sort((a: R, b: R) => String(b.created_at).localeCompare(String(a.created_at)));
   const yours = data.tasks.filter(isYourTurn).sort(byUrgency);
   const theirs = data.tasks.filter(isTheirTurn).sort(byUrgency);
+  const waiting = data.tasks.filter(waitingForDependencies);
   const done = data.tasks.filter((t: R) => t.status === 'accepted')
     .sort((a: R, b: R) => String(b.acceptance_record?.confirmed_at || b.updated_at).localeCompare(String(a.acceptance_record?.confirmed_at || a.updated_at))).slice(0, 4);
   const yourCount = yours.length + requests.length;
@@ -36,7 +40,7 @@ export function Today() {
 
         {!empty && <Section title={<>轮到你了 {yourCount > 0 && <span className="count">{yourCount}</span>}</>} label="轮到你了">
           {yourCount === 0
-            ? <Empty icon={<CircleCheckBig size={28} />} title="都处理完了">Agent 有新进展、提问或交付时，会出现在这里。</Empty>
+            ? <Empty icon={<CircleCheckBig size={28} />} title={waiting.length?'后续任务正在等待前序':'都处理完了'}>Agent 有新进展、提问或交付时，会出现在这里。</Empty>
             : <div className="turn-list">
               {yours.map((t: R) => <TaskTurn key={t.id} t={t} />)}
               {requests.map((q: R) => <RequestTurn key={q.id} q={q} />)}
@@ -61,6 +65,7 @@ export function Today() {
         </Section>}
 
 
+        {waiting.length>0&&<details className="fold waiting-orders"><summary>等待前序的任务（{waiting.length}）</summary><ExecutionList tasks={waiting}/></details>}
       </div>
 
       <aside className="today-side" aria-label="概况">
@@ -118,6 +123,7 @@ function TaskTurn({ t }: { t: R }) {
   return <article className={'turn clickable t-' + relay.tone} aria-label={t.title} onClick={e => { if (!(e.target as HTMLElement).closest('button')) open(); }}>
     <div className="turn-top">
       <Pill status={t.status} />
+      <OrderStep task={t}/>
       <span className="turn-meta">{s.pname(t.project_id)} · 执行 {s.name(who)}</span>
       <RelayTrack relay={relay} compact />
     </div>
@@ -136,7 +142,7 @@ function RequestTurn({ q }: { q: R }) {
       <span className="turn-meta">{s.pname(q.project_id)} · {relative(q.created_at, s.tz)}提出</span>
       <RelayTrack relay={relay} compact />
     </div>
-    <p className="turn-title as-text">{q.text}</p>
+    <RequestPreview request={q} className="turn-title as-text"/>
     <p className="turn-next">{relay.next}</p>
     <div className="turn-actions">
       <button className="btn primary" disabled={s.busy} onClick={() => void copyPlanning(s, q)}><Copy size={16} />复制规划请求</button>

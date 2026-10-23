@@ -816,3 +816,37 @@ kbd { font: 600 11.5px var(--mono); padding: 2px 6px; border: 1px solid var(--li
 
 .app-mark { width: 38px; height: 38px; object-fit: contain; flex: none; }
 .app-mark.big { width: 64px; height: 64px; }
+
+/* 执行顺序：沿用卡片、标签与列表间距。 */
+.order-list { display: grid; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); overflow: hidden; }
+.order-row { display: flex; align-items: flex-start; gap: 16px; padding: 18px 20px; min-width: 0; }
+.order-row + .order-row { border-top: 1px solid var(--line); }
+.order-row.is-waiting { background: var(--surface-2); }
+.order-position { flex: 0 0 auto; padding-top: 2px; }
+.order-step { display: inline-flex; align-items: center; white-space: nowrap; padding: 3px 9px; border-radius: 6px; background: var(--brand-soft); color: var(--brand); font-size: 12.5px; font-weight: 650; }
+.order-body { min-width: 0; flex: 1; }
+.order-title { display: block; width: 100%; border: 0; padding: 0; background: none; text-align: left; color: var(--ink); font-weight: 600; cursor: pointer; overflow-wrap: anywhere; line-height: 1.6; }
+.order-title:hover { color: var(--brand); }
+.order-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 6px; color: var(--ink-3); font-size: 13px; }
+.order-dependencies { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 10px; margin-top: 8px; color: var(--ink-3); font-size: 13px; }
+.order-dependencies .link, .order-dependency-list .link { min-width: 0; text-align: left; overflow-wrap: anywhere; }
+.order-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.order-heading h2 { margin: 0; }
+.order-queue { font-size: 14px; color: var(--ink-2); }
+.order-dependency-list { display: grid; gap: 10px; }
+.order-dependency-list > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px 10px; }
+.order-dependency-list > div > span:first-child { font-size: 13px; color: var(--ink-3); }
+.waiting-orders { margin: 24px 0; }
+.waiting-orders > summary { padding: 8px 0; }
+.agent-panel .order-row { gap: 12px; padding: 14px; }
+.agent-panel .order-title { font-size: 14px; }
+@media (max-width: 1050px) {
+ .order-row { flex-wrap: wrap; gap: 12px; padding: 16px; }
+ .order-row > .btn { margin-left: auto; }
+}
+
+.request-preview { min-width: 0; }
+.request-preview .request-preview-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.request-read-more { margin: 2px 0 8px; }
+.request-preview .request-text { margin: 8px 0; }
+.request-full-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.85; color: var(--ink-2); }

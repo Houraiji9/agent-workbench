@@ -10,6 +10,8 @@ import { Pill, RelayTrack, Empty, Tabs, Section, Notice } from '../ui/kit.js';
 import { startPlanning, copyPlanning } from './actions.js';
 import { agentLabel } from './dialogs/ResourceDialogs.js';
 import {ArtifactLocation} from '../ui/ArtifactLocation.js';
+import {ExecutionList,OrderStep,OrderStatus} from '../ui/ExecutionOrder.js';
+import {RequestPreview} from '../ui/RequestPreview.js';
 
 function projectStats(data: R, id: string) {
   const tasks = (data.tasks as R[]).filter(t => t.project_id === id);
@@ -113,7 +115,7 @@ function Progress({ project, tasks }: { project: R; tasks: R[] }) {
     {requests.length > 0 && <Section title="需求">
       <div className="row-list">{requests.map(q => <div key={q.id} className="row static req-row">
         <Pill tone={q.status==='draft'?'quiet':'you'}>{q.status==='draft'?'待开始':'等待规划'}</Pill>
-        <span className="row-main"><strong title={q.text}>{q.text}</strong><small>{relative(q.updated_at||q.created_at, s.tz)}更新</small></span>
+        <div className="row-main"><RequestPreview request={q}/><small>{relative(q.updated_at||q.created_at, s.tz)}更新</small></div>
         {!project.archived&&<span className="row-tools">
           {q.status==='awaiting_planning'&&<button className="btn small" disabled={s.busy} onClick={() => void copyPlanning(s, q)}><Copy size={15} />复制规划请求</button>}
           {q.status==='draft'&&<button className="btn small" disabled={s.busy} onClick={()=>void startPlanning(s,q)}>现在开始</button>}
@@ -122,8 +124,8 @@ function Progress({ project, tasks }: { project: R; tasks: R[] }) {
         </span>}
       </div>)}</div>
     </Section>}
-    {active.length > 0 && <Section title="正在推进">
-      <div className="row-list">{active.map(t => <TaskRow key={t.id} t={t} />)}</div>
+    {active.length > 0 && <Section title="执行顺序" label="执行顺序">
+      <ExecutionList tasks={active}/>
     </Section>}
     {finished.length > 0 && <Section title="已经结束">
       <div className="row-list">{(showAll ? finished : finished.slice(0, 6)).map(t => <TaskRow key={t.id} t={t} />)}</div>
@@ -139,7 +141,7 @@ export function TaskRow({ t }: { t: R }) {
   return <button className="row" onClick={() => s.openTask(t.id)}>
     <RelayTrack relay={relay} compact />
     <span className="row-main"><strong>{t.title}</strong><small>{relay.headline}</small></span>
-    <span className="row-side"><Pill status={t.status} /><small>{relative(t.updated_at, s.tz)}</small></span>
+    <span className="row-side"><OrderStep task={t}/><OrderStatus task={t}/></span>
   </button>;
 }
 

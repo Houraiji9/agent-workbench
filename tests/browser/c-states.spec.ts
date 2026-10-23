@@ -75,9 +75,9 @@ test('改派：新开一次执行交给其他成员，原记录保留；团队�
   await page.keyboard.press('Escape');
   await nav(page, '团队');
   await page.getByRole('listitem', { name: 'Zcode' }).click();
-  await expect(page.getByRole('complementary', { name: 'Zcode 详情' }).getByText('改派测试')).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Zcode 详情' }).getByText('改派测试', { exact: true })).toBeVisible();
   await page.getByRole('listitem', { name: 'Codex' }).click();
-  await expect(page.getByRole('complementary', { name: 'Codex 详情' }).getByText('改派测试')).toHaveCount(0);
+  await expect(page.getByRole('complementary', { name: 'Codex 详情' }).getByText('改派测试', { exact: true })).toHaveCount(0);
 });
 
 test('取消任务需要确认；取消后记录保留，显示为已取消', async ({ page }) => {

@@ -1,3 +1,4 @@
+import {RequestContentDialog} from '../ui/RequestPreview.js';
 // 对话框路由：所有表单在打开时冻结版本号，实时刷新不会悄悄覆盖你正在填写的内容。
 import React from 'react';
 import { QuotaDialog,WorkBuddyPointsDialog } from './dialogs/QuotaDialog.js';
@@ -16,6 +17,7 @@ export function Dialogs() {
   const close = s.closeDialog;
   const key = d.name + ':' + JSON.stringify(Object.keys(p));
   switch (d.name) {
+    case 'request-content': return <RequestContentDialog request={p.request} onClose={close}/>;
     case 'request-handoff': return <RequestHandoffDialog key={p.request.id} request={p.request} fallbackText={p.fallbackText} onClose={close}/>;
     case 'request-action': return <RequestActionDialog key={p.request.id+':'+p.action} request={p.request} action={p.action} onClose={close}/>;
     case 'request': return <RequestDialog key={key} projectId={p.projectId} request={p.request} onClose={close} />;

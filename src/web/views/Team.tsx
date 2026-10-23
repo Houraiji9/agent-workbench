@@ -9,6 +9,8 @@ import { Empty, Section, Notice, Tabs } from '../ui/kit.js';
 import { AgentIcon } from '../ui/AgentIcon.js';
 import { TaskRow } from './Projects.js';
 import { isModelRetired } from '../../shared/model-policy.js';
+import {ExecutionList} from '../ui/ExecutionOrder.js';
+import {waitingForDependencies} from '../../shared/execution-order.js';
 
 function agentStats(s: ReturnType<typeof useStore>, a: R) {
   const tasks = s.data.tasks as R[];
@@ -19,7 +21,9 @@ function agentStats(s: ReturnType<typeof useStore>, a: R) {
   return {
     mine,
     doing: mine.filter(t => isTheirTurn(t) && t.status !== 'submitted'),
-    waiting: mine.filter(isYourTurn).sort(byUrgency),
+    waiting: mine.filter(t=>isYourTurn(t)&&!['ready','awaiting_dispatch'].includes(t.status)).sort(byUrgency),
+    queue:mine.filter(t=>['ready','awaiting_dispatch'].includes(t.status)&&!waitingForDependencies(t)),
+    later:mine.filter(waitingForDependencies),
     delivered: mine.filter(t => t.status === 'submitted' && !isYourTurn(t)),
     toReview: tasks.filter(t => member(t.reviewer_id) === a.id && ['submitted', 'changes_requested'].includes(t.status)),
     done: mine.filter(t => t.status === 'accepted'),
@@ -49,6 +53,8 @@ export function Team() {
               <span className="ac-stats">
                 {st.doing.length > 0 && <span className="t-working">在做 {st.doing.length}</span>}
                 {st.waiting.length > 0 && <span className="t-you">等你 {st.waiting.length}</span>}
+                {st.queue.length>0&&<span className="t-you">待执行 {st.queue.length}</span>}
+                {st.later.length>0&&<span className="quiet">等前序 {st.later.length}</span>}
                 {st.toReview.length > 0 && <span className="t-review">待审 {st.toReview.length}</span>}
                 <span className="quiet">完成 {st.done.length}</span>
               </span>
@@ -92,6 +98,8 @@ function AgentPanel({ a }: { a: R }) {
       {!!catalog.sources.length&&<details className="model-source"><summary>资料来源 · {catalog.as_of} 更新</summary>{catalog.sources.map((url:string,i:number)=><a key={url} href={url} target="_blank" rel="noreferrer">官方资料 {i+1}</a>)}</details>}
     </Section>}
 
+    {st.queue.length>0&&<Section title="执行队列" label="执行队列"><ExecutionList tasks={st.queue} queue/></Section>}
+    {st.later.length>0&&<Section title="等待前序" label="等待前序"><ExecutionList tasks={st.later} queue/></Section>}
     {st.waiting.length > 0 && <Section title="等你处理"><div className="row-list">{st.waiting.map(t => <TaskRow key={t.id} t={t} />)}</div></Section>}
     {st.doing.length > 0 && <Section title="正在做"><div className="row-list">{st.doing.map(t => <TaskRow key={t.id} t={t} />)}</div></Section>}
     {st.delivered.length > 0 && <Section title="已交付，等审查"><div className="row-list">{st.delivered.map(t => <TaskRow key={t.id} t={t} />)}</div></Section>}

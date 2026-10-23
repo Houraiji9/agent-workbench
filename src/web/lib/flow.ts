@@ -1,5 +1,6 @@
 // 工作接力：把账本里的任务状态翻译成“接力棒现在在谁手里、下一步做什么”。
 // 只做展示层翻译，不改变后台状态语义；所有判断都可在单元测试中核对。
+import {waitingForDependencies,byExecutionOrder} from '../../shared/execution-order.js';
 export type R = Record<string, any>;
 
 export type Holder = 'you' | 'agent' | 'reviewer' | 'planner' | 'none';
@@ -66,6 +67,7 @@ export function relayOf(t: R, name: (id: string) => string, executor?: string): 
     { key: 'confirm', label: '你试用确认', who: '你' },
   ];
   const r = (at: number, holder: Holder, tone: Tone, headline: string, next: string): Relay => ({ legs, at, holder, tone, headline, next, skippedReview });
+  if(waitingForDependencies(t))return r(2,'none','quiet','等待前序任务完成','先完成下方列出的任务并确认验收，再交给执行者');
   switch (t.status) {
     case 'ready': return r(2, 'you', 'you', '计划已经排好，还没生成执行单', `生成执行单并复制，发给 ${doer}`);
     case 'awaiting_dispatch': return r(2, 'you', 'you', `执行单已准备好，等你交给 ${doer}`, `把执行单粘贴给 ${doer}，然后点“我已经发给它”`);
@@ -110,6 +112,7 @@ export function requestRelay(): Relay {
 const urgency = ['waiting_input', 'blocked', 'failed', 'acceptance_rejected','changes_requested', 'awaiting_confirmation', 'in_review', 'awaiting_dispatch', 'ready', 'submitted', 'dispatched', 'running'];
 export function byUrgency(a: R, b: R): number {
   const d = urgency.indexOf(a.status) - urgency.indexOf(b.status);
+  if(['ready','awaiting_dispatch'].includes(a.status)&&['ready','awaiting_dispatch'].includes(b.status))return byExecutionOrder(a,b);
   return d || String(b.updated_at || '').localeCompare(String(a.updated_at || ''));
 }
 
@@ -118,6 +121,7 @@ export const theirTurn = ['dispatched', 'running', 'submitted'];
 export const finished = ['accepted', 'cancelled','rework_linked'];
 
 export function isYourTurn(t: R): boolean {
+  if(waitingForDependencies(t))return false;
   if (t.status === 'submitted') return reviewSkippedTask(t);
   return yourTurn.includes(t.status);
 }

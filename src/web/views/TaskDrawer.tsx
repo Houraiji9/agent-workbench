@@ -9,6 +9,8 @@ import { Drawer, RelayTrack, Pill, Notice, Avatar } from '../ui/kit.js';
 import { copyOrder, copyRework, markDispatched, reviewRequestText } from './actions.js';
 import { userAcceptanceItems } from '../../core/acceptance.js';
 import {ArtifactLocation} from '../ui/ArtifactLocation.js';
+import {TaskOrder,OrderStatus} from '../ui/ExecutionOrder.js';
+import {waitingForDependencies} from '../../shared/execution-order.js';
 
 export function TaskDrawer({ id }: { id: string }) {
   const s = useStore();
@@ -48,7 +50,7 @@ function TaskBody({ detail }: { detail: R }) {
     </div>
     <h1 className="task-title">{t.title}</h1>
     <div className="task-people">
-      <Pill status={t.status} />
+      <OrderStatus task={t}/>
       <span><Avatar name={s.name(who)} id={who} size={22} />执行：{s.name(who)}{who !== t.agent_id && <small>（原计划 {s.name(t.agent_id)}）</small>}</span>
       <span>审查：{reviewSkippedTask(t) ? '本次不安排' : s.name(t.reviewer_id)}</span>
       <span className="muted">{relative(t.updated_at, s.tz)}更新</span>
@@ -57,6 +59,7 @@ function TaskBody({ detail }: { detail: R }) {
     <RelayTrack relay={relay} />
 
     <NowCard detail={detail} relay={relay} run={run} who={who} current={current} lastMessage={lastMessage} />
+    <TaskOrder task={t}/>
 
     <section className="block" aria-label="成果">
       <h2>成果 {detail.artifacts.length > 0 && <span className="count">{detail.artifacts.length}</span>}</h2>
@@ -105,6 +108,8 @@ function NowCard({ detail, relay, run, who, current, lastMessage }: { detail: R;
   const noReview = reviewSkippedTask(t);
   const steps = (items: React.ReactNode[]) => <ol className="steps">{items.map((x, i) => <li key={i}><span>{x}</span></li>)}</ol>;
   let body: React.ReactNode = null;
+
+  if(waitingForDependencies(t))return <section className="now-card t-quiet" aria-label="现在要做什么"><p className="now-headline">等待前序任务完成</p><p className="now-next">前序任务验收后，这一单会自动变为可执行。</p><button className="btn" disabled>等待前序</button></section>;
 
   switch (t.status) {
     case 'ready':

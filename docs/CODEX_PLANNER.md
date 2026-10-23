@@ -30,6 +30,12 @@ WORKBENCH_ROOT = 'C:\Tools\AgentWorkbench'
 
 ## 执行与交付
 
+`submit_task_plan.tasks` 按建议执行顺序提交；真正的前置关系写入 `dependencies`，只在正文描述不会建立依赖。项目中的步骤由依赖关系生成，同阶段任务可并行。同一 Agent 的可执行任务按原计划顺序组成建议队列，复制执行单不会跳队。
+
+项目上下文、派单上下文与任务详情中的 `execution` 提供步骤、前序名称与状态、队列位置、当前工作和后续任务。前序仅在 `accepted` 后解锁；返工按明确登记的后续任务继续判断。缺失、取消或循环依赖需规划者核对。导出、派发和接单都会校验前序；旧执行包保持原内容。队列用于建议，不强制串行，路径冲突仍由规划者判断。
+
+页面收起长需求只影响展示。规划与编辑继续使用完整的 `request.text`。
+
 执行者先完整读取 RUN.md 与 CONTEXT.md，按准确 Task/Run/版本报告 started。回执使用 `npm run report -- event.json --file` 或带 `WORKBENCH_RUN_ID` 的执行者 MCP；事件格式见 [执行协议](EXECUTION_PROTOCOL.md)。执行者 MCP 只具备当前 Run 的回报和反馈查询能力。
 
 submitted 需包含完整结果与实际产物。完成 Review 时记录真实审查来源及对应 hash；用户自行确认通过或退回。换人、返工使用新 Run，历史保持。发现范围、费用或权限缺口时报告等待/阻塞，并写清需要用户决定的内容。

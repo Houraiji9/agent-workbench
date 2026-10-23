@@ -1,7 +1,9 @@
 // Build a portable Windows directory from an explicit allowlist, never from runtime data.
 import fs from 'node:fs';import path from 'node:path';import {fileURLToPath} from 'node:url';import {execFileSync} from 'node:child_process';import crypto from 'node:crypto';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const output=path.join(root,'releases'),stage=path.join(output,'windows','AgentWorkbench');
+const version=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')).version;
+if(!/^\d+\.\d+\.\d+$/.test(version))throw Error('Release version must be major.minor.patch');
+const output=path.join(root,'releases','v'+version),stage=path.join(output,'windows','AgentWorkbench');
 if(process.platform!=='win32'||process.arch!=='x64')throw Error('Windows x64 build required');
 if(fs.existsSync(stage))throw Error('Release staging already exists. Inspect and remove it before rebuilding.');
 if(!fs.existsSync(path.join(root,'桌面版/工作台/工作台.exe')))throw Error('Run npm run desktop:build first');

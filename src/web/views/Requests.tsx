@@ -1,3 +1,4 @@
+import {RequestPreview} from '../ui/RequestPreview.js';
 import React,{useState} from 'react';import {PencilLine,Copy,Trash2,Undo2} from 'lucide-react';import {useStore} from '../app/store.js';import {Tabs,Empty,Pill} from '../ui/kit.js';import type {R} from '../lib/flow.js';import {relative} from '../lib/format.js';import {canEditRequest} from '../../shared/request-policy.js';import {copyPlanning,startPlanning} from './actions.js';
 export function Requests(){
  const s=useStore(),[query,setQuery]=useState(''),[project,setProject]=useState(''),tab=s.route.tab||'drafts';
@@ -7,11 +8,11 @@ export function Requests(){
    <p className="muted small">{tab==='drafts'?'记下的想法都在这里。想做时，点“现在开始”。':tab==='waiting'?'把规划请求发给 Codex，等它拆分任务；暂时不做的可以移回待开始。':'Codex 已拆分的任务。尚未派发的计划可以编辑或删除。'}</p>
    <div className="library-tools"><input className="filter-input" aria-label="搜索需求" placeholder="搜索内容或项目" value={query} onChange={e=>setQuery(e.target.value)}/><select aria-label="筛选需求项目" value={project} onChange={e=>setProject(e.target.value)}><option value="">全部项目</option>{s.data.projects.map((p:R)=><option key={p.id} value={p.id}>{p.name}{p.archived?' · 已归档':''}</option>)}</select></div>
    {!items.length?<Empty title="这里还没有内容">{tab==='drafts'?'点右上角“提需求”记下一个想法。':tab==='waiting'?'提需求时点“现在开始”，需求就会出现在这里。':'Codex 提交计划后，可以在这里查看。'}</Empty>:<div className="request-list">{items.map(q=>{const archived=s.data.projects.find((p:R)=>p.id===q.project_id)?.archived,editable=!archived&&canEditRequest(q,s.data.tasks,s.data.runs);return <article className="request-card" key={q.id} aria-label={q.text}>
-     <div className="turn-top"><Pill tone={q.status==='awaiting_planning'?'you':'quiet'}>{q.status==='draft'?'待开始':q.status==='planned'?'已生成计划':'待 Codex 规划'}</Pill><small>{s.pname(q.project_id)}{archived?' · 已归档':''} · {relative(q.updated_at||q.created_at,s.tz)}</small></div><p className="request-text">{q.text}</p>
+     <div className="turn-top"><Pill tone={q.status==='awaiting_planning'?'you':'quiet'}>{q.status==='draft'?'待开始':q.status==='planned'?'已生成计划':'待 Codex 规划'}</Pill><small>{s.pname(q.project_id)}{archived?' · 已归档':''} · {relative(q.updated_at||q.created_at,s.tz)}</small></div><RequestPreview request={q}/>
      <div className="now-actions">{editable&&<button className="btn small" onClick={()=>s.openDialog('request',{request:q})}><PencilLine size={14}/>{q.status==='draft'?'继续编辑':'编辑需求'}</button>}
        {!archived&&q.status==='draft'&&<button className="btn small primary" disabled={s.busy} onClick={()=>void startPlanning(s,q)}>现在开始</button>}
        {!archived&&q.status==='awaiting_planning'&&<><button className="btn small" disabled={s.busy} onClick={()=>void copyPlanning(s,q)}><Copy size={14}/>复制规划请求</button><button className="btn small" onClick={()=>s.openDialog('request-action',{request:q,action:'recall'})}><Undo2 size={14}/>暂时不做</button></>}
-       {editable&&<button className="btn small ghost" onClick={()=>s.openDialog('request-action',{request:q,action:'delete'})}><Trash2 size={14}/>删除</button>}<button className="link" onClick={()=>s.go({page:'projects',id:q.project_id})}>查看项目</button>
+       {editable&&<button className="btn small ghost" onClick={()=>s.openDialog('request-action',{request:q,action:'delete'})}><Trash2 size={14}/>删除</button>}<button className="link" onClick={()=>s.go({page:'projects',id:q.project_id})}>{q.status==='planned'?'查看执行顺序':'查看项目'}</button>
      </div></article>})}</div>}
  </div>
 }
