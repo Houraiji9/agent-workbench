@@ -29,6 +29,7 @@ test('多执行单分步骤展示，等待前序时不能派发，实际验收�
   await expect.poll(async()=>(await h.get('/tasks/'+backend)).task.execution.dependencies_ready).toBe(false);
   const closeoutDetail=await h.get('/tasks/'+design),co=closeoutDetail.runs.find((r:any)=>r.id===o.run_id).closeout;for(const [seq,type] of [[3,'closeout_started'],[4,'closeout_completed']] as const)await h.post('/receipts',{schema_version:1,event_id:randomUUID(),task_id:design,run_id:o.run_id,task_version:1,seq,event_type:type,occurred_at:new Date().toISOString(),data:{identity:'codex',cwd:root,closeout_id:co.id,...(type==='closeout_completed'?{result:'隔离测试收尾报告：先完成执行者收尾，再进行用户验收与依赖解锁。',closeout_results:co.items.map((i:any)=>({item_id:i.id,outcome:'done',evidence:'逐项核对测试收尾事项已完成'}))}:{})}});
   const before=await h.get('/tasks/'+design);await h.post('/tasks/'+design+'/accept',{revision:before.task.revision,checks:[true]});
+  await page.getByRole('button',{name:/^待安排（/}).click();
   await expect(page.getByRole('region',{name:'轮到你了'}).getByRole('article',{name:'测试：实现接口'})).toBeVisible();
   expect((await h.get('/tasks/'+final)).task.execution.dependencies_ready).toBe(false);
   await page.goto('/#/team/codex');const queue=page.getByRole('region',{name:'执行队列'});await expect(queue.getByRole('article',{name:'测试：实现接口'})).toContainText('建议第');
@@ -45,7 +46,7 @@ test('长需求在首页、需求箱和项目收起为两行；全文可查看�
   const text='测试：合并需求与后续安排\n'+Array.from({length:25},(_,i)=>`${i+1}、完整保留需求内容，安排多个阶段执行。${'详细内容'.repeat(20)}`).join('\n')+'\n最后一项必须完整保留。';
   const q=await h.post('/requests',{project_id:p.id,text});
   for(const url of ['/#/today','/#/requests?tab=waiting','/#/projects/'+p.id]){
-    await page.goto(url);const preview=page.locator('.request-preview').filter({hasText:'测试：合并需求与后续安排'});
+    await page.goto(url);if(url.includes('today'))await page.getByRole('button',{name:/^待安排（/}).click();const preview=page.locator('.request-preview').filter({hasText:'测试：合并需求与后续安排'});
     await expect(preview.getByRole('button',{name:'查看全文'})).toBeVisible();
     const metrics=await preview.locator('.request-preview-text').evaluate(el=>({height:el.clientHeight,full:el.scrollHeight,line:parseFloat(getComputedStyle(el).lineHeight)}));
     expect(metrics.height).toBeLessThanOrEqual(metrics.line*2+2);expect(metrics.full).toBeGreaterThan(metrics.height);
@@ -54,6 +55,7 @@ test('长需求在首页、需求箱和项目收起为两行；全文可查看�
     await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);
   }
   await page.goto('/#/today');
+  await page.getByRole('button',{name:/^待安排（/}).click();
   for(const width of [1920,900]){await page.setViewportSize({width,height:1000});const preview=page.locator('.request-preview').filter({hasText:'测试：合并需求与后续安排'});await expect(preview.getByRole('button',{name:'查看全文'})).toBeVisible();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await shot(page,'长需求收起-'+width);}
   const card=page.locator('article.turn').filter({hasText:'测试：合并需求与后续安排'});await card.getByRole('button',{name:'复制规划请求'}).click();expect((await page.evaluate(()=>navigator.clipboard.readText())).replace(/\r\n/g,"\n")).toContain(text);
   expect((await h.get('/state')).requests.find((x:any)=>x.id===q.id).text).toBe(text);

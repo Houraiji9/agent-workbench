@@ -68,7 +68,7 @@ test('项目页签：成果集中可查、经验可记录（必须有来源）�
   await expect(page.locator('.memory').getByText('测试经验：直接改生产库不行')).toBeVisible();
   await expect(page.locator('.memory').filter({ hasText: '测试经验' })).toContainText('候选');
   await page.getByRole('tab', { name: '文件夹与资料' }).click();
-  await expect(page.getByText(m.root)).toBeVisible();
+  await expect(page.getByText(m.root,{exact:true})).toBeVisible();
   const download = page.waitForEvent('download');
   await page.getByRole('link', { name: '导出项目上下文' }).click();
   const file = await download;
@@ -103,14 +103,16 @@ test('项目图解：固定入口可达，由 Archify 生成后隔离预览，�
   await page.keyboard.press('Control+k');
   await page.keyboard.type('图解测试 · 图解');
   await page.getByRole('option', { name: new RegExp('测试项目 图解测试 · 图解') }).click();
-  await expect(page.getByRole('tab', { name: /图解/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: /关系图/ })).toHaveAttribute('aria-selected', 'true');
+  await page.getByText(/保存的图解快照/).click();
   await page.getByRole('button', { name: '生成项目总览' }).click();
-  const viewer = page.getByRole('dialog', { name: /项目总览/ });
+  const viewer = page.getByRole('dialog', { name: /任务依赖快照/ });
   await expect(viewer).toBeVisible({ timeout: 60000 });
   await expect(viewer.locator('iframe')).toHaveAttribute('sandbox', 'allow-scripts');
   await shot(page, '新版-项目图解');
   await page.keyboard.press('Escape');
   await page.reload();
-  await expect(page.locator('.diagram-card').filter({ hasText: '项目总览' })).toBeVisible();
+  await page.getByText(/保存的图解快照/).click();
+  await expect(page.locator('.diagram-card').filter({ hasText: '任务依赖快照' })).toBeVisible();
   void m;
 });

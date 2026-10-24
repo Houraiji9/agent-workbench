@@ -21,8 +21,10 @@ export function reviewerResources(wb:Workbench,agentId:string,at=Date.now()){
   const low=observations.filter(w=>!w.elapsed&&w.remaining_percent!==null&&w.remaining_percent<=REVIEW_RESERVE_PERCENT);
   const status=low.some(w=>w.fresh)?'low':low.length?'low_cached':observations.some(w=>w.fresh&&w.remaining_percent!==null)?'available':'unknown';
   const minimum=low.length?Math.min(...low.map(w=>w.remaining_percent!)):null;
-  return {status,assignable:!low.length,reserve_percent:REVIEW_RESERVE_PERCENT,observations,
-    reason:low.length?`剩余额度 ${minimum}%${status==='low_cached'?'（上次记录）':''}，请换一位审查者`:status==='available'?'额度可用':'额度待确认'};
+  const source_state=!linkedAll.length?'unmapped':observations.some(w=>w.fresh)?'fresh':observations.length?'stale':linkedAll.some(p=>p.status==='notConfigured')?'not_configured':'unavailable';
+  const unknownReason=source_state==='unmapped'?'尚未关联来源池':source_state==='stale'?'上游采样已过期；刷新工作台仅重新读取快照，不会触发上游采样':source_state==='not_configured'?'来源尚未配置':'来源未提供有效额度';
+  return {status,source_state,assignable:!low.length,reserve_percent:REVIEW_RESERVE_PERCENT,observations,
+    reason:low.length?`剩余额度 ${minimum}%${status==='low_cached'?'（上次记录）':''}，请换一位审查者`:status==='available'?'额度可用':'额度待确认：'+unknownReason};
 }
 export function assertReviewerResources(wb:Workbench,agentId:string){const r=reviewerResources(wb,agentId);assert(r.assignable,`${wb.get('agents',agentId).name}：${r.reason}。请读取 get_review_candidates 后重新选择`,409);return r}
 export function reviewCandidates(wb:Workbench,taskId:string){
@@ -30,6 +32,6 @@ export function reviewCandidates(wb:Workbench,taskId:string){
   return {task_id:taskId,run_id:run?.id||null,revision:task.revision,current_reviewer_id:task.reviewer_id,reserve_percent:REVIEW_RESERVE_PERCENT,
     candidates:wb.all('agents').filter(a=>!a.archived&&!sameAgent(a,author)&&canReview(a,task.work_kind)).map(a=>{
       const resource=reviewerResources(wb,a.id);let eligibility:string|null=null;try{wb.eligible(a.id)}catch(e){eligibility=(e as Error).message}
-      return {agent_id:a.id,name:a.name,scope:a.scope,resource,assignable:!eligibility&&resource.assignable,reason:eligibility||resource.reason};
+      return {agent_id:a.id,name:a.name,scope:a.scope,resource,client_capability:{automatic_delivery:false,status:'not_connected',reason:'当前提供工作台回执与会话索引；未验证客户端自动投递，使用短交接入口'},assignable:!eligibility&&resource.assignable,reason:eligibility||resource.reason};
     })};
 }

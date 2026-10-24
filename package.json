@@ -1,6 +1,6 @@
 {
   "name": "agent-workbench",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -22,7 +22,8 @@
     "test:public": "tsx --test tests/public-start.test.ts",
     "review": "tsx scripts/review.ts",
     "workbench": "tsx scripts/workbench.ts",
-    "closeout": "tsx scripts/closeout.ts"
+    "closeout": "tsx scripts/closeout.ts",
+    "agent": "tsx scripts/agent.ts"
   },
   "dependencies": {
     "@fastify/static": "10.1.6",

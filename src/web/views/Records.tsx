@@ -13,7 +13,7 @@ const statusOptions = ['ready', 'awaiting_dispatch', 'dispatched', 'running', 'w
 export function Records() {
   const s = useStore();
   const { data } = s;
-  const [query, setQuery] = useState(() => (s.route.id === 'q' ? s.route.tab || '' : ''));
+  const [query, setQuery] = useState(() => (s.route.id === 'q' ? s.route.tab || '' : data.sessions.find((x:R)=>x.id===s.route.id)?.native_id||''));
   const [kind, setKind] = useState<'all' | 'task' | 'session'>('all');
   const [filters, setFilters] = useState<R>({});
   const [items, setItems] = useState<R[] | null>(null);

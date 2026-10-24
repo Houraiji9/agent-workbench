@@ -1,3 +1,4 @@
+import {taskAction} from '../../shared/workflow-view.js';
 // 工作接力：把账本里的任务状态翻译成“接力棒现在在谁手里、下一步做什么”。
 // 只做展示层翻译，不改变后台状态语义；所有判断都可在单元测试中核对。
 import {waitingForDependencies,byExecutionOrder} from '../../shared/execution-order.js';
@@ -71,11 +72,13 @@ export function relayOf(t: R, name: (id: string) => string, executor?: string): 
     { key: 'confirm', label: '你试用确认', who: '你' },
   ];
   const r = (at: number, holder: Holder, tone: Tone, headline: string, next: string): Relay => ({ legs, at, holder, tone, headline, next, skippedReview });
+  if(['waiting_input','closeout_waiting_input'].includes(t.status)&&t.question_answered)return r(3,'you','you','答复已保存，等待执行者继续','把续作简讯交回原会话，无需再次回答');
+  if(t.status==='awaiting_confirmation'&&t.delivery_target==='runtime'&&!t.deployment?.verified)return r(5,'agent','working','等待本机安装验证','执行者先完成运行目录更新与验证，再交你试用');
   if(waitingForDependencies(t))return r(2,'none','quiet','等待前序任务完成','先完成下方列出的任务并确认验收，再交给执行者');
   if(hasPendingDecision(t))return r(['accept','reject'].includes(t.pending_user_decision.action)?6:4,'you','you',t.pending_user_decision.title,'查看已填好的事项，确认后生效');
   switch (t.status) {
     case 'ready': return r(2, 'you', 'you', '计划已经排好，还没生成执行单', `生成执行单并复制，发给 ${doer}`);
-    case 'awaiting_dispatch': return r(2, 'you', 'you', `执行单已准备好，等你交给 ${doer}`, `把执行单粘贴给 ${doer}，然后点“我已经发给它”`);
+    case 'awaiting_dispatch': return r(2, 'you', 'you', `执行单已准备好，等你交给 ${doer}`, `把简版执行单粘贴给 ${doer}，接单回执会自动更新状态`);
     case 'dispatched': return r(3, 'agent', 'working', `已经发给 ${doer}，等它确认接单`, `${doer} 读完执行单后会回报“开始”，你不用做什么`);
     case 'running': return r(3, 'agent', 'working', `${doer} 正在做`, `等 ${doer} 回报进展或交付；有问题它会来问你`);
     case 'waiting_input': return r(3, 'you', 'you', `${doer} 有个问题要问你`, '写下你的回答，保存后复制给它');
@@ -85,7 +88,7 @@ export function relayOf(t: R, name: (id: string) => string, executor?: string): 
       return skippedReview
         ? r(5, 'you', 'you', `${doer} 已交付，等待收尾`, `把收尾单交给 ${doer}`)
         : r(4, t.review_stage==='running'?'reviewer':t.review_delivery==='agent'?'agent':'you', 'review', t.review_stage==='running'?`${reviewer} 正在独立审查`:t.review_delivery==='agent'?`${doer} 正在安排 ${reviewer} 审查`:`${doer} 已交付，等你交给 ${reviewer} 审查`, t.review_stage==='running'?`${reviewer} 已接单，完成后会回传报告`:t.review_delivery==='agent'?'等待审查者接单；如调用受阻，可改为手动转发':`把审查单发给 ${reviewer}，完成后报告会附在任务里`);
-    case 'changes_requested': return r(4, 'you', 'problem', `${reviewer} 审查后要求修改`, '新开一次执行，让执行者按审查意见返工');
+    case 'changes_requested': return r(4, 'you', 'problem', `${reviewer} 审查后要求修改`, '在原会话继续，只处理本轮新增修改意见');
     case 'acceptance_rejected': return r(6,'you','problem','你已确认本次结果不通过',`复制返工要求，交给 ${doer} 修改`);
     case 'rework_linked': return r(3,'none','quiet','本次验收未通过，已由后续任务接替','查看后续任务的进展；原交付与意见保留在这里');
     case 'in_review': case 'awaiting_closeout': return r(5, t.closeout_delivery==='agent'?'agent':'you', t.closeout_delivery==='agent'?'working':'you', skippedReview ? `${doer} 已交付，等待收尾` : '审查已通过，等待执行者收尾', t.closeout_delivery==='agent'?(skippedReview?`${doer} 交付后继续完成剩余事项`:`${doer} 收到审查结果后继续完成剩余事项`):`复制收尾单，交回 ${doer}`);
@@ -129,19 +132,8 @@ export const yourTurn = ['closeout_waiting_input','waiting_input', 'closeout_blo
 export const theirTurn = ['dispatched', 'running', 'closing'];
 export const finished = ['accepted', 'cancelled','rework_linked'];
 
-export function isYourTurn(t: R): boolean {
-  if(hasPendingDecision(t))return true;
-  if(waitingForDependencies(t))return false;
-  if (t.status === 'submitted') return t.review_stage!=='running'&&t.review_delivery!=='agent';
-  if(t.status==='awaiting_closeout')return t.closeout_delivery!=='agent';
-  return yourTurn.includes(t.status);
-}
-export function isTheirTurn(t: R): boolean {
-  if(hasPendingDecision(t))return false;
-  if (t.status === 'submitted') return t.review_stage==='running'||t.review_delivery==='agent';
-  if(t.status==='awaiting_closeout')return t.closeout_delivery==='agent';
-  return theirTurn.includes(t.status);
-}
+export function isYourTurn(t:R):boolean{return taskAction(t).owner==='user';}
+export function isTheirTurn(t:R):boolean{return ['agent','reviewer'].includes(taskAction(t).owner);}
 
 /** 事件的人话描述（不显示原始协议字段名）。 */
 export function eventText(e: R, doer: string): string {

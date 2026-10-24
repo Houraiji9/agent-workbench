@@ -1,3 +1,4 @@
+import {verifyRuntime} from './runtime-delivery.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import {z} from 'zod';
@@ -9,7 +10,7 @@ import {reviewSkipped} from './acceptance.ts';
 
 export const closeoutStates=['awaiting_closeout','closing','closeout_waiting_input','closeout_blocked'];
 export const reviewableStates=['submitted','in_review','changes_requested',...closeoutStates,'awaiting_confirmation'];
-export const closeoutInput=z.object({run_id:z.string().regex(/^R-[a-f0-9-]{36}$/)}).strict();
+export const closeoutInput=z.object({detail:z.enum(['brief','full']).optional(),run_id:z.string().regex(/^R-[a-f0-9-]{36}$/)}).strict();
 export const closeoutOrderInput=closeoutInput.extend({expected_revision:z.number().int()}).strict();
 export function latestReview(wb:Workbench,rid:string):Row|undefined{
   const row=wb.db.prepare("SELECT data FROM reviews WHERE run_id=? AND json_extract(data,'$.revoked_at') IS NULL ORDER BY json_extract(data,'$.created_at') DESC,rowid DESC LIMIT 1").get(rid) as any;
@@ -53,7 +54,7 @@ export function getCloseoutContext(wb:Workbench,rid:string){
 export function assertCloseoutComplete(wb:Workbench,t:Row,r:Row){
   const b=binding(wb,t,r);
   assert(t.status==='awaiting_confirmation'&&r.closeout?.status==='completed'&&r.closeout.digest===b.digest,'请先由执行者完成收尾，再确认验收',409);
-  verifyDelivery(wb,t,r);
+  verifyDelivery(wb,t,r);verifyRuntime(wb,t,r);
   assert(hash(readBounded(safePath(r.closeout.report_path,[r.directory])))===r.closeout.report_sha256,'收尾报告已变化，请重新核对',409);
 }
 function quote(s:string){return "'"+s.replaceAll("'","''")+"'"}
@@ -63,7 +64,7 @@ export function writeCloseoutOrder(wb:Workbench,rid:string){
   const order=path.join(dir,'CLOSEOUT.md');
   const cmd=`& ${quote(process.execPath)} --import ${quote(import.meta.resolve('tsx'))} ${quote(path.join(ROOT,'scripts/closeout.ts'))} ${rid}`;
   const example={schema_version:1,event_id:'EV-请生成新的UUID',task_id:t.id,run_id:rid,task_version:t.version,seq:c.next_seq,event_type:'closeout_completed',occurred_at:now(),data:{identity:r.agent_id,cwd:r.cwd,closeout_id:c.closeout.id,message:'实际收尾结果',result:'请写明实际处理内容、检查证据与使用方式（至少20字）',closeout_results:c.closeout.items.map((i:Row)=>({item_id:i.id,outcome:'done',evidence:'请填写实际结果或核对依据'}))}};
-  const body=`# 执行收尾：${t.title}\n\nTask：${t.id}\nRun：${rid}\n收尾单：${c.closeout.id}\n执行者：${wb.get('agents',r.agent_id).name}\n项目：${wb.get('projects',t.project_id).name}\n工作目录：${r.cwd}\n\n## 原始需求与本轮范围\n${t.original_request}\n\n${t.goal}\n${t.scope}\n\n## 剩余事项\n${c.closeout.items.map((i:Row)=>'- [ ] '+i.id+' '+i.text).join('\n')}\n\n逐项核对原需求与交付报告中的未完成项。只执行已授权的收尾；需要用户决策用 closeout_waiting_input，受阻用 closeout_blocked。发布、费用、清理等仍按原任务授权，不从本单扩大权限。\n\n## 当前交付及审查\n原执行单：${r.order_path}\n交付报告：${path.join(r.directory,'RESULT.md')}\n${c.review?(c.review.report_markdown||c.review.evidence)+'\n'+c.review.findings:'本次用户未安排独立审查。'}\n\n## 修改范围\n${t.allowed_paths.join('\n')}\n禁止：${t.forbidden_actions.join('；')}\n数据、凭据和旧执行记录通过工作台接口访问。保持受审成果；需修改时回报 blocked，并新开 Run 重新交付和审查。\n\n## 接单与回传（PowerShell）\n1. 读取最新状态与序号：\n${cmd} context\n2. 接单（收尾单编号必须一致）：\n${cmd} started ${c.closeout.id}\n3. 完成后按 result.example.json 写回执。填写实际检查结果，seq 使用 context 返回的 next_seq，event_id 用新 UUID，occurred_at 用当前时间。每项 outcome 为 done 或 not_applicable（写明原因）。有未完成项请回报 blocked 或 waiting_input，保持未完成。\n4. 提交回执：\n${cmd} submit ${quote(path.join(dir,'result.json'))}\n确认返回 disposition=applied，若 pending/rejected，处理原因后再说明进展。\n\n也可用该 Run 的 scoped MCP：get_closeout_context(run_id)、report_run_event。所有收尾事件需 data.closeout_id=${c.closeout.id}。支持 closeout_started/progress/waiting_input/blocked/completed；seq 与之前执行连续。接单、进展、受阻和完成各自回报。远程 Agent 返回同样 JSON，用户在任务内导入回执。\n\n收尾报告独立保存；原交付与审查保持原样。完成收尾后再交给用户试用验收。\n`;
+  const body=`# 执行收尾：${t.title}\n\nTask：${t.id}\nRun：${rid}\n收尾单：${c.closeout.id}\n执行者：${wb.get('agents',r.agent_id).name}\n项目：${wb.get('projects',t.project_id).name}\n工作目录：${r.cwd}\n\n## 原始需求与本轮范围\n${t.original_request}\n\n${t.goal}\n${t.scope}\n\n## 剩余事项\n${c.closeout.items.map((i:Row)=>'- [ ] '+i.id+' '+i.text).join('\n')}\n\n逐项核对原需求与交付报告中的未完成项。只执行已授权的收尾；需要用户决策用 closeout_waiting_input，受阻用 closeout_blocked。发布、费用、清理等仍按原任务授权，不从本单扩大权限。\n\n## 当前交付及审查\n原执行单：${r.order_path}\n交付报告：${path.join(r.directory,'RESULT.md')}\n${c.review?'审查 '+c.review.id+'：'+c.review.verdict+'。完整报告按需从任务审查记录或 get_closeout_context(detail=full) 读取。':'本次用户未安排独立审查。'}\n\n## 修改范围\n${t.allowed_paths.join('\n')}\n禁止：${t.forbidden_actions.join('；')}\n数据、凭据和旧执行记录通过工作台接口访问。保持受审成果；需修改时回报 blocked，并新开 Run 重新交付和审查。\n\n## 接单与回传（PowerShell）\n1. 读取最新状态与序号：\n${cmd} context\n2. 接单（收尾单编号必须一致）：\n${cmd} started ${c.closeout.id}\n3. 完成后按 result.example.json 写回执。填写实际检查结果，seq 使用 context 返回的 next_seq，event_id 用新 UUID，occurred_at 用当前时间。每项 outcome 为 done 或 not_applicable（写明原因）。有未完成项请回报 blocked 或 waiting_input，保持未完成。\n4. 提交回执：\n${cmd} submit ${quote(path.join(dir,'result.json'))}\n确认返回 disposition=applied，若 pending/rejected，处理原因后再说明进展。\n\n也可用该 Run 的 scoped MCP：get_closeout_context(run_id)、report_run_event。所有收尾事件需 data.closeout_id=${c.closeout.id}。支持 closeout_started/progress/waiting_input/blocked/completed；seq 与之前执行连续。接单、进展、受阻和完成各自回报。远程 Agent 返回同样 JSON，用户在任务内导入回执。\n\n收尾报告独立保存；原交付与审查保持原样。完成收尾后再交给用户试用验收。\n`;
   // Immutable entry for each closeout; live context supplies up-to-date sequence numbers.
   if(!fs.existsSync(order)){atomicWrite(order,body);atomicWrite(path.join(dir,'result.example.json'),JSON.stringify(example,null,2))}
   return {closeout_id:c.closeout.id,run_id:rid,order_path:order,entry:`审查${c.review?'已通过':'未安排'}，请执行者继续完成收尾。\n请完整读取并执行：${order}\nTask ${t.id} / Run ${rid} / 收尾单 ${c.closeout.id}。先报告 closeout_started 接单，完成逐项收尾后再交用户验收。`};
@@ -76,7 +77,7 @@ export function applyCloseoutEvent(wb:Workbench,e:RunEvent,t:Row,r:Row,created:s
   assert(allowed[e.event_type]?.includes(t.status),'当前阶段不能应用这条收尾回报',409);
   const closeout=r.closeout;
   if(e.event_type==='closeout_completed'){
-    verifyDelivery(wb,t,r);
+    verifyDelivery(wb,t,r);verifyRuntime(wb,t,r);
     assert(e.data.result&&e.data.result.trim().length>=20,'请提交完整收尾报告（至少20字）');
     const results=e.data.closeout_results||[];
     assert(results.length===closeout.items.length&&new Set(results.map(x=>x.item_id)).size===results.length&&closeout.items.every((i:Row)=>results.some(x=>x.item_id===i.id)),'请逐项回报所有收尾事项');

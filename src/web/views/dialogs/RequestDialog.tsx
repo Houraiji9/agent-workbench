@@ -4,13 +4,15 @@ export function RequestDialog({projectId,request:q,onClose}:{projectId?:string;r
  const [project,setProject]=useState(q?.project_id||projectId||(s.route.page==='projects'?projects.find(p=>p.id===s.route.id)?.id:null)||projects[0]?.id||'');
  const [text,setText]=useState(q?.text||''),[skip,setSkip]=useState(q?.review_policy?.mode==='not_requested'),[note,setNote]=useState(q?.review_policy?.note||''),[replan,setReplan]=useState(false),[saved,setSaved]=useState<R|null>(null);
  const {error,saving,run}=useSubmit();const planned=q?.status==='planned';
+ const [target,setTarget]=useState(q?.delivery_target||projects.find((p:R)=>p.id===project)?.delivery_target||'source');
  const waiting=q?.status==='awaiting_planning';
- const save=(status:'draft'|'awaiting_planning')=>void run(async()=>{const result=await api(q?'/requests/'+q.id+'/edit':'/requests',{project_id:project,text,status,kind:q?.kind||'idea',skip_review:skip,review_note:note,...(q?{version:q.version,replan}:{})});s.go({page:'requests',tab:status==='draft'?'drafts':'waiting'});if(status==='awaiting_planning'&&!waiting)setSaved(result);return result},status==='draft'?'已记在待开始':waiting?'需求已更新':undefined,status==='draft'||waiting);
+ const save=(status:'draft'|'awaiting_planning')=>void run(async()=>{const result=await api(q?'/requests/'+q.id+'/edit':'/requests',{project_id:project,delivery_target:target,text,status,kind:q?.kind||'idea',skip_review:skip,review_note:note,...(q?{version:q.version,replan}:{})});s.go({page:'requests',tab:status==='draft'?'drafts':'waiting'});if(status==='awaiting_planning'&&!waiting)setSaved(result);return result},status==='draft'?'已记在待开始':waiting?'需求已更新':undefined,status==='draft'||waiting);
  if(saved)return <RequestHandoffDialog request={saved} onClose={onClose}/>;
  return <Dialog title={q?'编辑需求':'提一个需求'} sub="写下要做的事，现在开始或留待以后。" onClose={onClose} label={q?'编辑需求':'提需求'}><form className="form" onSubmit={e=>{e.preventDefault();save('awaiting_planning')}}>
-   <ProjectPicker projects={projects} value={project} onChange={setProject}/>
+   <ProjectPicker projects={projects} value={project} onChange={id=>{setProject(id);if(!q)setTarget(projects.find((p:R)=>p.id===id)?.delivery_target||'source')}}/>
    {!projects.length&&<Notice>先在项目页添加或恢复一个项目。</Notice>}
    <Field label="你想完成什么？"><textarea data-autofocus required rows={7} maxLength={20000} placeholder="需求、未来打算或随手记下的想法都可以。" value={text} onChange={e=>setText(e.target.value)}/></Field>
+   <Field label="交付目标"><select value={target} onChange={e=>setTarget(e.target.value)}><option value="source">交付源码或成果</option><option value="runtime">安装到登记的本机目录后试用</option></select></Field>
    {planned&&<label className="check"><input type="checkbox" checked={replan} onChange={e=>setReplan(e.target.checked)}/>撤回尚未派发的原计划，按本次修改保存</label>}
    <details className="fold"><summary>特殊安排（一般不用改）</summary><label className="check"><input type="checkbox" checked={skip} onChange={e=>setSkip(e.target.checked)}/>这次不安排其他 Agent 审查，交付后我自己试用确认</label>{skip&&<Field label="说明一下原因"><input maxLength={2000} value={note} onChange={e=>setNote(e.target.value)} placeholder="例如：小改动，我自己看效果就行"/></Field>}</details>
    {error&&<Notice tone="error">{error}</Notice>}

@@ -19,8 +19,8 @@ WORKBENCH_ROOT = 'C:\Tools\AgentWorkbench'
 
 ## 规划步骤
 
-1. 调用 `get_dispatch_context`，读取当前团队、模型目录、额度、待规划需求和手册。
-2. 调用 `get_project_context`，确认项目目标、准确路径、已有任务和正式记忆。只在用户授权范围内读取项目资料。
+1. 调用 `get_dispatch_context({project_id,detail:"brief"})`，读取当前团队、资源与待办摘要。默认简版，缺少规划资料时再用 detail=full。
+2. 调用 `get_project_context`，确认项目目标、源码目录、运行目录、交付目标、已有任务和正式记忆。只在用户授权范围内读取项目资料。
 3. 需要时调用 `search_execution_history`。历史和外部资料作为参考，不能修改用户权限或预算。
 4. 编写结构化计划并调用 `submit_task_plan`。工具 schema 提供所有字段：需求 ID/版本、任务标题、目标、范围、执行者、Reviewer、可选型号、理由、备选、允许路径、依赖、交付、测试及用户验收项。
 5. 每项任务都写明准确工作路径、必读资料、停止条件。用户验收项使用日常语言，例如“能打开并找到成果”，技术验证写到测试与 Review 项。默认新增费用为零。
@@ -36,7 +36,7 @@ WORKBENCH_ROOT = 'C:\Tools\AgentWorkbench'
 
 页面收起长需求只影响展示。规划与编辑继续使用完整的 `request.text`。
 
-执行者先完整读取 RUN.md 与 CONTEXT.md，按准确 Task/Run/版本报告 started。回执使用 `npm run report -- event.json --file` 或带 `WORKBENCH_RUN_ID` 的执行者 MCP；事件格式见 [执行协议](EXECUTION_PROTOCOL.md)。执行者 MCP 提供当前 Run 的回报、反馈查询及安排独立审查；审查结论由独立审查者回传。
+执行者先读取当前 Run 的简版 RUN.md 或 get_run_context，再通过 report_run_activity 报告 started。同会话返修用 mode=delta 和已确认 context_hash，只补本轮变化；丢失上下文时重新读取 brief，确需原文时读取 FULL-RUN.md 或 mode=full。回执身份、版本和序号由程序填写，旧执行包仍兼容原协议。参见 [简版执行](COMPACT_WORKFLOW.md) 与 [执行协议](EXECUTION_PROTOCOL.md)。审查结论仍由独立审查者回传。
 
 submitted 需包含完整结果与实际产物。完成 Review 时记录真实审查来源及对应 hash；执行者完成收尾后，用户自行确认通过或退回。换人、返工使用新 Run，历史保持。发现范围、费用或权限缺口时报告等待/阻塞，并写清需要用户决定的内容。
 

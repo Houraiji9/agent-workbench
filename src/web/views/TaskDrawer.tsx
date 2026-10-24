@@ -8,7 +8,7 @@ import { type R, relayOf, eventText, dispositionText, reviewSkippedTask } from '
 import { relative, fullDate, bytes } from '../lib/format.js';
 import { Drawer, RelayTrack, Pill, Notice } from '../ui/kit.js';
 import { AgentIcon } from '../ui/AgentIcon.js';
-import { copyOrder, copyRework, markDispatched, copyReviewOrder, copyReviewFeedback, copyCloseoutOrder } from './actions.js';
+import { copyOrder, copyRework, markDispatched, copyReviewOrder, copyReviewFeedback, copyCloseoutOrder, continueTask } from './actions.js';
 import { userAcceptanceItems } from '../../core/acceptance.js';
 import {ArtifactLocation} from '../ui/ArtifactLocation.js';
 import {TaskOrder,OrderStatus} from '../ui/ExecutionOrder.js';
@@ -58,7 +58,10 @@ function TaskBody({ detail }: { detail: R }) {
       <span className="muted">{relative(t.updated_at, s.tz)}更新</span>
     </div>
 
-    <RelayTrack relay={relay} />
+    <details className="fold"><summary>完整执行流程</summary><RelayTrack relay={relay}/></details>
+    {run&&<div className="tool-row"><button className="btn small" disabled={s.busy||['accepted','cancelled','rework_linked','awaiting_confirmation'].includes(t.status)} onClick={()=>void continueTask(s,t)}>同会话继续</button><button className="btn small ghost" disabled={s.busy||['accepted','cancelled','rework_linked','awaiting_confirmation'].includes(t.status)} onClick={()=>void continueTask(s,t,false)}>新会话接手</button></div>}
+    {t.delivery_target==='runtime'&&<Notice tone={run?.deployment?.verified?'info':'warn'}>{run?.deployment?.verified?'本机安装已校验，可在运行目录试用。':'交付目标是本机程序；尚未校验安装，不能把候选当作已可试用。'}</Notice>}
+    <details className="fold"><summary>上下文与客户端状态</summary>{run?.context_usage?<p>接口已提供 {run.context_usage.requests} 次上下文，共 {run.context_usage.characters} 字符，其中增量 {run.context_usage.delta||0} 次。字符数不等于模型计费 token。</p>:<p>当前执行尚无简版接口的上下文统计；不把缺失数据当作零消耗。</p>}<p>同会话增量可用；自动客户端投递尚未连接。复制简讯不会被标为已发送或已接单。</p></details>
 
     {pendingDecisions(s.data).some(d=>d.task_id===t.id)?pendingDecisions(s.data).filter(d=>d.task_id===t.id).map(d=><UserDecision key={d.id} decision={d}/>):<NowCard detail={detail} relay={relay} run={run} who={who} current={current} lastMessage={lastMessage} />}
     <TaskOrder task={t}/>

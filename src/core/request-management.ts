@@ -1,5 +1,5 @@
 import {z} from 'zod';import type {Workbench} from './workbench.ts';import {assert,id,now} from './security.ts';import {canEditRequest} from '../shared/request-policy.ts';
-const input=z.object({project_id:z.string().min(1),text:z.string().trim().min(1).max(20000),status:z.enum(['draft','awaiting_planning']).default('awaiting_planning'),kind:z.enum(['idea','plan','memo']).default('idea'),version:z.number().int().positive().optional(),replan:z.boolean().optional(),skip_review:z.boolean().optional(),review_note:z.string().trim().max(2000).optional()}).strict();
+const input=z.object({delivery_target:z.enum(['source','runtime']).optional(),project_id:z.string().min(1),text:z.string().trim().min(1).max(20000),status:z.enum(['draft','awaiting_planning']).default('awaiting_planning'),kind:z.enum(['idea','plan','memo']).default('idea'),version:z.number().int().positive().optional(),replan:z.boolean().optional(),skip_review:z.boolean().optional(),review_note:z.string().trim().max(2000).optional()}).strict();
 export {input as requestInput};
 function withdrawPlan(wb:Workbench,qid:string,reason:string,at:string){
  const tasks=wb.all('tasks').filter(t=>t.request_id===qid&&!t.request_withdrawn),ids=new Set(tasks.map(t=>t.id));
@@ -18,7 +18,7 @@ export function saveRequest(wb:Workbench,qid:string|null,value:unknown){const v=
  }
  const policy=v.skip_review?{mode:'not_requested',source:'user_requested',note:v.review_note||'',recorded_at:at}:null;
  if(policy&&v.status==='awaiting_planning')assert(policy.note.length>=5,'不安排审查需要用户说明，请填写至少 5 个字');
- const row={...old,id:old?.id||id('Q'),project_id:v.project_id,text:v.text,status:v.status,kind:v.kind,review_policy:policy,version:(old?.version||0)+1,created_at:old?.created_at||at,updated_at:at,
+ const row={...old,delivery_target:v.delivery_target??old?.delivery_target??p.delivery_target??'source',delivery_target_source:v.delivery_target?'user_selected':old?.delivery_target_source||'project_default',id:old?.id||id('Q'),project_id:v.project_id,text:v.text,status:v.status,kind:v.kind,review_policy:policy,version:(old?.version||0)+1,created_at:old?.created_at||at,updated_at:at,
    history:old?[...(old.history||[]),{text:old.text,project_id:old.project_id,status:old.status,kind:old.kind||'idea',version:old.version,review_policy:old.review_policy||null,saved_at:at}]:[]};
  wb.put('requests',row,{project_id:row.project_id});wb.audit('user',old?'edit_request':'request',row.id,{before:old,after:row});return row;
 })}

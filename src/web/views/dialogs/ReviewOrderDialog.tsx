@@ -17,7 +17,8 @@ export function ReviewOrderDialog({detail,onClose}:{detail:R;onClose():void}){
     const r=await api('/review-orders',{run_id:task.current_run_id,reviewer_id:reviewer,expected_revision:candidates?.revision,reason:reason.trim()||'用户在工作台选择独立审查者',delivery_mode:'manual',new_review:['in_review','changes_requested','awaiting_closeout','closing','closeout_waiting_input','closeout_blocked','awaiting_confirmation'].includes(task.status)});setSaved(r);await s.copy(r.entry,`审查单已复制，发给 ${s.name(reviewer)}`);return r;
   },undefined,false)}}>
     <Field label="审查者"><select required value={reviewer} onChange={e=>setReviewer(e.target.value)}><option value="">请选择审查者</option>{candidates?.candidates.map((a:R)=><option key={a.agent_id} value={a.agent_id} disabled={!a.assignable}>{a.name} · {a.reason}</option>)}</select></Field>
-    <Field label="安排说明（可选）"><input value={reason} onChange={e=>setReason(e.target.value)} maxLength={2000} placeholder="例如：Grok 额度不足，这次交给 Claude"/></Field>
+    {reviewer&&candidates&&<p className="muted small">{candidates.candidates.find((a:R)=>a.agent_id===reviewer)?.client_capability?.reason}</p>}
+    <Field label="安排说明（可选）"><input value={reason} onChange={e=>setReason(e.target.value)} maxLength={2000} placeholder="选择具备同类能力且资源可用的独立成员"/></Field>
     {candidates&&!candidates.candidates.some((a:R)=>a.assignable)&&<Notice>当前没有可用的独立审查者，请更新团队或额度后再安排。</Notice>}
     {error&&<Notice tone="error">{error}</Notice>}
     <footer className="dialog-foot inline"><button type="button" className="btn ghost" onClick={onClose}>取消</button><button className="btn primary" disabled={saving||!reviewer}>生成并复制审查单</button></footer>

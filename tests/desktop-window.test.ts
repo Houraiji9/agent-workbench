@@ -10,7 +10,7 @@ import {ROOT} from '../src/core/config.ts';
 test('桌面最小化到任务栏、关闭到托盘、恢复同一窗口、托盘退出释放后台', {skip:process.platform!=='win32',timeout:60000}, async()=>{
   const root=path.join(ROOT,'.test-tmp','desktop-window-'+randomUUID());
   fs.mkdirSync(path.join(root,'config'),{recursive:true});
-  for(const name of ['src','scripts','migrations','dist'])fs.cpSync(path.join(ROOT,name),path.join(root,name),{recursive:true});
+  for(const name of ['src','scripts','migrations','dist','desktop'])fs.cpSync(path.join(ROOT,name),path.join(root,name),{recursive:true});
   fs.copyFileSync(path.join(ROOT,'package.json'),path.join(root,'package.json'));
   fs.symlinkSync(path.join(ROOT,'node_modules'),path.join(root,'node_modules'),'junction');
   const socket=net.createServer();await new Promise<void>(r=>socket.listen(0,'127.0.0.1',r));

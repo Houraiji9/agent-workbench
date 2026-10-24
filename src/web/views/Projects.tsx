@@ -1,3 +1,5 @@
+import {ProjectSummary} from '../ui/ProjectSummary.js';
+import {RelationshipGraph} from '../ui/RelationshipGraph.js';
 // 项目：总览卡片 + 从 Agent 会话里发现的文件夹；单个项目分为进展、成果、图解、经验、文件夹五个页签。
 import React, { useState } from 'react';
 import { Plus, FolderOpen, Copy, PencilLine, Link2, Download, Network, ArrowLeft, Lightbulb, FolderSearch, FileText, MessagesSquare, Archive, RotateCcw } from 'lucide-react';
@@ -28,13 +30,13 @@ export function Projects() {
   const { data } = s;
   const suggestions = folderSuggestions(data.sessions, data.projects);
   const [query,setQuery]=useState(''),[limit,setLimit]=useState(24);const archived=s.route.tab==='archived';
-  const projects=(data.projects as R[]).filter(p=>!!p.archived===archived&&[p.name,p.goal,...p.paths].join(' ').toLowerCase().includes(query.trim().toLowerCase())).sort((a,b)=>String(b.updated_at).localeCompare(String(a.updated_at)));
+  const projects=(data.projects as R[]).filter(p=>!!p.archived===archived&&(s.route.tab!=='attention'||projectStats(data,p.id).yours>0)&&(s.route.tab!=='working'||projectStats(data,p.id).working>0)&&[p.name,p.goal,...p.paths].join(' ').toLowerCase().includes(query.trim().toLowerCase())).sort((a,b)=>String(b.updated_at).localeCompare(String(a.updated_at)));
   return <div className="page-wrap">
     <header className="page-head">
       <div><h1>项目</h1><p>每个项目的任务、成果、图解和经验都收在一起。</p></div>
       <button className="btn primary" onClick={() => s.openDialog('project-register')}><Plus size={18} />添加项目</button>
     </header>
-    <Tabs label="项目状态" value={archived?'archived':'active'} onChange={tab=>{setLimit(24);s.go({page:'projects',tab})}} tabs={[[ 'active','当前项目'],['archived','已归档']]}/>
+    <Tabs label="项目状态" value={s.route.tab||'active'} onChange={tab=>{setLimit(24);s.go({page:'projects',tab})}} tabs={[[ 'active','当前项目'],['attention','需要你'],['working','进行中'],['archived','已归档']]}/>
     <input className="filter-input" aria-label="搜索项目" placeholder="搜索项目名称、目标或文件夹" value={query} onChange={e=>{setQuery(e.target.value);setLimit(24)}}/>
     {!projects.length&&<Empty title={query?'没有找到匹配项目':archived?'暂无已归档项目':'暂无当前项目'}/>}
     <div className="project-grid">
@@ -81,13 +83,10 @@ export function ProjectView({ id }: { id: string }) {
   return <div className="page-wrap">
     <button className="crumb" onClick={() => s.go({ page: 'projects',tab:p.archived?'archived':'active' })}><ArrowLeft size={15} />全部项目</button>
     <header className="page-head project-head">
-      <div>
+      <div className="project-copy">
         <h1>{p.name}{p.archived&&<> <Pill tone="quiet">已归档</Pill></>}</h1>
-        <p>{p.goal || '还没写项目目标'}</p>
-        <div className="head-facts">
-          <span><small>现在阶段</small>{p.stage || '未填写'}</span>
-          <span><small>下一步</small>{p.next_step || '未填写'}</span>
-        </div>
+        
+
       </div>
       <div className="head-actions">
         <button className="btn" onClick={() => s.openDialog('project-edit', { project: p })}><PencilLine size={16} />编辑资料</button>
@@ -95,10 +94,16 @@ export function ProjectView({ id }: { id: string }) {
         <button className="btn primary" disabled={!!p.archived} onClick={() => s.openDialog('request', { projectId: p.id })}><Plus size={17} />提需求</button>
       </div>
     </header>
-    <Tabs label="项目内容" value={tab} onChange={s.setTab} tabs={[['progress', '进展', st.yours || undefined], ['files', '成果', files.length || undefined], ['diagrams', '图解', diagrams.length || undefined], ['memory', '经验', memories.length || undefined], ['folders', '文件夹与资料']]} />
+    <ProjectSummary key={p.id} text={p.goal||''} />
+    <div className="head-facts project-facts">
+          <span><small>现在阶段</small>{p.stage || '未填写'}</span>
+          <span><small>下一步</small>{p.next_step || '未填写'}</span>
+        </div>
+    <details className="project-location-summary"><summary>{p.delivery_target==='runtime'?'交付到本机 · 工作位置':'源码与工作位置'}</summary><span>开发：{p.source_root||p.paths[0]}</span>{p.runtime_root&&<span>运行：{p.runtime_root}</span>}</details>
+    <Tabs label="项目内容" value={tab} onChange={s.setTab} tabs={[['progress', '任务', st.yours || undefined], ['files', '成果', files.length || undefined], ['diagrams', '关系图', diagrams.length || undefined], ['memory', '经验', memories.length || undefined], ['folders', '文件夹与资料']]} />
     {tab === 'progress' && <Progress project={p} tasks={st.tasks} />}
     {tab === 'files' && <Files files={files} />}
-    {tab === 'diagrams' && <Diagrams project={p} diagrams={diagrams} />}
+    {tab === 'diagrams' && <><RelationshipGraph projectId={p.id}/><details className="fold"><summary>保存的图解快照（{diagrams.length}）</summary><Diagrams project={p} diagrams={diagrams}/></details></>}
     {tab === 'memory' && <Memories project={p} memories={memories} />}
     {tab === 'folders' && <Folders project={p} />}
   </div>;
@@ -179,7 +184,7 @@ function Diagrams({ project, diagrams }: { project: R; diagrams: R[] }) {
   return <>
     <div className="banner">
       <Network size={22} />
-      <div><strong>用一张图看懂项目</strong><p>“项目总览”由 Archify 根据已保存的任务在本机画出。架构图、流程图可以让 Codex 读代码后通过工作台接口提交。每张图保留生成那一刻的内容。</p></div>
+      <div><strong>用一张图看懂项目</strong><p>上方关系图来自当前任务、执行和会话记录。这里保存的图解是生成时的快照；任务依赖会按实际登记的关系绘制。</p></div>
       <button className="btn primary" disabled={busy} onClick={() => void generate()}>{busy ? '正在生成并检查…' : '生成项目总览'}</button>
     </div>
     {list.length ? <div className="diagram-grid">{list.map(d => <button key={d.id} className="diagram-card" onClick={() => s.openDialog('diagram', { diagram: d })}>

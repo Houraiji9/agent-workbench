@@ -21,7 +21,7 @@ export async function copyPlanning(s: Store, q: R) {
 export async function copyOrder(s: Store, t: R) {
   return s.act(async () => {
     const r = await api('/tasks/' + t.id + '/export', { version: t.version });
-    await s.copy(r.entry, '执行单已复制。粘贴给执行者后，记得点“我已经发给它”');
+    await s.copy(r.entry, '执行单已复制，粘贴给执行者即可；接单回执会自动更新状态');
     return r;
   });
 }
@@ -51,3 +51,5 @@ export function reviewRequestText(t: R, run: R | undefined, artifacts: R[], name
 }
 
 export async function copyCloseoutOrder(s:Store,t:R){return s.act(async()=>{const r=await api('/closeout-orders',{run_id:t.current_run_id,expected_revision:t.revision});await s.copy(r.entry,'收尾单已复制，粘贴回原执行者即可');return r})}
+
+export async function continueTask(s:Store,t:R,sameSession=true){return s.act(async()=>{const r=await api('/tasks/'+t.id+'/continue',{revision:t.revision,same_session:sameSession});await s.copy(r.entry,sameSession?'续作简讯已复制，粘贴回原会话':'接手资料已复制；缺失历史可按需读取');return r})}

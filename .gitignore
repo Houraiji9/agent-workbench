@@ -5,6 +5,7 @@ data/
 .codex/
 .claude/
 .test-tmp/
+.local-dev/
 test-results/
 playwright-report/
 config/local.json
