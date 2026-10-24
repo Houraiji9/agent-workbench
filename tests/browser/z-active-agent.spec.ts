@@ -88,6 +88,7 @@ test('改派使用当前 Run 的图标与名字，审查者接单后切换为 Gr
   const h=await api(page),before=await t.get('/tasks/'+t.tid);const review=await t.post('/review-orders',{run_id:order.run_id,reviewer_id:'grok-build',expected_revision:before.task.revision,reason:'测试手动转发审查'});
   const token=JSON.parse(fs.readFileSync(path.join(h.root,'data/review-keys',review.review_id+'.json'),'utf8')).token;const response=await fetch('http://127.0.0.1:14318/api/mcp/report_review_started',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({review_id:review.review_id,identity:'grok-build'})});expect(response.ok).toBe(true);
   await expect(row).toContainText('Grok Build 正在独立审查');
+  await expect(row.locator('.pill')).toHaveText('审查中');
   await expect(row.locator('.agent-icon img')).toHaveAttribute('src', grok!);
   expect(grok).not.toBe(zcode);
   d = await t.get('/tasks/' + t.tid);
@@ -96,6 +97,10 @@ test('改派使用当前 Run 的图标与名字，审查者接单后切换为 Gr
   expect(d.task.status).toBe('submitted');
   expect(d.reviews).toHaveLength(0);
   await shot(page, '执行任务-隔离测试-审查接力');
+  await row.click();await expect(drawer(page).locator('.task-people .pill').first()).toHaveText('审查中');await page.keyboard.press('Escape');
+  await page.goto('/#/projects/'+t.project.id);
+  await expect(page.getByRole('region',{name:'执行顺序'}).getByRole('article',{name:t.title}).locator('.pill')).toHaveText('审查中');
+  await page.getByRole('tab',{name:'关系图'}).click();await expect(page.locator('.graph-node')).toContainText('审查中');
 });
 
 test('自定义成员沿用品牌设置和预设映射；未知品牌、图片加载失败仍显示可读身份', async ({page}) => {

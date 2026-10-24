@@ -1,13 +1,17 @@
 import {test,expect} from '@playwright/test';import fs from 'node:fs';import path from 'node:path';import {randomUUID} from 'node:crypto';import {api,makeTask,shot,noHorizontalScroll} from './support.ts';import {taskInput} from '../helpers.ts';
 
-test('100项合成待办按动作分组、筛选与分页；待安排默认收起',async({page})=>{
+test('100项合成待办按动作分组、筛选与分页；待安排默认展开且可手动收起',async({page})=>{
   const states=['waiting_input','awaiting_confirmation','blocked','ready'];
   await page.route(/\/api\/(bootstrap|state)(\?|$)/,async route=>{const response=await route.fetch(),data=await response.json();data.requests=[];data.runs=[];data.user_decisions=[];data.tasks=Array.from({length:100},(_,i)=>({...taskInput(data.authorized_roots[0]),id:'T-attention-'+i,title:'合成待办 '+i,project_id:'P-workbench',status:states[i%4],current_run_id:null,created_at:'2026-01-01T00:00:00Z',updated_at:'2026-01-01T00:00:00Z',version:1,revision:1,execution:{step:1,dependencies_ready:true,dependencies:[]}}));await route.fulfill({response,json:data});});
   await page.goto('/');const filters=page.getByRole('group',{name:'按动作筛选待办'});
   await expect(page.getByRole('combobox',{name:'待办排序'})).toBeVisible();
   await page.getByRole('combobox',{name:'待办排序'}).selectOption('oldest');
   for(const label of ['待回答','待试用','异常需决定','待安排'])await expect(filters.getByRole('button',{name:label+'（25）',exact:true})).toBeVisible();
-  await expect(page.locator('.arrange-group')).not.toHaveAttribute('open','');
+  await expect(page.locator('.arrange-group')).toHaveAttribute('open','');
+  await expect(page.locator('.arrange-group .turn').first()).toBeVisible();
+  await page.locator('.arrange-group > summary').click();await expect(page.locator('.arrange-group .turn').first()).not.toBeVisible();
+  await page.locator('.arrange-group > summary').click();await expect(page.locator('.arrange-group .turn').first()).toBeVisible();
+  await page.locator('.arrange-group > summary').click();await filters.getByRole('button',{name:'待安排（25）',exact:true}).click();await expect(page.locator('.arrange-group .turn').first()).toBeVisible();
   await filters.getByRole('button',{name:'待回答（25）',exact:true}).click();await expect(page.getByRole('region',{name:'待回答'}).locator('.turn')).toHaveCount(20);
   await page.getByRole('button',{name:'显示更多待回答'}).click();await expect(page.getByRole('region',{name:'待回答'}).locator('.turn')).toHaveCount(25);
   await page.getByRole('textbox',{name:'搜索待办'}).fill('合成待办 96');await expect(page.locator('.turn')).toHaveCount(1);await expect(page.locator('.turn-title')).toHaveText('合成待办 96');

@@ -21,7 +21,7 @@ test('轮到你了分开展示项目、执行者和规划者；长名称与明�
   const q = await h.post('/requests', {project_id: a.project.id, text: '测试：还没有分配执行者的后续需求'});
   await focusCards(page, [a.tid, b.tid, c.tid], q.id);
   await page.goto('/#/today');
-  await page.locator('.arrange-group > summary').click();
+  await expect(page.locator('.arrange-group')).toHaveAttribute('open','');
   const section = page.getByRole('region', {name: '轮到你了'});
   for (const [t, who] of [[a, 'Codex'], [b, 'Zcode'], [c, custom.name]] as const) {
     const card = section.getByRole('article', {name: t.title, exact: true});
@@ -65,6 +65,7 @@ test('轮到你了改派后显示当前执行者，复制执行单后仍等待�
   d = await t.get('/tasks/' + t.tid);
   await t.post('/tasks/' + t.tid + '/export', {version: 1, new_run: true, agent_id: 'zcode', expected_revision: d.task.revision});
   await focusCards(page, [t.tid]); await page.goto('/#/today');
+  await expect(page.getByRole('article',{name:t.title,exact:true})).toBeVisible();
   await page.getByRole('button',{name:/^待安排（/}).click();
   const card = page.getByRole('article', {name: t.title, exact: true});
   await expect(card.locator('.turn-agent')).toHaveAttribute('title', '执行：Zcode');

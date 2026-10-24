@@ -85,7 +85,7 @@ export function Records() {
           {externalAgents.map(id => <option key={id} value={id}>{agentLabel(s.name, id)}（外部会话）</option>)}
         </select>
         <select aria-label="按状态" value={filters.status || ''} onChange={e => set('status', e.target.value)}>
-          <option value="">所有状态</option>{statusOptions.map(k => <option key={k} value={k}>{statusText[k]}</option>)}
+          <option value="">所有状态</option>{statusOptions.map(k => <option key={k} value={k}>{k==='submitted'?'已交付（待审 / 审查中）':statusText[k]}</option>)}
         </select>
         <label className="date-pick"><span>从</span><input type="date" aria-label="开始日期" value={filters.from || ''} onChange={e => set('from', e.target.value)} /></label>
         <label className="date-pick"><span>到</span><input type="date" aria-label="结束日期" value={filters.to || ''} onChange={e => set('to', e.target.value)} /></label>
@@ -101,7 +101,7 @@ export function Records() {
         <div className="row-list">{shown.slice(0, visible).map(r => <button key={r.kind + r.id} className="row" onClick={() => r.kind === 'task' ? s.openTask(r.id) : s.openDialog('session', { session: r })}>
           <span className={'kind-tag k-' + r.kind}>{r.kind === 'task' ? '任务' : '会话'}</span>
           <span className="row-main"><strong>{r.title}</strong><small>{agentLabel(s.name, r.agent)} · {r.project_id ? s.pname(r.project_id) : r.source_project ? r.source_project + '（未登记）' : '未关联项目'} · {relative(r.updated_at || r.created_at, s.tz)}</small></span>
-          <span className="row-side">{r.kind === 'task' ? <Pill status={r.status} /> : <Pill tone="quiet">{r.association === 'pending_confirmation' ? '仅摘要' : '已关联'}</Pill>}</span>
+          <span className="row-side">{r.kind === 'task' ? <Pill task={s.data.tasks.find((t:R)=>t.id===r.id)||r} /> : <Pill tone="quiet">{r.association === 'pending_confirmation' ? '仅摘要' : '已关联'}</Pill>}</span>
         </button>)}</div>
         {shown.length > visible && <button className="btn ghost more-btn" onClick={() => setVisible(v => v + 30)}>再显示 {Math.min(30, shown.length - visible)} 条</button>}
       </> : <Empty icon={<FileSearch size={28} />} title="没有找到匹配的记录">{active ? '换个关键词或去掉一些条件试试。' : '任务和收录的会话会出现在这里。'}</Empty>}

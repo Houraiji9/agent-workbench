@@ -17,6 +17,7 @@ import {RequestPreview} from '../ui/RequestPreview.js';
 export function Today() {
   const s = useStore();
   const { data } = s;
+  const [arrangeOpen,setArrangeOpen]=useState(true);
   const [projectFilter,setProjectFilter]=useState(''),[ownerFilter,setOwnerFilter]=useState(''),[search,setSearch]=useState(''),[limit,setLimit]=useState(20),[groupFilter,setGroupFilter]=useState('all'),[sort,setSort]=useState('recent');
   const match=(t:R)=>(!projectFilter||t.project_id===projectFilter)&&(!ownerFilter||s.executorOf(t)===ownerFilter)&&(!search||t.title.toLowerCase().includes(search.toLowerCase()));
   const requests = data.requests.filter((q: R) => q.status === 'awaiting_planning'&&!data.projects.find((p:R)=>p.id===q.project_id)?.archived)
@@ -53,13 +54,13 @@ export function Today() {
             <select aria-label="按负责人筛选待办" value={ownerFilter} onChange={e=>{setOwnerFilter(e.target.value);setLimit(20)}}><option value="">全部负责人</option>{data.agents.map((a:R)=><option key={a.id} value={a.id}>{a.name}</option>)}</select>
           </div>
           <label className="attention-sort">排序 <select aria-label="待办排序" value={sort} onChange={e=>setSort(e.target.value)}><option value="recent">优先级与最近更新</option><option value="oldest">最久未更新在前</option></select></label>
-          <div className="attention-kinds" role="group" aria-label="按动作筛选待办">{[['all','全部'],['answer','待回答'],['trial','待试用'],['decision','异常需决定'],['arrange','待安排']].map(([key,label])=>{const count=key==='all'?yourCount:yours.filter((t:R)=>taskAction(t).group===key).length+(key==='arrange'?visibleRequests.length:0)+(key==='decision'?visibleDecisions.length:0);return <button key={key} className={'btn small '+(groupFilter===key?'primary':'')} aria-pressed={groupFilter===key} onClick={()=>{setGroupFilter(key);setLimit(20)}}>{label}（{count}）</button>})}</div>
+          <div className="attention-kinds" role="group" aria-label="按动作筛选待办">{[['all','全部'],['answer','待回答'],['trial','待试用'],['decision','异常需决定'],['arrange','待安排']].map(([key,label])=>{const count=key==='all'?yourCount:yours.filter((t:R)=>taskAction(t).group===key).length+(key==='arrange'?visibleRequests.length:0)+(key==='decision'?visibleDecisions.length:0);return <button key={key} className={'btn small '+(groupFilter===key?'primary':'')} aria-pressed={groupFilter===key} onClick={()=>{setGroupFilter(key);setArrangeOpen(true);setLimit(20)}}>{label}（{count}）</button>})}</div>
           {yourCount===0&&<Empty title={waiting.length?'后续任务正在等待前序':'当前筛选下没有待办'}/>}
           {(['answer','trial','decision','arrange'] as ActionGroup[]).map(group=>{
             const rows=yours.filter((t:R)=>taskAction(t).group===group),extras=group==='arrange'?visibleRequests:[],cards=group==='decision'?visibleDecisions:[];
             const count=rows.length+extras.length+cards.length;if(!count||(groupFilter!=='all'&&groupFilter!==group))return null;
             const content=<><div className="turn-list">{cards.slice(0,limit).map(d=><UserDecision key={d.id} decision={d}/>)}{rows.slice(0,limit).map((t:R)=><TaskTurn key={t.id} t={t}/>)}{extras.slice(0,limit).map((q:R)=><RequestTurn key={q.id} q={q}/>)}</div>{count>limit&&<button className="btn ghost" onClick={()=>setLimit(n=>n+20)}>显示更多{actionGroups[group]}</button>}</>;
-            return group==='arrange'?<details className="attention-group arrange-group" key={group} open={groupFilter==='arrange'?true:undefined}><summary>{actionGroups[group]} <span className="count">{count}</span><small>仅需转发的事项</small></summary>{content}</details>:<section className="attention-group" aria-label={actionGroups[group]} key={group}><h3>{actionGroups[group]} <span className="count">{count}</span></h3>{content}</section>;
+            return group==='arrange'?<details className="attention-group arrange-group" key={group} open={arrangeOpen} onToggle={e=>setArrangeOpen(e.currentTarget.open)}><summary>{actionGroups[group]} <span className="count">{count}</span><small>需要你转发或继续的事项</small></summary>{content}</details>:<section className="attention-group" aria-label={actionGroups[group]} key={group}><h3>{actionGroups[group]} <span className="count">{count}</span></h3>{content}</section>;
           })}
         </Section>}
 
@@ -76,7 +77,7 @@ export function Today() {
                   <strong title={t.title}>{t.title}</strong>
                   <small title={relay.headline}>{relay.headline}</small>
                 </span>
-                <span className="row-side"><Pill status={t.status} /><small>{relative(t.updated_at, s.tz)}更新</small></span>
+                <span className="row-side"><Pill task={t} /><small>{relative(t.updated_at, s.tz)}更新</small></span>
               </button>;
             })}
           </div>
@@ -162,7 +163,7 @@ function TaskTurn({ t }: { t: R }) {
     <div className="turn-heading">
       <TurnContext projectId={t.project_id} agentId={handingToReviewer ? t.reviewer_id : who} role={handingToReviewer ? '审查' : '执行'} />
       <div className="turn-top">
-        <Pill status={t.status} />
+        <Pill task={t} />
         <OrderStep task={t}/>
 
       </div>

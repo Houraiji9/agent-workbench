@@ -1,4 +1,5 @@
 import {taskAction} from '../../shared/workflow-view.js';
+export {taskDisplayStatus} from '../../shared/workflow-view.js';
 // 工作接力：把账本里的任务状态翻译成“接力棒现在在谁手里、下一步做什么”。
 // 只做展示层翻译，不改变后台状态语义；所有判断都可在单元测试中核对。
 import {waitingForDependencies,byExecutionOrder} from '../../shared/execution-order.js';
@@ -34,6 +35,7 @@ export const statusText: R = {
   acceptance_rejected: '验收未通过，待返工',
   rework_linked: '验收未通过，已安排返工',
   submitted: '已交付，待审查',
+  review_running: '审查中',
   awaiting_confirmation: '收尾完成，待你试用',
   in_review: '待执行者收尾',
   awaiting_closeout: '待执行者收尾', closing: '正在收尾', closeout_waiting_input: '收尾等你回答', closeout_blocked: '收尾遇到阻碍',
@@ -46,7 +48,7 @@ export const toneOfStatus: Record<string, Tone> = {
   awaiting_planning: 'you', ready: 'you', awaiting_dispatch: 'you', waiting_input: 'you',
   awaiting_confirmation: 'you', in_review: 'you', awaiting_closeout:'you', closing:'working', closeout_waiting_input:'you', closeout_blocked:'problem',
   dispatched: 'working', running: 'working',
-  submitted: 'review',
+  submitted: 'review', review_running:'review',
   blocked: 'problem', failed: 'problem', changes_requested: 'problem',acceptance_rejected:'problem',rework_linked:'quiet',
   accepted: 'done', cancelled: 'quiet', planned: 'quiet',
 };

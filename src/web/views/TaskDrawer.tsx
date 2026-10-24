@@ -290,7 +290,7 @@ function MoreInfo({ detail, run }: { detail: R; run?: R }) {
       </dl>
       <h3>执行记录（{detail.runs.length} 次）</h3>
       <ul className="run-list">{detail.runs.map((r: R) => <li key={r.id}>
-        <span><b>{s.name(r.agent_id)}</b> · {r.id === t.current_run_id ? '当前这次' : '之前'} · <Pill status={r.id===t.current_run_id?t.status:r.status} /></span>
+        <span><b>{s.name(r.agent_id)}</b> · {r.id === t.current_run_id ? '当前这次' : '之前'} · <Pill task={r.id===t.current_run_id?t:undefined} status={r.status} /></span>
         <code>{r.id}</code>
         {r.result && <details className="fold"><summary>执行者写的结果报告</summary><pre className="pre">{r.result}</pre></details>}
       </li>)}</ul>

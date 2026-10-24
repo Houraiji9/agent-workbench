@@ -1,7 +1,7 @@
 // 基础组件：对话框、抽屉、接力线、状态标签、头像、页签与空状态。
 import React, { useEffect, useId, useRef } from 'react';
 import { X, Check } from 'lucide-react';
-import { type Relay, type Tone, statusText, toneOfStatus } from '../lib/flow.js';
+import { type R, type Relay, type Tone, statusText, toneOfStatus, taskDisplayStatus } from '../lib/flow.js';
 
 function useFocusTrap(open: boolean, onClose: () => void) {
   const ref = useRef<HTMLDivElement>(null);
@@ -56,9 +56,10 @@ export function Drawer({ onClose, children, label }: { onClose: () => void; chil
   </div>;
 }
 
-export function Pill({ status, tone, children }: { status?: string; tone?: Tone; children?: React.ReactNode }) {
-  const t = tone || (status ? toneOfStatus[status] : 'quiet') || 'quiet';
-  return <span className={'pill t-' + t}>{children ?? (status ? statusText[status] || status : '')}</span>;
+export function Pill({ status, task, tone, children }: { status?: string; task?:R; tone?: Tone; children?: React.ReactNode }) {
+  const displayed=task?taskDisplayStatus(task):status;
+  const t = tone || (displayed ? toneOfStatus[displayed] : 'quiet') || 'quiet';
+  return <span className={'pill t-' + t}>{children ?? (displayed ? statusText[displayed] || displayed : '')}</span>;
 }
 
 /** 接力线：六个交接点，接力棒停在谁手里一目了然。 */

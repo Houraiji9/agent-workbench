@@ -3,7 +3,7 @@ import React, { useMemo, useState } from 'react';
 import { Search, CornerDownLeft } from 'lucide-react';
 import { useStore } from '../app/store.js';
 import type { R } from '../lib/flow.js';
-import { statusText } from '../lib/flow.js';
+import { statusText,taskDisplayStatus } from '../lib/flow.js';
 
 interface Item { id: string; group: string; label: string; hint?: string; run(): void }
 
@@ -30,7 +30,7 @@ export function Palette({ onClose }: { onClose(): void }) {
       { id: 'p-records', group: '页面', label: '记录', run: go('records') },
       { id: 'p-settings', group: '页面', label: '设置与备份', run: go('settings') },
     ];
-    const tasks: Item[] = (s.data.tasks as R[]).map(t => ({ id: 't-' + t.id, group: '任务', label: t.title, hint: statusText[t.status], run: () => { onClose(); s.openTask(t.id); } }));
+    const tasks: Item[] = (s.data.tasks as R[]).map(t => ({ id: 't-' + t.id, group: '任务', label: t.title, hint: statusText[taskDisplayStatus(t)], run: () => { onClose(); s.openTask(t.id); } }));
     const projects: Item[] = [...(s.data.projects as R[])].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).flatMap(p => [
       { id: 'pr-' + p.id, group: '项目', label: p.name, hint: p.archived?'已归档':p.stage, run: go('projects', { id: p.id }) },
       { id: 'pd-' + p.id, group: '项目', label: p.name + ' · 图解', run: go('projects', { id: p.id, tab: 'diagrams' }) },

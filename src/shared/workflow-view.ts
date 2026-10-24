@@ -2,6 +2,8 @@ import {waitingForDependencies} from './execution-order.js';
 type Row=Record<string,any>;
 export type ActionGroup='answer'|'decision'|'trial'|'arrange'|'working'|'waiting'|'done';
 export const actionGroups:Record<ActionGroup,string>={answer:'待回答',decision:'异常需决定',trial:'待试用',arrange:'待安排',working:'正在处理',waiting:'等待前序',done:'已结束'};
+/** Display the reviewer's actual receipt without rewriting the task lifecycle. */
+export const taskDisplayStatus=(t:Row):string=>t.status==='submitted'&&t.review_stage==='running'?'review_running':t.status;
 export function taskAction(t:Row):{group:ActionGroup;owner:'user'|'agent'|'reviewer'|'none';label:string}{
   if(['accepted','cancelled','rework_linked'].includes(t.status))return {group:'done',owner:'none',label:'已结束'};
   if(waitingForDependencies(t))return {group:'waiting',owner:'none',label:'等待前序'};
@@ -20,7 +22,7 @@ export type GraphNode={id:string;label:string;kind:string;status?:string;task_id
 export type GraphEdge={from:string;to:string;kind:string;label:string};
 export function relationshipGraph(tasks:Row[],runs:Row[],reviews:Row[],sessions:Row[],projectId:string,view='tasks',includeHistory=true){
   const all=tasks.filter(t=>t.project_id===projectId),shown=all.filter(t=>includeHistory||!['accepted','cancelled','rework_linked'].includes(t.status));
-  const nodes:GraphNode[]=shown.map(t=>({id:t.id,label:t.title,kind:'task',status:t.status,task_id:t.id,agent:t.agent_id})),edges:GraphEdge[]=[];
+  const nodes:GraphNode[]=shown.map(t=>({id:t.id,label:t.title,kind:'task',status:taskDisplayStatus(t),task_id:t.id,agent:t.agent_id})),edges:GraphEdge[]=[];
   const ids=new Set(shown.map(t=>t.id));let hiddenEdges=0;
   const edge=(from:string,to:string,kind:string,label:string)=>{if(nodes.some(n=>n.id===from)&&nodes.some(n=>n.id===to))edges.push({from,to,kind,label});else hiddenEdges++;};
   for(const t of shown){for(const d of t.dependencies||[])edge(d,t.id,'dependency','前置');if(t.rework_task_id)edge(t.id,t.rework_task_id,'rework','后续返工');}
