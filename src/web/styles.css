@@ -163,7 +163,7 @@ kbd { font: 600 11.5px var(--mono); padding: 2px 6px; border: 1px solid var(--li
 .pill.t-done { background: var(--done-soft); color: var(--done); }
 
 /* —— 接力线 —— */
-.relay { list-style: none; margin: 18px 0 20px; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.relay { list-style: none; margin: 18px 0 20px; padding: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .relay li { position: relative; display: grid; justify-items: center; text-align: center; gap: 3px; padding: 0 2px; }
 .relay li::before { content: ""; position: absolute; top: 14px; left: calc(-50% + 16px); right: calc(50% + 16px); height: 3px; border-radius: 2px; background: var(--line); }
 .relay li:first-child::before { display: none; }

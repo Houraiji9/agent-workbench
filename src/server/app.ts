@@ -1,3 +1,6 @@
+import {resolveDecision} from '../core/user-decisions.ts';
+import {reportReviewHandoff} from '../core/review-workflow.ts';
+import {getCloseoutContext,exportCloseoutOrder,closeoutInput} from '../core/closeout.ts';
 import {getReviewContext,submitGrokReview,revokeReview,reviewContextInput,readGrokTrace,type TraceReader} from '../core/review-evidence.ts';
 import {reviewCandidates,exportReviewOrder,reviewAssignmentContext,startReview,submitReviewResult,reviewFeedbackOrder,reviewId} from '../core/review-workflow.ts';
 import {Archify} from '../integrations/archify.ts';
@@ -19,6 +22,8 @@ import {assert,DomainError,secret,same,safePath,readBounded,hash} from '../core/
 import {createBackup} from '../../scripts/backup.ts';
 import {addAuthorizedRoot,authorizeProject} from '../core/roots.ts';
 import type {Row} from '../core/schema.ts';
+import type {ReviewCaller} from '../core/review-permissions.ts';
+import {manage,readManagement,managementTools,managementReadTools} from '../core/management.ts';
 
 // 下载文件名：ASCII 兜底名 + UTF-8 中文名，兼容不同浏览器与桌面窗口。
 export function disposition(name:string){const clean=name.replace(/[\r\n"\\/:*?<>|]/g,'_');const ext=(clean.match(/\.[A-Za-z0-9]{1,8}$/)||[''])[0];const ascii=(clean.slice(0,clean.length-ext.length).replace(/[^\x20-\x7e]/g,'').replace(/\s+/g,' ').trim()||'workbench-file')+ext;return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(clean)}`}
@@ -28,7 +33,9 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
   const archify=new Archify(wb);
   const readReviewTrace=grokTraceReader||((sid:string)=>readGrokTrace(sid,config.review?.grokExecutable||process.env.WORKBENCH_GROK_EXECUTABLE||'grok'));
   const importingReviews=new Set<string>();
-  const importReview=async(b:Row,actor:string)=>{const key=String(b.run_id);assert(!importingReviews.has(key),'这次审查正在核验，请稍后重试',409);importingReviews.add(key);try{return await submitGrokReview(wb,b,actor,readReviewTrace)}finally{importingReviews.delete(key)}};
+  const openProject=(projectId:string)=>{const p=wb.get('projects',projectId);const folder=safePath(p.paths[0],config.authorizedRoots);assert(!wb.privatePath(folder),'项目目录不可用');assert(process.platform==='win32','当前系统未实现目录打开');spawn('explorer.exe',[folder],{shell:false,windowsHide:true,detached:true,stdio:'ignore'}).unref();return {opened:true,folder}};
+  const managementServices={integrations,readReviewTrace,revealArtifact,openProject};
+  const importReview=async(b:Row,caller:ReviewCaller)=>{const key=String(b.run_id);assert(!importingReviews.has(key),'这次审查正在核验，请稍后重试',409);importingReviews.add(key);try{return await submitGrokReview(wb,b,caller,readReviewTrace)}finally{importingReviews.delete(key)}};
   const sessions=new Map<string,{csrf:string;created:number}>();
   app.setErrorHandler((e:any,_req,res)=>res.code(e instanceof DomainError?e.status:e instanceof z.ZodError?400:e.statusCode||500).send({error:e instanceof z.ZodError?'输入格式不符合 schema：'+e.issues.map((i:Row)=>i.path.join('.')+' '+i.message).join('; '):e.statusCode===500?'服务内部错误，请检查运行日志':e.message}));
   app.addHook('onRequest',async(req,res)=>{
@@ -47,6 +54,11 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
   app.get('/api/health',async()=>({ok:true,app:'agent-workbench',version:'0.1.0',pid:process.pid}));
   app.get('/api/bootstrap',async(_req,res)=>{const sid=secret(),csrf=secret();for(const[k,v]of sessions)if(Date.now()-v.created>12*3600000)sessions.delete(k);sessions.set(sid,{csrf,created:Date.now()});res.header('Set-Cookie',`wb_session=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200`);return {csrf,...wb.snapshot()}});
   app.get('/api/state',async()=>wb.snapshot());
+  app.post<{Params:{id:string}}>('/api/user-decisions/:id/:choice',async req=>{
+    assert(!req.headers.authorization,'确认事项请使用工作台页面',403);
+    const params=z.object({id:z.string(),choice:z.enum(['confirm','cancel'])}).parse(req.params);
+    z.object({}).strict().parse(req.body);return resolveDecision(wb,params.id,params.choice);
+  });
   app.get('/api/events',async(req,res)=>{
     res.hijack();res.raw.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});res.raw.write('event: ready\ndata: {}\n\n');const onChange=()=>res.raw.write('event: changed\ndata: {}\n\n');wb.on('change',onChange);const timer=setInterval(()=>res.raw.write(': heartbeat\n\n'),20000);req.raw.on('close',()=>{clearInterval(timer);wb.off('change',onChange)});
   });
@@ -81,13 +93,14 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
   app.post<{Params:{id:string}}>('/api/tasks/:id/rework',async req=>reworkOrder(wb,req.params.id,req.body));
   app.post('/api/receipts',async req=>wb.event(req.body,undefined,'user_imported'));
   app.get<{Params:{id:string}}>('/api/tasks/:id/review-candidates',async req=>reviewCandidates(wb,req.params.id));
-  app.post('/api/review-orders',async req=>exportReviewOrder(wb,req.body,'user'));
+  app.post('/api/closeout-orders',async req=>exportCloseoutOrder(wb,req.body));
+  app.post('/api/review-orders',async req=>exportReviewOrder(wb,req.body,{role:'user'}));
   app.post('/api/review-receipts',async req=>submitReviewResult(wb,req.body,'user_import'));
   app.post<{Params:{id:string};Body:Row}>('/api/runs/:id/review-feedback',async req=>reviewFeedbackOrder(wb,req.params.id,req.body.revision));
   app.get<{Params:{id:string}}>('/api/reviews/:id/report',async(req,res)=>{const r=wb.get('reviews',req.params.id);assert(r.report_markdown,'这条审查没有附报告',404);assert(hash(r.report_markdown)===r.report_sha256,'报告内容校验失败',409);return res.type('text/markdown; charset=utf-8').header('Content-Disposition',disposition('审查报告.md')).send(r.report_markdown)});
   app.post('/api/reviews',async req=>wb.review(req.body as Row));
   app.post<{Params:{id:string}}>('/api/reviews/:id/revoke',async req=>revokeReview(wb,req.params.id,req.body));
-  app.post('/api/reviews/grok',async req=>importReview(req.body as Row,'user'));
+  app.post('/api/reviews/grok',async req=>importReview(req.body as Row,{role:'user'}));
   app.get<{Params:{id:string}}>('/api/runs/:id/review-context',async req=>getReviewContext(wb,req.params.id));
   app.post<{Params:{id:string};Body:Row}>('/api/subscriptions/:id/confirm',async req=>wb.confirmSubscription(req.params.id,req.body));
   app.post('/api/subscriptions',async req=>wb.createSubscription(req.body));
@@ -123,19 +136,23 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
     res.type(types[a.extension]||'application/octet-stream');if(req.query.download||!types[a.extension])res.header('Content-Disposition',disposition(a.label));return bytes;
   });
   app.post<{Params:{tool:string};Body:Row}>('/api/mcp/:tool',async req=>{
-    const token=req.headers.authorization?.replace(/^Bearer /,'')||'';let role:string|undefined,scope:string|undefined;if(same(token,wb.keys.planner))role='planner';else if(typeof req.body?.run_id==='string'){const rid=req.body.run_id;assert(/^R-[a-f0-9-]{36}$/.test(rid),'MCP Run ID 无效',401);const run=wb.maybe('runs',rid);if(run){const f=path.join(config.dataDir,'run-keys',rid+'.json');if(fs.existsSync(f)&&same(token,JSON.parse(fs.readFileSync(f,'utf8')).token)){role='runner';scope=rid}}}if(!role&&typeof req.body?.review_id==='string'&&reviewId.safeParse(req.body.review_id).success){const aid=req.body.review_id;const file=safePath(path.join(config.dataDir,'review-keys',aid+'.json'),[config.dataDir],true);if(wb.maybe('review_assignments',aid)&&fs.existsSync(file)&&same(token,JSON.parse(fs.readFileSync(file,'utf8')).token)){role='reviewer';scope=aid}}assert(role,'MCP 认证失败',401);
-    const tool=req.params.tool,b=req.body;const isReport=['report_run_event','submit_run_result'].includes(tool);if(role==='runner')assert(isReport||['get_run_feedback','get_review_context','submit_grok_review','get_review_candidates','export_review_order'].includes(tool),'执行凭据仅可回报或查询自己的 Run',403);
+    const token=req.headers.authorization?.replace(/^Bearer /,'')||'';let role:string|undefined,scope:string|undefined;if(same(token,wb.keys.manager))role='manager';else if(same(token,wb.keys.planner))role='planner';else if(typeof req.body?.run_id==='string'){const rid=req.body.run_id;assert(/^R-[a-f0-9-]{36}$/.test(rid),'MCP Run ID 无效',401);const run=wb.maybe('runs',rid);if(run){const f=path.join(config.dataDir,'run-keys',rid+'.json');if(fs.existsSync(f)&&same(token,JSON.parse(fs.readFileSync(f,'utf8')).token)){role='runner';scope=rid}}}if(!role&&typeof req.body?.review_id==='string'&&reviewId.safeParse(req.body.review_id).success){const aid=req.body.review_id;const file=safePath(path.join(config.dataDir,'review-keys',aid+'.json'),[config.dataDir],true);if(wb.maybe('review_assignments',aid)&&fs.existsSync(file)&&same(token,JSON.parse(fs.readFileSync(file,'utf8')).token)){role='reviewer';scope=aid}}assert(role,'MCP 认证失败',401);
+    const tool=req.params.tool,b=req.body;const isReport=['report_run_event','submit_run_result'].includes(tool);if(role==='runner')assert(isReport||['report_review_handoff','get_closeout_context','export_closeout_order','get_run_feedback','get_review_context','submit_grok_review','get_review_candidates','export_review_order'].includes(tool),'执行凭据仅可回报或查询自己的 Run',403);
     if(role==='reviewer'){
       assert(b.review_id===scope&&['get_review_assignment','report_review_started','submit_review_result'].includes(tool),'审查凭据仅可操作本审查单',403);
       if(tool==='get_review_assignment')return reviewAssignmentContext(wb,scope!);
       if(tool==='report_review_started')return startReview(wb,b);
       return submitReviewResult(wb,b,'reviewer:'+scope);
     }
+    if(tool==='import_execution_receipt')throw new DomainError('执行回报请使用本 Run 的独立连接；远程回执由用户在页面导入',403);
+    if(Object.hasOwn(managementTools,tool)||Object.hasOwn(managementReadTools,tool)){assert(role==='manager','请使用本地主会话管理连接办理用户交代的操作',403);return Object.hasOwn(managementTools,tool)?manage(wb,managementServices,tool,b):readManagement(wb,managementServices,tool,b)}
     if(['get_review_assignment','report_review_started','submit_review_result'].includes(tool))throw new DomainError('请使用独立审查者凭据回传；作者和规划者不能代填结论',403);
+    if(tool==='report_review_handoff'){assert(role==='runner'&&scope===b.run_id,'只有本次执行者可以回报直接调用阻碍',403);return reportReviewHandoff(wb,b)}
+    if(tool==='get_closeout_context'||tool==='export_closeout_order'){if(role==='runner')assert(scope===b.run_id,'禁止跨执行操作收尾',403);if(tool==='get_closeout_context')return getCloseoutContext(wb,closeoutInput.parse(b).run_id);return exportCloseoutOrder(wb,b)}
     if(tool==='get_review_candidates'){const v=z.object({task_id:z.string(),run_id:z.string().optional()}).strict().parse(b);if(role==='runner')assert(wb.get('runs',scope!).task_id===v.task_id,'禁止跨任务查询',403);return reviewCandidates(wb,v.task_id)}
-    if(tool==='export_review_order'){if(role==='runner')assert(scope===b.run_id,'禁止跨执行安排审查',403);return exportReviewOrder(wb,b,role+':'+(scope||''))}
+    if(tool==='export_review_order'){if(role==='runner')assert(scope===b.run_id,'禁止跨执行安排审查',403);return exportReviewOrder(wb,b,{role:role==='runner'?'runner':'planner',id:role==='runner'?'runner:'+scope:'planner'})}
     if(tool==='get_review_context'){const v=reviewContextInput.parse(b);if(role==='runner')assert(scope===v.run_id,'禁止跨执行读取审查',403);return getReviewContext(wb,v.run_id)}
-    if(tool==='submit_grok_review'){if(role==='runner')assert(scope===b.run_id,'禁止跨执行登记审查',403);return importReview(b,role==='runner'?'runner:'+scope:'planner')}
+    if(tool==='submit_grok_review'){if(role==='runner')assert(scope===b.run_id,'禁止跨执行登记审查',403);return importReview(b,{role:role==='runner'?'runner':'planner',id:role==='runner'?'runner:'+scope:'planner'})}
     if(tool==='get_run_feedback'){const v=z.object({run_id:z.string().regex(/^R-[a-f0-9-]{36}$/)}).strict().parse(b);if(role==='runner')assert(scope===v.run_id,'禁止跨执行查询回答',403);return wb.runFeedback(v.run_id)}
     if(tool==='create_project_diagram')return archify.generate(b);
     if(tool==='get_dispatch_context')return wb.dispatchContext();

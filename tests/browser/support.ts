@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { taskInput } from '../helpers.ts';
 
 export const EVIDENCE = process.env.WORKBENCH_EVIDENCE_DIR || path.join('.test-tmp', 'browser-shots');
-export const shot = (page: Page, name: string, fullPage = true) => { fs.mkdirSync(EVIDENCE, { recursive: true }); return page.screenshot({ animations:'disabled', path: path.join(EVIDENCE, name + '.png'), fullPage }); };
+export const shot = (page: Page, name: string, fullPage = true) => { if(process.env.WORKBENCH_CAPTURE_SHOTS!=='1')return Promise.resolve(Buffer.alloc(0));fs.mkdirSync(EVIDENCE, { recursive: true }); return page.screenshot({ animations:'disabled', path: path.join(EVIDENCE, name + '.png'), fullPage }); };
 
 /** 测试用的独立后台会话：与页面的会话分开，避免替换页面自己的操作凭据。 */
 export async function api(_page: Page) {
@@ -24,7 +24,7 @@ export async function api(_page: Page) {
 export interface Made { tid: string; rid: string; root: string; project: Record<string, any>; title: string; seq: number; post: (url: string, data: unknown, ok?: boolean) => Promise<any>; get: (url: string) => Promise<any>; report(type: string, extra?: Record<string, unknown>): Promise<any> }
 
 /** 建立一个项目和一项任务，并按需要推进到指定阶段（使用真实业务接口）。 */
-export async function makeTask(page: Page, opts: { title?: string; stage?: 'ready' | 'order' | 'running' | 'submitted' | 'reviewed'; skipReview?: boolean; agent?: string; userAcceptance?: string[] | null } = {}): Promise<Made> {
+export async function makeTask(page: Page, opts: { title?: string; stage?: 'ready' | 'order' | 'running' | 'submitted' | 'reviewed' | 'closeout'; skipReview?: boolean; agent?: string; userAcceptance?: string[] | null } = {}): Promise<Made> {
   const { post, get, root: base } = await api(page);
   const root = path.join(base, '测试项目-' + randomUUID().slice(0, 8));
   fs.mkdirSync(root, { recursive: true });
@@ -38,8 +38,8 @@ export async function makeTask(page: Page, opts: { title?: string; stage?: 'read
   const made: Made = {
     tid, rid: '', root, project, title, seq: 0, post, get,
     async report(type, extra = {}) {
-      const task = (await get('/tasks/' + tid)).task;
-      made.seq++;
+      const detail=await get('/tasks/'+tid),task=detail.task,run=detail.runs.find((r:any)=>r.id===task.current_run_id);
+      made.seq=run.seq+1;
       return post('/receipts', { schema_version: 1, event_id: 'EV-' + randomUUID(), task_id: tid, run_id: task.current_run_id, task_version: 1, seq: made.seq, event_type: type, occurred_at: new Date().toISOString(), data: { identity: agent, cwd: root, message: '测试回执：' + type, ...(type === 'submitted' ? { result: '测试结果报告：所有数据都是隔离测试数据，不代表真实执行。' } : {}), ...extra } });
     },
   };
@@ -51,11 +51,15 @@ export async function makeTask(page: Page, opts: { title?: string; stage?: 'read
   await made.report('started');
   if (stage === 'running') return made;
   await made.report('submitted');
-  if (stage === 'submitted' || opts.skipReview) return made;
+  if (stage === 'submitted') return made;
   const d = await get('/tasks/' + tid);
-  await post('/reviews', { run_id: made.rid, reviewer_id: 'grok-build', performed: true, verdict: 'passed', evidence: '测试夹具：模拟审查引用，并非真实审查', findings: '', artifact_hashes: d.artifacts.map((a: any) => a.sha256) });
+  if(!opts.skipReview)await post('/reviews', { run_id: made.rid, reviewer_id: 'grok-build', performed: true, verdict: 'passed', evidence: '测试夹具：模拟审查引用，并非真实审查', findings: '', artifact_hashes: d.artifacts.map((a: any) => a.sha256) });
+  if(stage!=='closeout')await completeCloseout(made);
   return made;
 }
+
+export async function completeCloseout(made:Made){const d=await made.get('/tasks/'+made.tid),run=d.runs.find((r:any)=>r.id===d.task.current_run_id);await made.report('closeout_started',{closeout_id:run.closeout.id});const r=await made.report('closeout_completed',{closeout_id:run.closeout.id,result:'隔离页面测试的收尾报告：核对使用入口与任务剩余事项，均已检查完成。',closeout_results:run.closeout.items.map((i:any)=>({item_id:i.id,outcome:'done',evidence:'隔离页面测试逐项核对完成'}))});expect(r.disposition).toBe('applied')}
+
 
 export const nav = (page: Page, label: string) => page.locator('nav').getByRole('button', { name: label, exact: true }).click();
 export const drawer = (page: Page) => page.getByRole('dialog', { name: '任务详情' });

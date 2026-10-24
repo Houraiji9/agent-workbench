@@ -1,3 +1,4 @@
+import {pendingDecisions} from './ui/UserDecision.js';
 // 工作台入口：左侧导航 + 顶部快捷栏 + 页面 + 任务抽屉 + 对话框。
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -32,7 +33,8 @@ function Shell() {
   const [menu, setMenu] = useState(false);
   const [palette, setPalette] = useState(false);
   const { route, data } = s;
-  const yours = data.tasks.filter(isYourTurn).length + data.requests.filter((q: Record<string, unknown>) => q.status === 'awaiting_planning' && !data.projects.find((p:Record<string,unknown>)=>p.id===q.project_id)?.archived).length;
+  const decisions=pendingDecisions(data),decisionTasks=new Set(decisions.map(d=>d.task_id));
+  const yours = decisions.length + data.tasks.filter((t:Record<string,any>)=>!decisionTasks.has(t.id)&&isYourTurn(t)).length + data.requests.filter((q: Record<string, unknown>) => q.status === 'awaiting_planning' && !data.projects.find((p:Record<string,unknown>)=>p.id===q.project_id)?.archived).length;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import {test, expect, type Page, type Locator} from '@playwright/test';
 import {randomUUID} from 'node:crypto';
 import {api, makeTask, drawer, shot, noHorizontalScroll} from './support.ts';
@@ -64,7 +66,7 @@ test('执行中的两个项目有独立项目标签、软件图标，明暗宽�
   expect(errors).toEqual([]);
 });
 
-test('改派使用当前 Run 的图标与名字，交付后切换为 Grok 审查图标', async ({page}) => {
+test('改派使用当前 Run 的图标与名字，审查者接单后切换为 Grok 审查图标', async ({page}) => {
   const t = await makeTask(page, {title: '测试：当前执行者与审查接力', stage: 'order'});
   let d = await t.get('/tasks/' + t.tid);
   await t.post('/tasks/' + t.tid + '/action', {action: 'cancel', revision: d.task.revision});
@@ -82,7 +84,10 @@ test('改派使用当前 Run 的图标与名字，交付后切换为 Grok 审查
   const grok = await loadedIcon(drawer(page).locator('.task-people > span').filter({hasText: '审查：'}));
   await page.keyboard.press('Escape');
   await t.report('submitted', {identity: 'zcode'});
-  await expect(row).toContainText('等 Grok Build 独立审查');
+  await expect(row).toHaveCount(0);
+  const h=await api(page),before=await t.get('/tasks/'+t.tid);const review=await t.post('/review-orders',{run_id:order.run_id,reviewer_id:'grok-build',expected_revision:before.task.revision,reason:'测试手动转发审查'});
+  const token=JSON.parse(fs.readFileSync(path.join(h.root,'data/review-keys',review.review_id+'.json'),'utf8')).token;const response=await fetch('http://127.0.0.1:14318/api/mcp/report_review_started',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({review_id:review.review_id,identity:'grok-build'})});expect(response.ok).toBe(true);
+  await expect(row).toContainText('Grok Build 正在独立审查');
   await expect(row.locator('.agent-icon img')).toHaveAttribute('src', grok!);
   expect(grok).not.toBe(zcode);
   d = await t.get('/tasks/' + t.tid);

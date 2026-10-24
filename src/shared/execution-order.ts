@@ -62,7 +62,7 @@ export function withExecutionOrder(tasks: Row[], runs: Row[], plans: Row[], agen
     const who = t.execution.executor_id, queue = queues.get(who) || [];
     t.execution.queue_position = queue.length + 1;
     t.execution.ahead = queue.length ? reference(queue[queue.length - 1]) : null;
-    t.execution.active_work = projected.filter(x => x.id !== t.id && x.execution.executor_id === who && ['dispatched', 'running', 'waiting_input', 'blocked'].includes(x.status)).map(reference);
+    t.execution.active_work = projected.filter(x => x.id !== t.id && x.execution.executor_id === who && ['dispatched', 'running', 'waiting_input', 'blocked','awaiting_closeout','closing','closeout_waiting_input','closeout_blocked'].includes(x.status)).map(reference);
     queue.push(t); queues.set(who, queue);
   }
   return projected;

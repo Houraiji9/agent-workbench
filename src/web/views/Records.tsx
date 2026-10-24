@@ -8,7 +8,7 @@ import { relative } from '../lib/format.js';
 import { Pill, Empty, Section, Notice } from '../ui/kit.js';
 import { agentLabel } from './dialogs/ResourceDialogs.js';
 
-const statusOptions = ['ready', 'awaiting_dispatch', 'dispatched', 'running', 'waiting_input', 'blocked', 'changes_requested', 'acceptance_rejected', 'rework_linked', 'submitted', 'awaiting_confirmation', 'in_review', 'accepted', 'failed', 'cancelled'];
+const statusOptions = ['ready', 'awaiting_dispatch', 'dispatched', 'running', 'waiting_input', 'blocked', 'changes_requested', 'acceptance_rejected', 'rework_linked', 'submitted', 'awaiting_confirmation', 'in_review','awaiting_closeout','closing','closeout_waiting_input','closeout_blocked', 'accepted', 'failed', 'cancelled'];
 
 export function Records() {
   const s = useStore();

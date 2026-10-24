@@ -3,7 +3,7 @@ import type {Workbench} from './workbench.ts';
 import {assert,id,now} from './security.ts';
 import {assertReworkLink} from './task-dependencies.ts';
 const input=z.object({revision:z.number().int().positive(),run_id:z.string(),note:z.string().trim().min(1).max(10000),artifact_hashes:z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(1),followup_task_id:z.string().optional()}).strict();
-export function rejectAcceptance(wb:Workbench,tid:string,value:unknown){const v=input.parse(value);return wb.transaction(()=>{
+export function rejectAcceptance(wb:Workbench,tid:string,value:unknown){assert(!wb.managementContext.getStore(),'请用户在工作台确认退回',403);const v=input.parse(value);return wb.transaction(()=>{
  const t=wb.get('tasks',tid);assert(t.revision===v.revision,'任务已更新，请重新打开确认',409);assert(t.current_run_id===v.run_id,'交付版本已更新，请重新查看',409);
  assert(['submitted','in_review','awaiting_confirmation'].includes(t.status),'当前任务不在试用确认阶段',409);
  const r=wb.get('runs',v.run_id);assert(r.status==='submitted','当前执行尚未交付',409);

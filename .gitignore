@@ -22,3 +22,4 @@ releases/
 *.tmp
 Thumbs.db
 .DS_Store
+待清理/

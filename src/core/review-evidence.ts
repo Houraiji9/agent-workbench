@@ -1,3 +1,4 @@
+import {stageCloseout,invalidateCloseout,reviewableStates,closeoutStates,verifyDelivery} from './closeout.ts';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,6 +9,7 @@ import type {Workbench} from './workbench.ts';
 import type {Row} from './schema.ts';
 import {assert,hash,id,now,readBounded,safePath,DomainError} from './security.ts';
 import {reviewSkipped} from './acceptance.ts';
+import {assertMayArrangeReview,reviewActor,type ReviewCaller} from './review-permissions.ts';
 
 const uuid=z.string().uuid();
 export const reviewContextInput=z.object({run_id:z.string().regex(/^R-[a-f0-9-]{36}$/)}).strict();
@@ -65,12 +67,12 @@ export function getReviewContext(wb:Workbench,runId:string){
   reviewContextInput.parse({run_id:runId});
   const run=wb.get('runs',runId),task=wb.get('tasks',run.task_id);
   assert(!reviewSkipped(task),'用户没有安排本次独立审查');
-  assert(task.current_run_id===run.id&&['submitted','in_review','changes_requested'].includes(task.status),'只能审查当前已交付版本',409);
+  assert(task.current_run_id===run.id&&reviewableStates.includes(task.status),'只能审查当前已交付版本',409);
   assert(task.reviewer_id&&run.agent_id!==task.reviewer_id,'当前任务未指定独立审查者',403);
-  const artifacts=wb.all('artifacts').filter(a=>a.run_id===run.id&&a.current).sort((a,b)=>a.id.localeCompare(b.id));
+  verifyDelivery(wb,task,run);const artifacts=wb.all('artifacts').filter(a=>a.run_id===run.id&&a.current).sort((a,b)=>a.id.localeCompare(b.id));
   assert(artifacts.length>0,'没有可审查的归档产物');
   for(const a of artifacts){const file=safePath(a.archive_path,[path.join(wb.config.dataDir,'artifacts')]);assert(hash(readBounded(file,20*1024*1024))===a.sha256,'归档产物已变化，需重新交付',409)}
-  const binding={task_id:task.id,run_id:run.id,task_version:task.version,reviewer_id:task.reviewer_id,...(task.current_review_assignment_id?{review_assignment_id:task.current_review_assignment_id}:{}),artifacts:artifacts.map(a=>({id:a.id,sha256:a.sha256}))};
+  const binding={task_id:task.id,run_id:run.id,task_version:task.version,reviewer_id:task.reviewer_id,...(task.current_review_assignment_id?{review_assignment_id:task.current_review_assignment_id}:{}),artifacts:artifacts.map(a=>({id:a.id,sha256:a.sha256})),review_files:run.review_files||[]};
   const digest=hash(JSON.stringify(binding));
   return {...binding,title:task.title,revision:task.revision,review_digest:digest,cwd:run.cwd,run_directory:run.directory,
     artifacts:artifacts.map(a=>({id:a.id,label:a.label,sha256:a.sha256,archive_path:a.archive_path})),
@@ -97,7 +99,7 @@ export function verifyGrokTrace(trace:GrokTrace,sessionId:string,context:ReturnT
   return {conclusion,model:message.model_id,request_id:summary.request_id,completed_at:new Date(decisionTime(terminal.timestamp)).toISOString(),session_id:sessionId};
 }
 
-export async function submitGrokReview(wb:Workbench,input:unknown,actor:string,reader:TraceReader){
+export async function submitGrokReview(wb:Workbench,input:unknown,caller:ReviewCaller,reader:TraceReader){
   const v=reviewSessionInput.parse(input),before=getReviewContext(wb,v.run_id);
   assert(before.reviewer_id==='grok-build','当前任务未指定 Grok Build，请使用该审查者的独立审查单',403);
   const verified=verifyGrokTrace(await reader(v.session_id),v.session_id,before);
@@ -108,10 +110,12 @@ export async function submitGrokReview(wb:Workbench,input:unknown,actor:string,r
     if(old){
       assert(old.run_id===v.run_id&&old.review_digest===current.review_digest&&!old.revoked_at,'该审查回执已失效或被其他任务使用',409);
       assert(latestReview(wb,v.run_id)?.id===old.id,'已有更新的审查，不能重放较早的结论',409);
-      assert(wb.get('tasks',current.task_id).status===(old.verdict==='passed'?'in_review':'changes_requested'),'审查已被后续撤回操作取代，请重新补审',409);
+      assert((old.verdict==='passed'?[...closeoutStates,'awaiting_confirmation']:['changes_requested']).includes(wb.get('tasks',current.task_id).status),'审查已被后续撤回操作取代，请重新补审',409);
       assert(JSON.stringify(reviewConclusion.parse(old.raw_conclusion))===JSON.stringify(verified.conclusion),'同一 Grok 请求的结论发生变化，请重新补审',409);
       return old;
     }
+    // Re-check after asynchronous trace verification; a retry above does not replace a decision.
+    assertMayArrangeReview(wb,v.run_id,caller);const actor=reviewActor(caller);
     // Import time is not decision time. A withheld older pass must never replace a later adverse review.
     const previous=wb.all('reviews').filter(r=>r.run_id===v.run_id);
     const watermark=Math.max(0,...previous.flatMap(r=>[decisionTime(r.completed_at??r.created_at),...(r.revoked_at?[decisionTime(r.revoked_at)]:[])]));
@@ -123,7 +127,7 @@ export async function submitGrokReview(wb:Workbench,input:unknown,actor:string,r
       evidence_level:'session_verified',independently_verified:true,verification_scope:'核验真实会话来源、正常完成、独立模型和交付绑定；审查内容的覆盖与限制见原结论，不等于用户验收。',
       ...provenance,review_digest:current.review_digest,raw_conclusion:conclusion,recorded_by:actor};
     wb.put('reviews',review,{run_id:v.run_id});
-    const task=wb.get('tasks',current.task_id);task.status=review.verdict==='passed'?'in_review':'changes_requested';task.review_stage='completed';if(task.current_review_assignment_id){const assignment=wb.get('review_assignments',task.current_review_assignment_id);assignment.status='completed';assignment.result_id=review.id;wb.put('review_assignments',assignment,{run_id:v.run_id})}task.revision++;task.updated_at=now();wb.put('tasks',task,{project_id:task.project_id});
+    const task=wb.get('tasks',current.task_id);task.status='changes_requested';if(review.verdict==='passed')stageCloseout(wb,task,wb.get('runs',v.run_id));else invalidateCloseout(wb,wb.get('runs',v.run_id),'审查要求修改');task.review_stage='completed';if(task.current_review_assignment_id){const assignment=wb.get('review_assignments',task.current_review_assignment_id);assignment.status='completed';assignment.result_id=review.id;wb.put('review_assignments',assignment,{run_id:v.run_id})}task.revision++;task.updated_at=now();wb.put('tasks',task,{project_id:task.project_id});
     wb.audit(actor,'import_grok_review',review.id,{run_id:v.run_id,session_id:v.session_id,review_digest:current.review_digest});return review;
   });
 }
@@ -137,16 +141,17 @@ export function checkManualReviewTarget(evidence:string,taskId:string,runId:stri
 }
 
 export function revokeReview(wb:Workbench,reviewId:string,input:unknown){
+  assert(!wb.managementContext.getStore(),'请用户在工作台确认撤回审查',403);
   const v=z.object({revision:z.number().int(),run_id:z.string(),reason:z.string().trim().min(5).max(2000)}).strict().parse(input);
   return wb.transaction(()=>{
     const review=wb.get('reviews',reviewId),run=wb.get('runs',review.run_id),task=wb.get('tasks',run.task_id);
     assert(v.run_id===run.id&&task.current_run_id===run.id,'只能撤回当前执行的审查',409);
-    assert(['submitted','in_review','changes_requested'].includes(task.status),'已验收或已结束的历史记录不能改写',409);
+    assert(reviewableStates.includes(task.status),'已验收或已结束的历史记录不能改写',409);
     assert(task.revision===v.revision,'任务版本冲突，请重新打开',409);assert(!review.revoked_at,'这条审查已撤回',409);
     const latest=wb.db.prepare("SELECT id FROM reviews WHERE run_id=? AND json_extract(data,'$.revoked_at') IS NULL ORDER BY json_extract(data,'$.created_at') DESC,rowid DESC LIMIT 1").get(run.id);
     review.revoked_at=now();review.revoked_by='user';review.revocation_reason=v.reason;
     wb.put('reviews',review,{run_id:run.id});
-    if(latest?.id===review.id){task.status='submitted';task.review_stage='awaiting_dispatch';if(task.current_review_assignment_id){const assignment=wb.get('review_assignments',task.current_review_assignment_id);assignment.status='revoked';wb.put('review_assignments',assignment,{run_id:run.id})}}
+    if(latest?.id===review.id){invalidateCloseout(wb,run,'审查已撤回');task.status='submitted';task.review_stage='awaiting_dispatch';if(task.current_review_assignment_id){const assignment=wb.get('review_assignments',task.current_review_assignment_id);assignment.status='revoked';wb.put('review_assignments',assignment,{run_id:run.id})}}
     task.revision++;task.updated_at=now();wb.put('tasks',task,{project_id:task.project_id});
     wb.audit('user','revoke_review',review.id,{run_id:run.id,reason:v.reason});return review;
   });

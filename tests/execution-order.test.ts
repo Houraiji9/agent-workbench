@@ -1,3 +1,4 @@
+import {finishCloseout} from './helpers.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -17,7 +18,7 @@ function deliver(wb:Workbench,root:string,tid:string) {
   wb.event(event(root,tid,o.run_id,2,'submitted',{result:'隔离测试：已完成测试工作并交付，当前等待独立审查和用户验收。'}));return o;
 }
 function review(wb:Workbench,tid:string) {
-  const t=wb.get('tasks',tid);wb.review({run_id:t.current_run_id,reviewer_id:'grok-build',performed:true,evidence:'隔离测试夹具中的模拟审查，不是真实模型审查',artifact_hashes:wb.all('artifacts').filter(a=>a.run_id===t.current_run_id).map(a=>a.sha256),verdict:'passed'});
+  const t=wb.get('tasks',tid);wb.review({run_id:t.current_run_id,reviewer_id:'grok-build',performed:true,evidence:'隔离测试夹具中的模拟审查，不是真实模型审查',artifact_hashes:wb.all('artifacts').filter(a=>a.run_id===t.current_run_id).map(a=>a.sha256),verdict:'passed'});finishCloseout(wb,tid);
 }
 function accept(wb:Workbench,tid:string){wb.accept(tid,{revision:wb.get('tasks',tid).revision,checks:[true]})}
 

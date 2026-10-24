@@ -86,6 +86,9 @@ export function StoreProvider({ children, fallback }: { children: (ready: boolea
   );
   const refresh = useCallback(() => refresher.current!(), []);
 
+  const hasDecisions=!!data?.user_decisions?.some((d:R)=>d.status==='pending');
+  useEffect(()=>{if(!hasDecisions)return;const timer=setInterval(()=>void refresh(),30000);return ()=>clearInterval(timer)},[hasDecisions,refresh]);
+
   // 启动：建立页面会话与操作凭据，然后挂实时同步。
   useEffect(() => {
     mounted.current = true;

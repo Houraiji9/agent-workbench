@@ -14,7 +14,7 @@ import {exportReviewOrder,reviewAssignmentContext,startReview,submitReviewResult
 import {revokeReview} from '../src/core/review-evidence.ts';
 
 function delivered(){const f=fixture(),s=setup(f.wb,f.root);f.wb.event(event(f.root,s.tid,s.rid,1));f.wb.event(event(f.root,s.tid,s.rid,2,'submitted',{result:'隔离测试交付材料。仅用于验证审查流程，不是真实模型审查。'}));return {...f,...s}}
-function order(f:ReturnType<typeof delivered>,reviewer='zcode',extra={}){return exportReviewOrder(f.wb,{run_id:f.rid,reviewer_id:reviewer,expected_revision:f.wb.get('tasks',f.tid).revision,reason:'测试更换审查者',...extra},'test')}
+function order(f:ReturnType<typeof delivered>,reviewer='zcode',extra={}){return exportReviewOrder(f.wb,{run_id:f.rid,reviewer_id:reviewer,expected_revision:f.wb.get('tasks',f.tid).revision,reason:'测试更换审查者',...extra},{role:'user'})}
 function result(o:ReturnType<typeof exportReviewOrder>,extra={}){return {review_id:o.review_id,task_id:o.context.task_id,run_id:o.run_id,review_digest:o.context.review_digest,verdict:'changes_requested',findings:['修复隔离测试问题'],limitations:['模拟回执，仅验证系统协议'],evidence:['已读取隔离测试报告'],report_markdown:'# 隔离测试报告\n\n检查了测试交付，发现需要修改的问题；这不是实际模型审查。',...extra}}
 function pool(f:ReturnType<typeof fixture>,percent:number,extra:any={}){
   const at=new Date().toISOString();f.wb.put('quota_pools',{id:'test-grok',provider:'grok',source:'token_monitor',members:[],status:'ok',freshness:'fresh',source_updated_at:at,...extra});
@@ -64,12 +64,12 @@ test('换人后旧权限失效；错误任务、版本、身份、无修改项�
   const f=delivered();try{const first=order(f),second=order(f,'claude');assert.throws(()=>startReview(f.wb,{review_id:first.review_id,identity:'zcode'}),/失效/);
     assert.throws(()=>startReview(f.wb,{review_id:second.review_id,identity:'codex'}),/身份/);startReview(f.wb,{review_id:second.review_id,identity:'claude'});
     for(const extra of [{task_id:'other'},{run_id:'other'},{review_digest:'0'.repeat(64)},{findings:[]}])assert.throws(()=>submitReviewResult(f.wb,result(second,extra),'reviewer'));
-    fs.appendFileSync(f.wb.all('artifacts')[0].archive_path,'tamper');assert.throws(()=>submitReviewResult(f.wb,result(second),'reviewer'),/变化/);assert.equal(f.wb.all('reviews').length,0);
+    fs.appendFileSync(f.wb.all('artifacts')[0].archive_path,'tamper');assert.throws(()=>submitReviewResult(f.wb,result(second),'reviewer'),/变化|更改/);assert.equal(f.wb.all('reviews').length,0);
   }finally{f.wb.close()}
 });
-test('通过仅进入用户确认；撤回后的旧结果不能重放，重新审查产生新绑定',()=>{
+test('通过仅进入执行收尾；撤回后的旧结果不能重放，重新审查产生新绑定',()=>{
   const f=delivered();try{const o=order(f);startReview(f.wb,{review_id:o.review_id,identity:'zcode'});const body=result(o,{verdict:'passed',findings:[]}),r=submitReviewResult(f.wb,body,'reviewer');
-    assert.equal(f.wb.get('tasks',f.tid).status,'in_review');assert.equal(f.wb.get('tasks',f.tid).acceptance_record,undefined);
+    assert.equal(f.wb.get('tasks',f.tid).status,'awaiting_closeout');assert.equal(f.wb.get('tasks',f.tid).acceptance_record,undefined);
     revokeReview(f.wb,r.review.id,{run_id:f.rid,revision:f.wb.get('tasks',f.tid).revision,reason:'测试撤回审查结果'});assert.throws(()=>submitReviewResult(f.wb,body,'reviewer'),/失效/);
     const next=order(f);assert.notEqual(next.context.review_digest,o.context.review_digest);
   }finally{f.wb.close()}
@@ -94,7 +94,7 @@ test('真实 CLI 和 stdio MCP 能完成非 Grok 审查，不需要全局 Agent 
   try{await client.connect(transport);const list=await client.listTools();assert.deepEqual(list.tools.map(t=>t.name).sort(),['get_review_assignment','report_review_started','submit_review_result']);
     assert.equal((await client.callTool({name:'get_review_assignment',arguments:{review_id:o.review_id}})).isError,false);
     const cli=await promisify(execFile)(process.execPath,['--import','tsx','scripts/review.ts',o.review_id,'started','zcode'],{cwd:ROOT,env,windowsHide:true});assert.equal(JSON.parse(cli.stdout).status,'running');
-    const response=await client.callTool({name:'submit_review_result',arguments:result(o,{verdict:'passed',findings:[]})});assert.equal(response.isError,false);assert.equal(wb.get('tasks',f.tid).status,'in_review');
+    const response=await client.callTool({name:'submit_review_result',arguments:result(o,{verdict:'passed',findings:[]})});assert.equal(response.isError,false);assert.equal(wb.get('tasks',f.tid).status,'awaiting_closeout');
   }finally{await client.close();await app.close()}
 });
 
@@ -120,7 +120,7 @@ test('Windows 审查单原文命令及 MCP 参数在外部目录、无 PATH 时�
     const context=await execute(commands[1]);assert.equal(context.review_id,o.review_id);assert.equal(context.assignment.status,'running');
     const body=result(o,{verdict:'passed',findings:[]});fs.writeFileSync(path.join(path.dirname(o.order_path),'result.json'),JSON.stringify(body));
     const submitted=await execute(commands[2]);assert.equal(submitted.review.verdict,'passed');
-    assert.equal(wb.get('tasks',f.tid).status,'in_review');assert.equal(wb.get('tasks',f.tid).acceptance_record,undefined);
+    assert.equal(wb.get('tasks',f.tid).status,'awaiting_closeout');assert.equal(wb.get('tasks',f.tid).acceptance_record,undefined);
     assert.equal(fs.readFileSync(path.join(path.dirname(o.order_path),'REPORT.md'),'utf8'),body.report_markdown);
     const mcp=text.match(/独立 stdio MCP：command=(.+?)，args=\[(.+?)\]，cwd=(.+?)，env WORKBENCH_REVIEW_ID=(RA-[a-f0-9-]{36})/);assert(mcp);
     const args=mcp[2].split(',');assert.equal(args[0],'--import');assert(args[1].startsWith('file:///'));assert.equal(mcp[4],o.review_id);

@@ -1,3 +1,4 @@
+import {finishCloseout} from './helpers.ts';
 import {test} from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';
 import {fixture,setup,event,taskInput} from './helpers.ts';
 import {Workbench} from '../src/core/workbench.ts';
@@ -10,15 +11,15 @@ import {dependencySatisfied} from '../src/core/task-dependencies.ts';
 
 test('月度积分包含在总积分内，零未知分开、跨重启及过刷新日保留、不重复计池',()=>{
  const f=fixture();let wb=f.wb;try{
-  editWorkBuddyPoints(wb,{version:0,remaining:1800,monthly:{allowance:500,remaining:500},resets_at:null});
-  for(const s of [wb.snapshot(),wb.dispatchContext()]){const pools=s.quota_pools.filter((p:any)=>p.provider==='workbuddy'),ws=s.quota_windows.filter((w:any)=>w.pool_id===pools[0].id);assert.equal(pools.length,1);assert.equal(ws.length,1);assert.equal(ws[0].remaining,1800);assert.equal(monthlyPercent(ws[0] as any),100);assert.equal(otherPoints(ws[0] as any),1300)}
-  for(const monthly of [{allowance:500,remaining:501},{allowance:0,remaining:0},{allowance:500,remaining:-1}])assert.throws(()=>editWorkBuddyPoints(wb,{version:1,remaining:1800,monthly}));
+  editWorkBuddyPoints(wb,{version:0,remaining:3312,monthly:{allowance:500,remaining:500},resets_at:null});
+  for(const s of [wb.snapshot(),wb.dispatchContext()]){const pools=s.quota_pools.filter((p:any)=>p.provider==='workbuddy'),ws=s.quota_windows.filter((w:any)=>w.pool_id===pools[0].id);assert.equal(pools.length,1);assert.equal(ws.length,1);assert.equal(ws[0].remaining,3312);assert.equal(monthlyPercent(ws[0] as any),100);assert.equal(otherPoints(ws[0] as any),2812)}
+  for(const monthly of [{allowance:500,remaining:501},{allowance:0,remaining:0},{allowance:500,remaining:-1}])assert.throws(()=>editWorkBuddyPoints(wb,{version:1,remaining:3312,monthly}));
   assert.throws(()=>editWorkBuddyPoints(wb,{version:1,remaining:499}),/包含在总积分/);
-  assert.throws(()=>editWorkBuddyPoints(wb,{version:0,remaining:1800}),/已更新/);
-  editWorkBuddyPoints(wb,{version:1,remaining:1300,monthly:{allowance:500,remaining:0},resets_at:'2020-01-01T00:00:00.000Z'});
-  wb.close();wb=new Workbench(f.config);let w=wb.snapshot().quota_windows.find((w:any)=>w.pool_id==='MANUAL-workbuddy-points');assert.equal(w.remaining,1300);assert.equal(monthlyPercent(w as any),0);assert.equal(otherPoints(w as any),1300);
-  editWorkBuddyPoints(wb,{version:2,remaining:1300,monthly:{allowance:500,remaining:null}});w=wb.snapshot().quota_windows.find((w:any)=>w.pool_id==='MANUAL-workbuddy-points');assert.equal(monthlyPercent(w as any),null);assert.equal(otherPoints(w as any),null);
-  editWorkBuddyPoints(wb,{version:3,remaining:1300,monthly:{allowance:500,remaining:200}});editWorkBuddyPoints(wb,{version:4,remaining:null});
+  assert.throws(()=>editWorkBuddyPoints(wb,{version:0,remaining:3312}),/已更新/);
+  editWorkBuddyPoints(wb,{version:1,remaining:2812,monthly:{allowance:500,remaining:0},resets_at:'2020-01-01T00:00:00.000Z'});
+  wb.close();wb=new Workbench(f.config);let w=wb.snapshot().quota_windows.find((w:any)=>w.pool_id==='MANUAL-workbuddy-points');assert.equal(w.remaining,2812);assert.equal(monthlyPercent(w as any),0);assert.equal(otherPoints(w as any),2812);
+  editWorkBuddyPoints(wb,{version:2,remaining:2812,monthly:{allowance:500,remaining:null}});w=wb.snapshot().quota_windows.find((w:any)=>w.pool_id==='MANUAL-workbuddy-points');assert.equal(monthlyPercent(w as any),null);assert.equal(otherPoints(w as any),null);
+  editWorkBuddyPoints(wb,{version:3,remaining:2812,monthly:{allowance:500,remaining:200}});editWorkBuddyPoints(wb,{version:4,remaining:null});
   const row=wb.db.prepare("SELECT data FROM audit WHERE action='clear_workbuddy_points' ORDER BY rowid DESC LIMIT 1").get() as any;assert.equal(JSON.parse(row.data).before.monthly.remaining,200);assert.equal(JSON.parse(row.data).after.monthly.remaining,null);
  }finally{wb.close()}
 });
@@ -32,14 +33,14 @@ test('自定义积分可使用月度组成，金额和次数拒绝月度积分�
  }finally{wb.close()}
 });
 
-function delivered(wb:Workbench,root:string){const s=setup(wb,root);wb.event(event(root,s.tid,s.rid,1));wb.event(event(root,s.tid,s.rid,2,'submitted',{result:'隔离测试的交付结果，验证使用意见与技术审查相互独立。'}));const hashes=wb.all('artifacts').filter(a=>a.run_id===s.rid).map(a=>a.sha256);const review={run_id:s.rid,reviewer_id:'grok-build',performed:true,evidence:'隔离测试夹具，不是真实 Grok 审查',verdict:'passed',artifact_hashes:hashes};wb.review(review);return {...s,hashes,review,payload:()=>({revision:wb.get('tasks',s.tid).revision,run_id:s.rid,note:'卡片太高，请保持原有设计并拆开。',artifact_hashes:hashes})}}
+function delivered(wb:Workbench,root:string){const s=setup(wb,root);wb.event(event(root,s.tid,s.rid,1));wb.event(event(root,s.tid,s.rid,2,'submitted',{result:'隔离测试的交付结果，验证使用意见与技术审查相互独立。'}));const hashes=wb.all('artifacts').filter(a=>a.run_id===s.rid).map(a=>a.sha256);const review={run_id:s.rid,reviewer_id:'grok-build',performed:true,evidence:'隔离测试夹具，不是真实 Grok 审查',verdict:'passed',artifact_hashes:hashes};wb.review(review);finishCloseout(wb,s.tid);return {...s,hashes,review,payload:()=>({revision:wb.get('tasks',s.tid).revision,run_id:s.rid,note:'卡片太高，请保持原有设计并拆开。',artifact_hashes:hashes})}}
 
 test('用户拒绝独立保存、重开 Run 和复制幂等，固化原因并保护旧包/Review/产物',()=>{
  const f=fixture();let wb=f.wb;try{
   const d=delivered(wb,f.root),oldRun=wb.get('runs',d.rid),oldPackage=fs.readFileSync(d.order.path),arts=wb.all('artifacts'),reviews=wb.all('reviews');
   const r=rejectAcceptance(wb,d.tid,d.payload());assert.equal(r.task.status,'acceptance_rejected');assert.equal(r.feedback.verdict,'rejected');
   assert.throws(()=>wb.review(d.review),/仅可审查/);assert.throws(()=>wb.accept(d.tid,{revision:r.task.revision,checks:[true]}));
-  const e=wb.event(event(f.root,d.tid,d.rid,3,'started'));assert.equal(e.disposition,'rejected');assert.equal(wb.get('tasks',d.tid).status,'acceptance_rejected');
+  const e=wb.event(event(f.root,d.tid,d.rid,wb.get('runs',d.rid).seq+1,'started'));assert.equal(e.disposition,'rejected');assert.equal(wb.get('tasks',d.tid).status,'acceptance_rejected');
   const v={revision:r.task.revision,feedback_id:r.feedback.id},order=reworkOrder(wb,d.tid,v);assert.notEqual(order.run_id,d.rid);assert.equal(order.status,'awaiting_dispatch');assert.equal(reworkOrder(wb,d.tid,v).run_id,order.run_id);
   const run=wb.get('runs',order.run_id);assert.equal(run.agent_id,oldRun.agent_id);assert.equal(run.requested_model,oldRun.requested_model);assert.match(fs.readFileSync(order.path,'utf8'),/卡片太高/);assert.equal(JSON.parse(fs.readFileSync(run.directory+'/REWORK.json','utf8')).user_feedback[0].id,r.feedback.id);
   assert.deepEqual(fs.readFileSync(d.order.path),oldPackage);assert.deepEqual(wb.all('artifacts'),arts);assert.deepEqual(wb.all('reviews'),reviews);
@@ -81,9 +82,9 @@ test('关联后续返工拒绝直接、间接及跨替代链的循环，拒绝�
  const {wb,root}=fixture();try{
   const a=delivered(wb,root),b=dependent(wb,root,[a.tid]),c=dependent(wb,root,[b]);
   for(const target of [b,c])assert.throws(()=>rejectAcceptance(wb,a.tid,{...a.payload(),followup_task_id:target}),/后续任务依赖/);
-  assert.equal(wb.get('tasks',a.tid).status,'in_review');assert(!wb.get('tasks',a.tid).acceptance_feedback);
+  assert.equal(wb.get('tasks',a.tid).status,'awaiting_confirmation');assert(!wb.get('tasks',a.tid).acceptance_feedback);
   const next=delivered(wb,root);rejectAcceptance(wb,a.tid,{...a.payload(),followup_task_id:next.tid});
-  assert.throws(()=>rejectAcceptance(wb,next.tid,{...next.payload(),followup_task_id:c}),/后续任务依赖/);assert.equal(wb.get('tasks',next.tid).status,'in_review');
+  assert.throws(()=>rejectAcceptance(wb,next.tid,{...next.payload(),followup_task_id:c}),/后续任务依赖/);assert.equal(wb.get('tasks',next.tid).status,'awaiting_confirmation');
  }finally{wb.close()}
 });
 test('原任务未通过，依赖仅在替代成果真正验收后解除，多轮替代仍需等待最后一轮',()=>{

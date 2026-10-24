@@ -5,8 +5,8 @@ import {api,makeTask,shot,noHorizontalScroll,drawer} from './support.ts';
 test('WorkBuddy月度积分实际保存、100%和其他积分分开，刷新日期可留空',async({page})=>{
  const {get}=await api(page);await page.goto('/#/resources');
  const card=page.getByRole('article',{name:/WorkBuddy 额度/});await card.getByRole('button',{name:/填写积分|修改积分/}).click();const d=page.getByRole('dialog',{name:'WorkBuddy 积分'});
- await d.getByLabel('总剩余积分',{exact:true}).fill('1800');await d.getByLabel('包含每月刷新的基础积分').check();await d.getByLabel('每月基础积分',{exact:true}).fill('500');await d.getByLabel('本月剩余积分',{exact:true}).fill('500');await d.getByRole('button',{name:'保存',exact:true}).click();await expect(d).toHaveCount(0);await page.reload();
- await expect(card).toContainText('1,800 积分');await expect(card).toContainText('1,300 积分');await expect(card).toContainText('500 / 500 积分');await expect(card.getByRole('progressbar')).toHaveAttribute('aria-valuenow','100');await expect(card.locator('footer')).toHaveCount(1);expect((await card.boundingBox())!.height).toBeLessThan(260);
+ await d.getByLabel('总剩余积分',{exact:true}).fill('3312');await d.getByLabel('包含每月刷新的基础积分').check();await d.getByLabel('每月基础积分',{exact:true}).fill('500');await d.getByLabel('本月剩余积分',{exact:true}).fill('500');await d.getByRole('button',{name:'保存',exact:true}).click();await expect(d).toHaveCount(0);await page.reload();
+ await expect(card).toContainText('3,312 积分');await expect(card).toContainText('2,812 积分');await expect(card).toContainText('500 / 500 积分');await expect(card.getByRole('progressbar')).toHaveAttribute('aria-valuenow','100');await expect(card.locator('footer')).toHaveCount(1);expect((await card.boundingBox())!.height).toBeLessThan(260);
  const p=(await get('/state')).quota_pools.find((x:any)=>x.points_editable);expect(p.points_resets_at).toBeNull();await shot(page,'月度积分-浅色');
  await page.getByRole('button',{name:'切换到深色外观'}).click();for(const width of [1440,900,390]){await page.setViewportSize({width,height:1000});expect(await noHorizontalScroll(page)).toBe(true)}await shot(page,'月度积分-窄屏深色');
 });

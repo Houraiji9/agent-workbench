@@ -1,5 +1,6 @@
 import {z} from 'zod';import type {Workbench} from './workbench.ts';import {assert,id,now} from './security.ts';import {canEditRequest} from '../shared/request-policy.ts';
 const input=z.object({project_id:z.string().min(1),text:z.string().trim().min(1).max(20000),status:z.enum(['draft','awaiting_planning']).default('awaiting_planning'),kind:z.enum(['idea','plan','memo']).default('idea'),version:z.number().int().positive().optional(),replan:z.boolean().optional(),skip_review:z.boolean().optional(),review_note:z.string().trim().max(2000).optional()}).strict();
+export {input as requestInput};
 function withdrawPlan(wb:Workbench,qid:string,reason:string,at:string){
  const tasks=wb.all('tasks').filter(t=>t.request_id===qid&&!t.request_withdrawn),ids=new Set(tasks.map(t=>t.id));
  assert(!wb.all('tasks').some(t=>t.request_id!==qid&&!['accepted','cancelled','rework_linked'].includes(t.status)&&(t.dependencies||[]).some((d:string)=>ids.has(d))),'其他任务正在依赖这份计划，请先调整关联任务',409);

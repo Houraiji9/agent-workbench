@@ -21,6 +21,12 @@ export function restore(source:string,target:string){
    if(!targetDir||!fs.existsSync(path.join(targetDir,'RUN.md')))throw new Error('执行包缺失，未完成恢复：'+r.id);
    r.directory=targetDir;r.order_path=path.join(targetDir,'RUN.md');r.restored_at=new Date().toISOString();r.original_directory=old;
    const oldTaskDir=path.resolve(old,'../..');for(const name of ['RUN.md','CONTEXT.md','EXECUTION.md']){const f=path.join(targetDir,name);if(fs.existsSync(f)){let text=fs.readFileSync(f,'utf8').split(old).join(targetDir);text=text.split(path.join(oldTaskDir,'CONTEXT.md')).join(path.join(targetDir,'CONTEXT.md'));atomicWrite(f,text)}}
+   for(const co of [r.closeout,...(r.closeout_history||[])].filter(Boolean)){
+     if(!/^CO-[a-f0-9-]{36}$/.test(co.id))throw Error('收尾记录编号无效');
+     const folder=path.join(targetDir,'closeouts',co.id);
+     if(co.report_path){co.report_path=safePath(path.join(folder,'CLOSEOUT-RESULT.md'),[targetDir]);if(hash(readBounded(co.report_path))!==co.report_sha256)throw Error('收尾报告完整性失败')}
+     const order=path.join(folder,'CLOSEOUT.md');if(fs.existsSync(order))atomicWrite(order,readBounded(safePath(order,[targetDir])).toString('utf8').split(old).join(targetDir));
+   }
    const keyFile=path.join(dest,'run-keys',r.id+'.json');const key=JSON.parse(fs.readFileSync(keyFile,'utf8'));key.receipt_directory=path.join(targetDir,'events');atomicWrite(keyFile,JSON.stringify(key));
    db.prepare('UPDATE runs SET data=? WHERE id=?').run(JSON.stringify(r),r.id);
  }

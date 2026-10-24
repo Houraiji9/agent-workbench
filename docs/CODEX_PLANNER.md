@@ -15,7 +15,7 @@ args = ['--import', 'file:///C:/Tools/AgentWorkbench/node_modules/tsx/dist/loade
 WORKBENCH_ROOT = 'C:\Tools\AgentWorkbench'
 ```
 
-从源码运行时可使用已安装的 Node 24+ 完整路径。MCP 从本机数据目录读取自己的规划凭据，经 HTTP 调用同一个后台。配置的端口和数据目录须与桌面版一致；后台未运行时工具会报告连接失败。程序不修改任何全局 Agent 配置。
+从源码运行时可使用已安装的 Node 24+ 完整路径。MCP 从本机数据目录读取自己的管理凭据，经 HTTP 调用同一个后台。配置的端口和数据目录须与桌面版一致；后台未运行时工具会报告连接失败。程序不修改任何全局 Agent 配置。
 
 ## 规划步骤
 
@@ -38,7 +38,7 @@ WORKBENCH_ROOT = 'C:\Tools\AgentWorkbench'
 
 执行者先完整读取 RUN.md 与 CONTEXT.md，按准确 Task/Run/版本报告 started。回执使用 `npm run report -- event.json --file` 或带 `WORKBENCH_RUN_ID` 的执行者 MCP；事件格式见 [执行协议](EXECUTION_PROTOCOL.md)。执行者 MCP 提供当前 Run 的回报、反馈查询及安排独立审查；审查结论由独立审查者回传。
 
-submitted 需包含完整结果与实际产物。完成 Review 时记录真实审查来源及对应 hash；用户自行确认通过或退回。换人、返工使用新 Run，历史保持。发现范围、费用或权限缺口时报告等待/阻塞，并写清需要用户决定的内容。
+submitted 需包含完整结果与实际产物。完成 Review 时记录真实审查来源及对应 hash；执行者完成收尾后，用户自行确认通过或退回。换人、返工使用新 Run，历史保持。发现范围、费用或权限缺口时报告等待/阻塞，并写清需要用户决定的内容。
 
 ## 生成与回传独立审查单
 
@@ -48,10 +48,20 @@ submitted 需包含完整结果与实际产物。完成 Review 时记录真实�
 4. 本机审查 Agent 按单内 PowerShell 命令依次执行 `started`、`context`、`submit`。命令直接使用内置 Node 和加载器，不依赖系统 npm/PATH。Windows 的 `--import` 参数须保留 `file:///` URL，中文和空格使用 URL 编码，不能改成盘符绝对路径。
 5. 也可按单内配置使用 `WORKBENCH_REVIEW_ID` 独立 stdio MCP；其工具只有 `get_review_assignment`、`report_review_started`、`submit_review_result`。与 `WORKBENCH_RUN_ID` 互斥，凭据由本机读取。
 6. 提交完整 `report_markdown`、结论、问题、证据和未验证项，绑定本次 Task/Run/RA/digest。无法访问本机的 Agent 返回单内示例格式 JSON，由用户“导入审查回执”。
-7. 完整报告入库并落盘为 `REPORT.md`；页面可展开或下载，原执行者可用 `get_run_feedback` 读取。要求修改时“复制修改意见给执行者”生成带报告的新 Run；通过后由用户确认。
+7. 完整报告入库并落盘为 `REPORT.md`；页面可展开或下载，原执行者可用 `get_run_feedback` 读取。要求修改时“复制修改意见给执行者”生成带报告的新 Run；通过后交回原执行者完成收尾，随后由用户确认。
 
 改派或撤回后旧权限及旧结果失效。通用审查回传与用户导入分别标记来源；真实 Grok 会话可用 `get_review_context` 和 `submit_grok_review` 核验，需要本机支持 trace 的 Grok CLI 与 tar。人工误登记可在验收前撤回并保留原因。
 
 ## 图解
 
 `create_project_diagram` 使用本地 Archify 渲染项目任务总览或经 schema 校验的候选结构。图解在项目固定入口查看，作为成果保留。图解本身不推进任务状态。
+
+## 会话管理与收尾
+
+默认 MCP 连接为 manager，可直接办理用户交代的日常管理；只规划连接设置 WORKBENCH_ROLE=planner。单据回报分别设置 WORKBENCH_RUN_ID 或 WORKBENCH_REVIEW_ID，不能混用。工具发现、CLI 入口和完整规则见 [会话管理](CONVERSATION_MANAGEMENT.md)。
+
+派审使用 delivery_mode=manual 时，待转发属于用户待办；delivery_mode=agent 时由执行者负责调用真实独立审查客户端，Reviewer 本人接单后才进入审查中。调用失败用 report_review_handoff 回报，再安排新的审查单。
+
+审查 passed 后进入 awaiting_closeout。执行者调用 get_closeout_context / export_closeout_order，报告 closeout_started，逐项完成后报告 closeout_completed，进入 awaiting_confirmation。规划和交付可填写 closeout_items；review_files 固化受审源文件指纹，文件改变需新 Run 重新审查。
+
+manager 不能代写独立审查结论，也不能导入执行或收尾回执。已有结论后改派、撤回、验收与退回，由管理工具准备确认卡，用户在首页亲自确认。Agent 不得通过鼠标或脚本代点。执行者只能通过本 Run 连接回报；纯网页 Agent 的签名回执由用户导入。

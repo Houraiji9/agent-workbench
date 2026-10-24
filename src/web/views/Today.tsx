@@ -1,8 +1,9 @@
+import {UserDecision,pendingDecisions} from '../ui/UserDecision.js';
 // 今天：接力棒在你手里的事放最前面，其次是 Agent 正在做的，再是最近完成。右侧是日程、额度与连接。
 import React from 'react';
 import { Copy, Send, ArrowRight, MessageCircleQuestion, CircleCheckBig, LifeBuoy, ClipboardPaste, Sparkles, CalendarClock, Gauge, PlugZap, PencilLine, Folder } from 'lucide-react';
 import { useStore } from '../app/store.js';
-import { type R, relayOf, requestRelay, byUrgency, isYourTurn, isTheirTurn } from '../lib/flow.js';
+import { type R, relayOf, requestRelay, byUrgency, isYourTurn, isTheirTurn, reviewSkippedTask } from '../lib/flow.js';
 import { greeting, todayLine, relative, daysUntil, dayCountText, plainDay } from '../lib/format.js';
 import { quotaPercent } from '../quota.js';
 import { Pill, RelayTrack, Empty, Section } from '../ui/kit.js';
@@ -17,12 +18,13 @@ export function Today() {
   const { data } = s;
   const requests = data.requests.filter((q: R) => q.status === 'awaiting_planning'&&!data.projects.find((p:R)=>p.id===q.project_id)?.archived)
     .sort((a: R, b: R) => String(b.created_at).localeCompare(String(a.created_at)));
-  const yours = data.tasks.filter(isYourTurn).sort(byUrgency);
-  const theirs = data.tasks.filter(isTheirTurn).sort(byUrgency);
+  const decisions=pendingDecisions(data),needsDecision=new Set(decisions.map(d=>d.task_id));
+  const yours = data.tasks.filter((t:R)=>!needsDecision.has(t.id)&&isYourTurn(t)).sort(byUrgency);
+  const theirs = data.tasks.filter((t:R)=>!needsDecision.has(t.id)&&isTheirTurn(t)).sort(byUrgency);
   const waiting = data.tasks.filter(waitingForDependencies);
   const done = data.tasks.filter((t: R) => t.status === 'accepted')
     .sort((a: R, b: R) => String(b.acceptance_record?.confirmed_at || b.updated_at).localeCompare(String(a.acceptance_record?.confirmed_at || a.updated_at))).slice(0, 4);
-  const yourCount = yours.length + requests.length;
+  const yourCount = yours.length + requests.length + decisions.length;
   const empty = !data.tasks.length && !data.requests.length;
 
   const summary = yourCount
@@ -43,6 +45,7 @@ export function Today() {
           {yourCount === 0
             ? <Empty icon={<CircleCheckBig size={28} />} title={waiting.length?'后续任务正在等待前序':'都处理完了'}>Agent 有新进展、提问或交付时，会出现在这里。</Empty>
             : <div className="turn-list">
+              {decisions.map(d=><UserDecision key={d.id} decision={d}/>)}
               {yours.map((t: R) => <TaskTurn key={t.id} t={t} />)}
               {requests.map((q: R) => <RequestTurn key={q.id} q={q} />)}
             </div>}
@@ -52,7 +55,7 @@ export function Today() {
           <div className="row-list">
             {theirs.map((t: R) => {
               const who = s.executorOf(t), relay = relayOf(t, s.name, who);
-              const holder = t.status === 'submitted' ? t.reviewer_id : who;
+              const holder = t.status === 'submitted' && t.review_stage==='running' ? t.reviewer_id : who;
               const project = s.pname(t.project_id);
               return <button key={t.id} className="row active-task" onClick={() => s.openTask(t.id)}>
                 <AgentIcon name={s.name(holder)} id={s.agentIconId(holder)} />
@@ -111,7 +114,7 @@ function ProjectTag({ name }: { name: string }) {
   return <span className="active-project" title={name}><Folder size={13} aria-hidden="true" /><span>{name}</span></span>;
 }
 
-function TurnContext({ projectId, agentId, role }: { projectId: string; agentId: string; role: '执行' | '规划' }) {
+function TurnContext({ projectId, agentId, role }: { projectId: string; agentId: string; role: '执行' | '规划' | '审查' }) {
   const s = useStore();
   return <div className="turn-context">
     <ProjectTag name={s.pname(projectId)} />
@@ -126,6 +129,7 @@ function TaskTurn({ t }: { t: R }) {
   const s = useStore();
   const who = s.executorOf(t);
   const relay = relayOf(t, s.name, who);
+  const handingToReviewer = t.status === 'submitted' && !reviewSkippedTask(t) && !!t.reviewer_id;
   const open = () => s.openTask(t.id);
   let actions: React.ReactNode;
   if (t.status === 'ready') actions = <button className="btn primary" disabled={s.busy} onClick={() => void copyOrder(s, t)}><Copy size={16} />生成并复制执行单</button>;
@@ -133,14 +137,16 @@ function TaskTurn({ t }: { t: R }) {
     <button className="btn primary" disabled={s.busy} onClick={() => void copyOrder(s, t)}><Copy size={16} />复制执行单</button>
     <button className="btn" disabled={s.busy} onClick={() => void markDispatched(s, t)}><Send size={16} />我已经发给它</button>
   </>;
-  else if (t.status === 'waiting_input') actions = <button className="btn primary" onClick={open}><MessageCircleQuestion size={16} />去回答</button>;
+  else if (['waiting_input','closeout_waiting_input'].includes(t.status)) actions = <button className="btn primary" onClick={open}><MessageCircleQuestion size={16} />去回答</button>;
+  else if(['in_review','awaiting_closeout'].includes(t.status))actions=<button className="btn primary" onClick={open}><Copy size={16}/>交回执行者收尾</button>;
+  else if(t.status==='submitted')actions=<button className="btn primary" onClick={open}><Copy size={16}/>交给审查者</button>;
   else if(t.status==='acceptance_rejected')actions=<button className="btn primary" disabled={s.busy} onClick={()=>void copyRework(s,t)}><Copy size={16}/>复制返工要求</button>;
-  else if (['in_review', 'awaiting_confirmation', 'submitted'].includes(t.status)) actions = <button className="btn primary" onClick={open}><CircleCheckBig size={16} />去试用确认</button>;
+  else if (['awaiting_confirmation'].includes(t.status)) actions = <button className="btn primary" onClick={open}><CircleCheckBig size={16} />去试用确认</button>;
   else actions = <button className="btn primary" onClick={open}><LifeBuoy size={16} />看看怎么处理</button>;
 
   return <article className={'turn clickable t-' + relay.tone} aria-label={t.title} onClick={e => { if (!(e.target as HTMLElement).closest('button')) open(); }}>
     <div className="turn-heading">
-      <TurnContext projectId={t.project_id} agentId={who} role="执行" />
+      <TurnContext projectId={t.project_id} agentId={handingToReviewer ? t.reviewer_id : who} role={handingToReviewer ? '审查' : '执行'} />
       <div className="turn-top">
         <Pill status={t.status} />
         <OrderStep task={t}/>

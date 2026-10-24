@@ -51,6 +51,7 @@ export function editQuotaCache(wb: Workbench, provider: string, input: unknown) 
 }
 
 const manualPointsInput=z.object({version:z.number().int().nonnegative(),remaining:z.number().finite().min(0).max(1000000000).multipleOf(0.001).nullable(),monthly:monthlyPointsSchema.nullable().optional(),resets_at:z.string().datetime({offset:true}).nullable().optional()}).strict();
+export {manualPointsInput};
 export function editWorkBuddyPoints(wb:Workbench,input:unknown){
   const v=manualPointsInput.parse(input);
   return wb.transaction(()=>{

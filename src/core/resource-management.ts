@@ -69,6 +69,7 @@ const quotaWindow=z.object({label:text,metric:z.enum(['percent','points','curren
   if(w.monthly?.remaining!=null&&w.remaining!==null&&w.monthly.remaining>w.remaining)ctx.addIssue({code:'custom',message:'月度积分包含在总积分内，请核对数量'});
 });
 const quotaInput=z.object({version:z.number().int().nonnegative(),source_ref:z.string().max(300).nullable(),name:text,members:z.array(z.string().max(100)).max(100),windows:z.array(quotaWindow).max(20)}).strict();
+export {agentInput,quotaInput,versionInput};
 const defaultMember:Record<string,string>={grok:'grok-build',zai:'zcode',codex:'codex',claude:'claude',antigravity:'antigravity',deepseek:'deepseek',kimi:'kimi',workbuddy:'workbuddy',gemini:'gemini'};
 export function quotaMembers(wb:Workbench,p:Row){return (p.members?.length?p.members:[defaultMember[p.provider]].filter(Boolean)).filter((aid:string)=>!wb.maybe('agents',aid)?.archived&&!!wb.maybe('agents',aid))}
 export function saveQuota(wb:Workbench,qid:string|null,input:unknown,archive=false):Row{

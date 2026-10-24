@@ -1,3 +1,4 @@
+import {finishCloseout} from './helpers.ts';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,7 +14,7 @@ test('未获用户明确选择时，规划者不能省略独立审查',()=>{
   }finally{wb.close()}
 });
 
-test('独立Claude独立于旧轻量入口；用户选择不审查后，真实交付仍等待本人确认',()=>{
+test('新购Claude独立于旧轻量入口；用户选择不审查后，真实交付仍等待本人确认',()=>{
   const {wb,root,config}=fixture();let active=wb;
   try{
     assert(wb.get('agents','claude').allowed_kinds.includes('engineering'));
@@ -25,11 +26,11 @@ test('独立Claude独立于旧轻量入口；用户选择不审查后，真实�
     const tid=p.task_ids[0],o=wb.exportOrder(tid,1);
     assert(fs.readFileSync(o.path,'utf8').includes('未安排（用户选择）'));
     assert.equal(wb.get('runs',o.run_id).seq,0);
-    assert.throws(()=>wb.accept(tid,{revision:wb.get('tasks',tid).revision,mode:'user_experience',user_checks:[true]}),/真实交付/);
+    assert.throws(()=>wb.accept(tid,{revision:wb.get('tasks',tid).revision,mode:'user_experience',user_checks:[true]}),/缺少当前交付/);
     wb.manualAction(tid,'dispatch',wb.get('tasks',tid).revision);
     wb.event(event(root,tid,o.run_id,1,'started',{identity:'claude'}));
     wb.event(event(root,tid,o.run_id,2,'submitted',{identity:'claude',result:'隔离测试的真实结果：作者交付不代表审查通过，也不能代用户最终确认。'}));
-    assert.equal(wb.get('tasks',tid).status,'awaiting_confirmation');
+    assert.equal(wb.get('tasks',tid).status,'awaiting_closeout');finishCloseout(wb,tid);
     assert.equal(wb.get('runs',o.run_id).status,'submitted');
     assert.equal(wb.all('reviews').length,0);
     assert.throws(()=>wb.review({run_id:o.run_id,reviewer_id:null,performed:true,verdict:'passed',evidence:'不应接受虚构的审查者及审查记录',artifact_hashes:wb.all('artifacts').map(a=>a.sha256)}));

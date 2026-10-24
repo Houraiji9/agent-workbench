@@ -82,7 +82,13 @@ test('完整闭环：粘贴计划 → 生成执行单 → 确认已发出 → �
   expect(reviewPayload.reviewer_id).toBe('grok-build');
   const saved = await get('/tasks/' + task.id);
   expect([...reviewPayload.artifact_hashes].sort()).toEqual(saved.artifacts.map((a: any) => a.sha256).sort());
-  await expect(d.getByText('审查通过，待你确认').first()).toBeVisible();
+  await expect(d.getByText('待执行者收尾').first()).toBeVisible();
+  await expect(d.getByRole('button',{name:'试用后确认完成'})).toHaveCount(0);
+  const closeoutRun=saved.runs.find((r:any)=>r.id===saved.task.current_run_id);
+  const closeout=async(type:string,extra:any={})=>{const detail=await get('/tasks/'+task.id),r=detail.runs.find((x:any)=>x.id===closeoutRun.id);return post('/receipts',{schema_version:1,event_id:'EV-'+randomUUID(),task_id:task.id,run_id:closeoutRun.id,task_version:1,seq:r.seq+1,event_type:type,occurred_at:new Date().toISOString(),data:{identity:closeoutRun.agent_id,cwd:root,closeout_id:closeoutRun.closeout.id,...extra}})};
+  await closeout('closeout_started');
+  await closeout('closeout_completed',{result:'隔离测试收尾报告：已逐项核对使用入口、文档和临时文件处理结果。',closeout_results:closeoutRun.closeout.items.map((i:any)=>({item_id:i.id,outcome:'done',evidence:'隔离测试逐项核对了收尾结果'}))});
+  await expect(d.getByText('收尾完成，待你试用').first()).toBeVisible();
 
   await d.getByRole('button', { name: '试用后确认完成' }).click();
   const ok = page.getByRole('dialog', { name: '试用后确认完成' });
@@ -90,7 +96,7 @@ test('完整闭环：粘贴计划 → 生成执行单 → 确认已发出 → �
   await expect(ok.getByText('真实测试通过', { exact: true })).toHaveCount(0); // 技术检查项不出现在确认里
   await expect(ok.getByRole('button', { name: '确认结果符合需求' })).toBeDisabled();
   await ok.getByRole('button', { name: '稍后再说' }).click();
-  expect((await get('/tasks/' + task.id)).task.status).toBe('in_review');
+  expect((await get('/tasks/' + task.id)).task.status).toBe('awaiting_confirmation');
   await d.getByRole('button', { name: '试用后确认完成' }).click();
   await shot(page, '新版-试用确认');
   await page.getByRole('dialog', { name: '试用后确认完成' }).getByLabel('我能打开测试成果').check();

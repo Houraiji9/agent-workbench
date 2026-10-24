@@ -33,8 +33,9 @@ export const statusText: R = {
   acceptance_rejected: '验收未通过，待返工',
   rework_linked: '验收未通过，已安排返工',
   submitted: '已交付，待审查',
-  awaiting_confirmation: '已交付，待你试用',
-  in_review: '审查通过，待你确认',
+  awaiting_confirmation: '收尾完成，待你试用',
+  in_review: '待执行者收尾',
+  awaiting_closeout: '待执行者收尾', closing: '正在收尾', closeout_waiting_input: '收尾等你回答', closeout_blocked: '收尾遇到阻碍',
   accepted: '已完成',
   failed: '没有完成',
   cancelled: '已取消',
@@ -42,18 +43,20 @@ export const statusText: R = {
 
 export const toneOfStatus: Record<string, Tone> = {
   awaiting_planning: 'you', ready: 'you', awaiting_dispatch: 'you', waiting_input: 'you',
-  awaiting_confirmation: 'you', in_review: 'you',
+  awaiting_confirmation: 'you', in_review: 'you', awaiting_closeout:'you', closing:'working', closeout_waiting_input:'you', closeout_blocked:'problem',
   dispatched: 'working', running: 'working',
   submitted: 'review',
   blocked: 'problem', failed: 'problem', changes_requested: 'problem',acceptance_rejected:'problem',rework_linked:'quiet',
   accepted: 'done', cancelled: 'quiet', planned: 'quiet',
 };
 
+export const hasPendingDecision=(t:R)=>!!t.pending_user_decision&&Date.parse(t.pending_user_decision.expires_at)>Date.now();
+
 export function reviewSkippedTask(t: R): boolean {
   return t.reviewer_id === null && t.review_policy?.mode === 'not_requested' && t.review_policy?.source === 'user_requested';
 }
 
-/** 一项任务的六棒接力。审查被用户明确取消时，审查一棒显示为“本次不审查”。 */
+/** 一项任务的七棒接力。审查被用户明确取消时，审查一棒显示为“本次不审查”。 */
 export function relayOf(t: R, name: (id: string) => string, executor?: string): Relay {
   const skippedReview = reviewSkippedTask(t);
   const doer = name(executor || t.agent_id);
@@ -64,10 +67,12 @@ export function relayOf(t: R, name: (id: string) => string, executor?: string): 
     { key: 'handoff', label: '交给执行者', who: '你' },
     { key: 'work', label: '执行', who: doer },
     { key: 'review', label: '独立审查', who: reviewer },
+    { key: 'closeout', label: '执行收尾', who: doer },
     { key: 'confirm', label: '你试用确认', who: '你' },
   ];
   const r = (at: number, holder: Holder, tone: Tone, headline: string, next: string): Relay => ({ legs, at, holder, tone, headline, next, skippedReview });
   if(waitingForDependencies(t))return r(2,'none','quiet','等待前序任务完成','先完成下方列出的任务并确认验收，再交给执行者');
+  if(hasPendingDecision(t))return r(['accept','reject'].includes(t.pending_user_decision.action)?6:4,'you','you',t.pending_user_decision.title,'查看已填好的事项，确认后生效');
   switch (t.status) {
     case 'ready': return r(2, 'you', 'you', '计划已经排好，还没生成执行单', `生成执行单并复制，发给 ${doer}`);
     case 'awaiting_dispatch': return r(2, 'you', 'you', `执行单已准备好，等你交给 ${doer}`, `把执行单粘贴给 ${doer}，然后点“我已经发给它”`);
@@ -78,14 +83,17 @@ export function relayOf(t: R, name: (id: string) => string, executor?: string): 
     case 'failed': return r(3, 'you', 'problem', '这一次没有完成', '可以换一位执行者重新做，原来的记录都会保留');
     case 'submitted':
       return skippedReview
-        ? r(5, 'you', 'you', `${doer} 已交付，按你的要求不安排审查`, '打开成果试用一下，符合需求就确认完成')
-        : r(4, 'reviewer', 'review', `${doer} 已交付，等 ${reviewer} 独立审查`, t.review_stage==='running'?`${reviewer} 已接单，完成后会回传报告`:`把审查单发给 ${reviewer}，完成后报告会附在任务里`);
+        ? r(5, 'you', 'you', `${doer} 已交付，等待收尾`, `把收尾单交给 ${doer}`)
+        : r(4, t.review_stage==='running'?'reviewer':t.review_delivery==='agent'?'agent':'you', 'review', t.review_stage==='running'?`${reviewer} 正在独立审查`:t.review_delivery==='agent'?`${doer} 正在安排 ${reviewer} 审查`:`${doer} 已交付，等你交给 ${reviewer} 审查`, t.review_stage==='running'?`${reviewer} 已接单，完成后会回传报告`:t.review_delivery==='agent'?'等待审查者接单；如调用受阻，可改为手动转发':`把审查单发给 ${reviewer}，完成后报告会附在任务里`);
     case 'changes_requested': return r(4, 'you', 'problem', `${reviewer} 审查后要求修改`, '新开一次执行，让执行者按审查意见返工');
-    case 'acceptance_rejected': return r(5,'you','problem','你已确认本次结果不通过',`复制返工要求，交给 ${doer} 修改`);
+    case 'acceptance_rejected': return r(6,'you','problem','你已确认本次结果不通过',`复制返工要求，交给 ${doer} 修改`);
     case 'rework_linked': return r(3,'none','quiet','本次验收未通过，已由后续任务接替','查看后续任务的进展；原交付与意见保留在这里');
-    case 'in_review': return r(5, 'you', 'you', '审查已通过，等你试用确认', '打开成果试用一下，符合需求就确认完成');
-    case 'awaiting_confirmation': return r(5, 'you', 'you', `${doer} 已交付，等你试用`, '打开成果试用一下，符合需求就确认完成');
-    case 'accepted': return r(6, 'none', 'done', '已经完成', '成果和全部记录都已归档，可以随时回来查看');
+    case 'in_review': case 'awaiting_closeout': return r(5, t.closeout_delivery==='agent'?'agent':'you', t.closeout_delivery==='agent'?'working':'you', skippedReview ? `${doer} 已交付，等待收尾` : '审查已通过，等待执行者收尾', t.closeout_delivery==='agent'?(skippedReview?`${doer} 交付后继续完成剩余事项`:`${doer} 收到审查结果后继续完成剩余事项`):`复制收尾单，交回 ${doer}`);
+    case 'closing': return r(5, 'agent', 'working', `${doer} 正在收尾`, '等执行者完成剩余事项，再试用验收');
+    case 'closeout_waiting_input': return r(5, 'you', 'you', `${doer} 收尾时需要你回答`, '保存回答并复制回执行者');
+    case 'closeout_blocked': return r(5, 'you', 'problem', `${doer} 收尾遇到阻碍`, '查看原因，协助执行者继续，或新开执行处理修改');
+    case 'awaiting_confirmation': return r(6, 'you', 'you', `${doer} 已完成收尾，等你试用`, '打开成果试用一下，符合需求就确认完成');
+    case 'accepted': return r(7, 'none', 'done', '已经完成', '成果和全部记录都已归档，可以随时回来查看');
     case 'cancelled': return r(-1, 'none', 'quiet', '这项任务已取消', '已有的执行记录和成果都保留着');
     default: return r(1, 'planner', 'quiet', statusText[t.status] || t.status, '等待新的进展');
   }
@@ -100,6 +108,7 @@ export function requestRelay(): Relay {
       { key: 'handoff', label: '交给执行者', who: '你' },
       { key: 'work', label: '执行', who: '待定' },
       { key: 'review', label: '独立审查', who: '待定' },
+      { key: 'closeout', label: '执行收尾', who: '待定' },
       { key: 'confirm', label: '你试用确认', who: '你' },
     ],
     at: 1, holder: 'you', tone: 'you', skippedReview: false,
@@ -109,24 +118,28 @@ export function requestRelay(): Relay {
 }
 
 /** 首页排序：越靠前越需要你先处理。 */
-const urgency = ['waiting_input', 'blocked', 'failed', 'acceptance_rejected','changes_requested', 'awaiting_confirmation', 'in_review', 'awaiting_dispatch', 'ready', 'submitted', 'dispatched', 'running'];
+const urgency = ['closeout_waiting_input','waiting_input', 'closeout_blocked','blocked', 'failed', 'acceptance_rejected','changes_requested', 'awaiting_confirmation', 'in_review','awaiting_closeout', 'awaiting_dispatch', 'ready', 'submitted', 'dispatched', 'running'];
 export function byUrgency(a: R, b: R): number {
   const d = urgency.indexOf(a.status) - urgency.indexOf(b.status);
   if(['ready','awaiting_dispatch'].includes(a.status)&&['ready','awaiting_dispatch'].includes(b.status))return byExecutionOrder(a,b);
   return d || String(b.updated_at || '').localeCompare(String(a.updated_at || ''));
 }
 
-export const yourTurn = ['waiting_input', 'blocked', 'failed', 'acceptance_rejected','changes_requested', 'awaiting_confirmation', 'in_review', 'awaiting_dispatch', 'ready'];
-export const theirTurn = ['dispatched', 'running', 'submitted'];
+export const yourTurn = ['closeout_waiting_input','waiting_input', 'closeout_blocked','blocked', 'failed', 'acceptance_rejected','changes_requested', 'awaiting_confirmation', 'in_review','awaiting_closeout', 'awaiting_dispatch', 'ready'];
+export const theirTurn = ['dispatched', 'running', 'closing'];
 export const finished = ['accepted', 'cancelled','rework_linked'];
 
 export function isYourTurn(t: R): boolean {
+  if(hasPendingDecision(t))return true;
   if(waitingForDependencies(t))return false;
-  if (t.status === 'submitted') return reviewSkippedTask(t);
+  if (t.status === 'submitted') return t.review_stage!=='running'&&t.review_delivery!=='agent';
+  if(t.status==='awaiting_closeout')return t.closeout_delivery!=='agent';
   return yourTurn.includes(t.status);
 }
 export function isTheirTurn(t: R): boolean {
-  if (t.status === 'submitted') return !reviewSkippedTask(t);
+  if(hasPendingDecision(t))return false;
+  if (t.status === 'submitted') return t.review_stage==='running'||t.review_delivery==='agent';
+  if(t.status==='awaiting_closeout')return t.closeout_delivery==='agent';
   return theirTurn.includes(t.status);
 }
 
@@ -139,6 +152,7 @@ export function eventText(e: R, doer: string): string {
     blocked: `${doer} 遇到阻碍`,
     failed: `${doer} 报告没有完成`,
     submitted: `${doer} 交付了成果`,
+    closeout_started:`${doer} 开始收尾`,closeout_progress:`${doer} 回报收尾进展`,closeout_waiting_input:`${doer} 收尾时提出问题`,closeout_blocked:`${doer} 回报收尾阻碍`,closeout_completed:`${doer} 完成收尾`,
   };
   return base[e.event_type] || e.event_type;
 }

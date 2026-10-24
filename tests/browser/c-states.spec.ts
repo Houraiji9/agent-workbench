@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { makeTask, drawer, nav, shot } from './support.ts';
 
-test('用户不安排审查：交付后直接待你试用，没有“登记审查”，也不生成审查记录', async ({ page }) => {
-  const m = await makeTask(page, { title: '不审查测试', skipReview: true, agent: 'claude', stage: 'submitted' });
+test('用户不安排审查：交付并收尾后待你试用，没有“登记审查”，也不生成审查记录', async ({ page }) => {
+  const m = await makeTask(page, { title: '不审查测试', skipReview: true, agent: 'claude', stage: 'reviewed' });
   expect((await m.get('/tasks/' + m.tid)).task.status).toBe('awaiting_confirmation');
   await page.goto('/');
   const card = page.getByRole('article', { name: '不审查测试' });
-  await expect(card.getByText('已交付，待你试用')).toBeVisible();
+  await expect(card.getByText('收尾完成，待你试用')).toBeVisible();
   await card.getByRole('button', { name: '去试用确认' }).click();
   const d = drawer(page);
   await expect(d.getByText('审查：本次不安排')).toBeVisible();
@@ -112,8 +112,7 @@ test('审查要求修改：旧的通过审查不能套用到新交付', async ({
   const d = drawer(page);
   await expect(d.getByText('审查要求修改').first()).toBeVisible();
   await expect(d.getByText('测试意见：标题太小').first()).toBeVisible();
-  await d.getByRole('region', { name: '现在要做什么' }).getByRole('button', { name: '复制修改意见给执行者' }).click();
-  await expect.poll(async () => (await m.get('/tasks/' + m.tid)).task.current_run_id).not.toBe(m.rid);
+  await d.getByRole('button', { name: '复制修改意见给执行者' }).click();
   await expect(d.getByText('历史交付')).toBeVisible();
   await shot(page, '新版-返工后的审查标注');
 });

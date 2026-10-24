@@ -19,3 +19,7 @@
 接入与业务协议见 docs/CODEX_PLANNER.md、docs/EXECUTION_PROTOCOL.md。
 
 审查规划读取 reviewer_resources；有效窗口剩余不超过 10% 时换人，Grok 无默认优先权。交付后先 get_review_candidates，再 export_review_order，把返回 entry 交给用户。审查者按独立 RA 审查单接单并回传完整报告；执行者不能代写审查结论。Windows --import 加载器保留 file URL。测试夹具结束时回收本轮创建目录，避免累积副本。
+
+审查通过后由原执行者完成独立收尾，之后才交用户验收。日常会话管理见 docs/CONVERSATION_MANAGEMENT.md；manager 不能代写审查结论、执行回执或收尾。关键决定先准备确认卡，由用户亲自确认。
+
+维护结束时，将不再需要的临时测试目录、调试日志、旧打包目录统一移动到安装/项目根的“待清理”目录。保留一份原路径到新路径清单。移动前核验范围、进程占用与目录链接，不能跟随链接移动真实依赖。不移动正式 data、执行包、有效成果与当前版本文件。不要在多个位置要求用户自行寻找；受阻时告知具体路径与原因。

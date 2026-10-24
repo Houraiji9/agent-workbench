@@ -1,3 +1,4 @@
+import {UserDecision,pendingDecisions} from '../ui/UserDecision.js';
 // 任务抽屉：接力线 → 现在要做什么 → 成果 → 要求 → 过程 → 更多信息。整页不跳转，关掉就回到原处。
 import React, { useEffect, useRef, useState } from 'react';
 import { X, Copy, Send, CircleCheckBig, FileText, Image as ImageIcon, Globe, Repeat, Ban, ClipboardCheck, FileInput, MessageCircleQuestion, ChevronDown, FolderOpen } from 'lucide-react';
@@ -7,7 +8,7 @@ import { type R, relayOf, eventText, dispositionText, reviewSkippedTask } from '
 import { relative, fullDate, bytes } from '../lib/format.js';
 import { Drawer, RelayTrack, Pill, Notice } from '../ui/kit.js';
 import { AgentIcon } from '../ui/AgentIcon.js';
-import { copyOrder, copyRework, markDispatched, copyReviewOrder, copyReviewFeedback } from './actions.js';
+import { copyOrder, copyRework, markDispatched, copyReviewOrder, copyReviewFeedback, copyCloseoutOrder } from './actions.js';
 import { userAcceptanceItems } from '../../core/acceptance.js';
 import {ArtifactLocation} from '../ui/ArtifactLocation.js';
 import {TaskOrder,OrderStatus} from '../ui/ExecutionOrder.js';
@@ -59,8 +60,9 @@ function TaskBody({ detail }: { detail: R }) {
 
     <RelayTrack relay={relay} />
 
-    <NowCard detail={detail} relay={relay} run={run} who={who} current={current} lastMessage={lastMessage} />
+    {pendingDecisions(s.data).some(d=>d.task_id===t.id)?pendingDecisions(s.data).filter(d=>d.task_id===t.id).map(d=><UserDecision key={d.id} decision={d}/>):<NowCard detail={detail} relay={relay} run={run} who={who} current={current} lastMessage={lastMessage} />}
     <TaskOrder task={t}/>
+    {run?.closeout?.result&&<section className="block" aria-label="收尾结果"><h2>执行者收尾结果</h2><ul className="plain-list">{run.closeout.items.map((item:R)=><li key={item.id}><strong>{item.text}</strong><p>{run.closeout.results.find((x:R)=>x.item_id===item.id)?.evidence}</p></li>)}</ul><details className="fold"><summary>完整收尾报告</summary><pre className="pre">{run.closeout.result}</pre></details></section>}
 
     <section className="block" aria-label="成果">
       <h2>成果 {detail.artifacts.length > 0 && <span className="count">{detail.artifacts.length}</span>}</h2>
@@ -98,7 +100,7 @@ function TaskBody({ detail }: { detail: R }) {
         <p className="muted small">{r.source==='grok_session_import'?'Grok 会话已核验：':r.source==='reviewer_submission'?'审查者已回传：':r.source==='user_imported_review'?'已导入审查回执：':'手工登记：'}{r.evidence}</p>
         {r.report_markdown&&<details className="fold"><summary>查看完整审查报告</summary><pre className="pre">{r.report_markdown}</pre><a className="link" href={'/api/reviews/'+r.id+'/report'} download>下载报告</a></details>}
         {!!r.limitations?.length&&<details className="fold"><summary>审查范围与未验证项</summary><ul>{r.limitations.map((x:string,i:number)=><li key={i}>{x}</li>)}</ul></details>}
-        {r.revoked_at?<p className="muted small">撤回原因：{r.revocation_reason} · {fullDate(r.revoked_at,s.tz)}</p>:r.run_id===t.current_run_id&&['submitted','in_review','changes_requested'].includes(t.status)&&<button className="link" onClick={()=>s.openDialog('revoke-review',{detail,review:r})}>撤回误登记</button>}
+        {r.revoked_at?<p className="muted small">撤回原因：{r.revocation_reason} · {fullDate(r.revoked_at,s.tz)}</p>:r.run_id===t.current_run_id&&['submitted','in_review','changes_requested','awaiting_closeout','closing','closeout_waiting_input','closeout_blocked','awaiting_confirmation'].includes(t.status)&&<button className="link" onClick={()=>s.openDialog('revoke-review',{detail,review:r})}>撤回误登记</button>}
       </div>)}
     </section>}
 
@@ -132,7 +134,7 @@ function NowCard({ detail, relay, run, who, current, lastMessage }: { detail: R;
       body = <>{lastMessage && <blockquote className="agent-says"><b>{s.name(who)} 最近说：</b>{lastMessage}</blockquote>}
         <p className="muted small">执行单还在 {s.name(who)} 那里。需要重发时可以 <button className="link inline" disabled={s.busy} onClick={() => void copyOrder(s, t)}>再复制一次执行单</button>。</p></>;
       break;
-    case 'waiting_input':
+    case 'waiting_input': case 'closeout_waiting_input':
       body = <Question key={`${detail.feedback?.current_question?.id}:${detail.feedback?.replies?.find((r: R) => r.question_event_id === detail.feedback?.current_question?.id)?.version || 0}`} detail={detail} />;
       break;
     case 'blocked': case 'failed':
@@ -144,7 +146,8 @@ function NowCard({ detail, relay, run, who, current, lastMessage }: { detail: R;
       break;
     case 'submitted':
       body = noReview ? null : <>
-        <p>{t.review_stage==='running'?s.name(t.reviewer_id)+' 已接单，正在审查。':'把审查单发给 '+s.name(t.reviewer_id)+'，它会按单回传报告。'}</p>
+        {t.review_handoff_issue&&<blockquote className="agent-says">{t.review_handoff_issue}</blockquote>}
+        <p>{t.review_stage==='running'?s.name(t.reviewer_id)+' 已接单，正在审查。':t.review_delivery==='agent'?s.name(who)+' 正在调用审查工具。':'把审查单发给 '+s.name(t.reviewer_id)+'，它会按单回传报告。'}</p>
         <div className="now-actions">
           <button className="btn primary" disabled={s.busy} onClick={()=>void copyReviewOrder(s,detail)}><Copy size={16}/>复制审查单</button>
           <button className="btn" onClick={()=>s.openDialog('review-order',{detail})}>更换审查者</button>
@@ -159,7 +162,14 @@ function NowCard({ detail, relay, run, who, current, lastMessage }: { detail: R;
         <div className="now-actions"><button className="btn primary" disabled={s.busy} onClick={()=>void copyReviewFeedback(s,t)}><Copy size={16}/>复制修改意见给执行者</button><button className="btn" onClick={()=>s.openDialog('review-order',{detail})}>重新安排审查</button></div></>;
       break;
     }
-    case 'in_review': case 'awaiting_confirmation':
+    case 'in_review': case 'awaiting_closeout': case 'closing': case 'closeout_blocked':
+      body = <>{lastMessage && t.status === 'closeout_blocked' && <blockquote className="agent-says">{lastMessage}</blockquote>}
+        <ul className="check-list">{run?.closeout?.items?.map((item:R)=><li key={item.id}>{item.text}</li>)}</ul>
+        <div className="now-actions"><button className="btn primary" disabled={s.busy} onClick={()=>void copyCloseoutOrder(s,t)}><Copy size={16}/>复制收尾单给执行者</button>
+        <button className="btn" onClick={()=>s.openDialog('receipt',{taskId:t.id})}>导入收尾回执</button>
+        {t.status==='closeout_blocked'&&<button className="btn" onClick={()=>s.openDialog('retry',{detail})}>新开执行处理修改</button>}</div></>;
+      break;
+    case 'awaiting_confirmation':
       body = <>{steps([<>打开下面的成果看一看、试一试</>, <>符合需求就确认完成；有问题可以退回修改</>])}
         <div className="now-actions"><button className="btn primary" disabled={!current.length} onClick={() => s.openDialog('accept', { detail })}><CircleCheckBig size={16} />试用后确认完成</button><button className="btn danger" disabled={!current.length} onClick={()=>s.openDialog('reject',{detail})}>不通过，退回修改</button></div>
         {!noReview&&<button className="link" disabled={s.busy} onClick={()=>void copyReviewFeedback(s,t)}>复制审查反馈给执行者</button>}
@@ -191,7 +201,7 @@ function Question({ detail }: { detail: R }) {
   const [error, setError] = useState('');
   if (!question) return <p className="muted">{s.name(s.executorOf(t))} 在等待回答，但没有写具体问题，请到它的原会话查看。</p>;
   const dirty = text.trim() !== (reply?.message || '');
-  const copyText = (msg: string) => `请查看我对你问题的回答。\n任务 ${t.id}\n执行 ${t.current_run_id}\n问题编号 ${question.id}\n你的问题：${question.data?.message || '（未填写）'}\n我的回答：${msg}\n可以继续时，请按执行单回报 started 恢复。`;
+  const copyText = (msg: string) => `请查看我对你问题的回答。\n任务 ${t.id}\n执行 ${t.current_run_id}\n问题编号 ${question.id}\n你的问题：${question.data?.message || '（未填写）'}\n我的回答：${msg}\n可以继续时，请按${t.status==='closeout_waiting_input'?'收尾单回报 closeout_started':'执行单回报 started'} 恢复。`;
   const save = async () => {
     setError('');
     const r = await s.act(async () => {
@@ -259,8 +269,8 @@ function MoreInfo({ detail, run }: { detail: R; run?: R }) {
       <div className="tool-row">
         {t.current_run_id && <button className="btn small" onClick={() => s.openDialog('receipt', { taskId: t.id })}><FileInput size={15} />导入回执</button>}
         {!noReview && ['submitted', 'in_review', 'changes_requested'].includes(t.status) && <button className="btn small" onClick={() => s.openDialog('review', { detail })}><ClipboardCheck size={15} />登记审查结果</button>}
-        {!noReview&&t.reviewer_id==='grok-build'&&['submitted','in_review','changes_requested'].includes(t.status)&&<button className="btn small" onClick={()=>s.openDialog('grok-review',{detail})}>读取 Grok 审查</button>}
-        {!t.request_withdrawn&&['submitted', 'awaiting_confirmation', 'failed', 'cancelled', 'in_review', 'changes_requested', 'acceptance_rejected', 'blocked'].includes(t.status) && <button className="btn small" onClick={() => s.openDialog('retry', { detail })}><Repeat size={15} />换人或重新做一次</button>}
+        {!noReview&&t.reviewer_id==='grok-build'&&['submitted','in_review','changes_requested','awaiting_closeout','closing','closeout_waiting_input','closeout_blocked','awaiting_confirmation'].includes(t.status)&&<button className="btn small" onClick={()=>s.openDialog('grok-review',{detail})}>读取 Grok 审查</button>}
+        {!t.request_withdrawn&&['awaiting_closeout','closing','closeout_waiting_input','closeout_blocked','submitted', 'awaiting_confirmation', 'failed', 'cancelled', 'in_review', 'changes_requested', 'acceptance_rejected', 'blocked'].includes(t.status) && <button className="btn small" onClick={() => s.openDialog('retry', { detail })}><Repeat size={15} />换人或重新做一次</button>}
         {run?.directory && <button className="btn small" onClick={() => void s.copy(run.directory, '执行文件夹路径已复制')}><FolderOpen size={15} />复制执行文件夹路径</button>}
         {!['accepted', 'cancelled', 'rework_linked'].includes(t.status) && <button className="btn small danger" onClick={() => s.openDialog('cancel', { detail })}><Ban size={15} />取消这项任务</button>}
       </div>
@@ -277,7 +287,7 @@ function MoreInfo({ detail, run }: { detail: R; run?: R }) {
       </dl>
       <h3>执行记录（{detail.runs.length} 次）</h3>
       <ul className="run-list">{detail.runs.map((r: R) => <li key={r.id}>
-        <span><b>{s.name(r.agent_id)}</b> · {r.id === t.current_run_id ? '当前这次' : '之前'} · <Pill status={noReview && r.status === 'submitted' ? 'awaiting_confirmation' : r.status} /></span>
+        <span><b>{s.name(r.agent_id)}</b> · {r.id === t.current_run_id ? '当前这次' : '之前'} · <Pill status={r.id===t.current_run_id?t.status:r.status} /></span>
         <code>{r.id}</code>
         {r.result && <details className="fold"><summary>执行者写的结果报告</summary><pre className="pre">{r.result}</pre></details>}
       </li>)}</ul>

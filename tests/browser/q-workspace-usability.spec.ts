@@ -38,7 +38,7 @@ test('同优先级额度保留大小排序，放大缩小无重叠或溢出',asy
 });
 
 test('最近完成位于日程额度连接的下方，所有宽度保持底部',async({page})=>{
- const m=await makeTask(page,{title:'测试最近完成置底',skipReview:true,stage:'submitted'});await page.goto('/#/today?task='+m.tid);await page.getByRole('button',{name:'试用后确认完成'}).click();const d=page.getByRole('dialog',{name:'试用后确认完成'});await d.getByLabel('我能看懂测试结果').check();await d.getByLabel('结果符合测试需求').check();await d.getByRole('button',{name:'确认结果符合需求'}).click();await page.goto('/#/today');
+ const m=await makeTask(page,{title:'测试最近完成置底',skipReview:true,stage:'reviewed'});await page.goto('/#/today?task='+m.tid);await page.getByRole('button',{name:'试用后确认完成'}).click();const d=page.getByRole('dialog',{name:'试用后确认完成'});await d.getByLabel('我能看懂测试结果').check();await d.getByLabel('结果符合测试需求').check();await d.getByRole('button',{name:'确认结果符合需求'}).click();await page.goto('/#/today');
  for(const width of [1920,900,390]){await page.setViewportSize({width,height:1000});const done=await page.getByRole('region',{name:'最近完成'}).boundingBox(),side=await page.getByRole('complementary',{name:'概况'}).boundingBox();expect(done!.y).toBeGreaterThanOrEqual(side!.y+side!.height);if(width===900)await shot(page,'今天-最近完成在底部')}
 });
 

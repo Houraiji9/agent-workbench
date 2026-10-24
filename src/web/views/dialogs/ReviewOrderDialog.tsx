@@ -14,7 +14,7 @@ export function ReviewOrderDialog({detail,onClose}:{detail:R;onClose():void}){
     <p>发给审查者后，它会按单接单并提交报告。</p><button className="btn primary" onClick={()=>void s.copy(saved.entry,'审查单已复制')}><Copy size={16}/>复制审查单</button><details className="fold"><summary>查看复制内容</summary><textarea className="mono" readOnly rows={7} value={saved.entry}/></details>
   </Dialog>;
   return <Dialog label="安排独立审查" title="安排独立审查" sub={task.title} onClose={onClose}><form className="form" onSubmit={e=>{e.preventDefault();void run(async()=>{
-    const r=await api('/review-orders',{run_id:task.current_run_id,reviewer_id:reviewer,expected_revision:candidates?.revision,reason:reason.trim()||'用户在工作台选择独立审查者',new_review:['in_review','changes_requested'].includes(task.status)});setSaved(r);await s.copy(r.entry,`审查单已复制，发给 ${s.name(reviewer)}`);return r;
+    const r=await api('/review-orders',{run_id:task.current_run_id,reviewer_id:reviewer,expected_revision:candidates?.revision,reason:reason.trim()||'用户在工作台选择独立审查者',delivery_mode:'manual',new_review:['in_review','changes_requested','awaiting_closeout','closing','closeout_waiting_input','closeout_blocked','awaiting_confirmation'].includes(task.status)});setSaved(r);await s.copy(r.entry,`审查单已复制，发给 ${s.name(reviewer)}`);return r;
   },undefined,false)}}>
     <Field label="审查者"><select required value={reviewer} onChange={e=>setReviewer(e.target.value)}><option value="">请选择审查者</option>{candidates?.candidates.map((a:R)=><option key={a.agent_id} value={a.agent_id} disabled={!a.assignable}>{a.name} · {a.reason}</option>)}</select></Field>
     <Field label="安排说明（可选）"><input value={reason} onChange={e=>setReason(e.target.value)} maxLength={2000} placeholder="例如：Grok 额度不足，这次交给 Claude"/></Field>
