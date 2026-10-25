@@ -2,9 +2,14 @@ node_modules/
 dist/
 data/
 .agent-workbench/
+.agent-workbench-output/
 .codex/
 .claude/
 .test-tmp/
+.tmp/
+.test-temp/
+.review-*/
+.project-files-tests/
 .local-dev/
 test-results/
 playwright-report/

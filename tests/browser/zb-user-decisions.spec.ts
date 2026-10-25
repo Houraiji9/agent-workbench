@@ -32,7 +32,7 @@ test('已有修改要求的改派：确认前保留原报告，点确认后可�
   let detail=await made.get('/tasks/'+made.tid);expect(detail.task.status).toBe('changes_requested');expect(detail.reviews.find((x:any)=>x.id===original.id).revoked_at).toBeFalsy();
   await card.getByRole('button',{name:'确认重新安排审查'}).click();await expect(card).toHaveCount(0);
   detail=await made.get('/tasks/'+made.tid);expect(detail.task.status).toBe('submitted');expect(detail.task.reviewer_id).toBe('claude');expect(detail.reviews.find((x:any)=>x.id===original.id).revoked_at).toBeTruthy();
-  await page.getByRole('article',{name:made.title,exact:true}).getByRole('button',{name:'交给审查者'}).click();await expect(page.getByRole('dialog',{name:'任务详情'}).getByRole('button',{name:/复制审查单/}).first()).toBeVisible();
+  await page.getByRole('article',{name:made.title,exact:true}).getByRole('button',{name:'交给审查者'}).click();await page.getByRole('dialog',{name:'任务详情'}).getByText('手动转发或导入审查',{exact:true}).click();await expect(page.getByRole('dialog',{name:'任务详情'}).getByRole('button',{name:/复制审查单/}).first()).toBeVisible();
   await page.getByRole('dialog',{name:'任务详情'}).getByRole('button',{name:'复制审查单',exact:true}).click();
   await expect.poll(()=>page.evaluate(()=>navigator.clipboard.readText())).toContain(detail.task.current_review_assignment_id);
   expect(await page.evaluate(()=>navigator.clipboard.readText())).toContain('Claude');

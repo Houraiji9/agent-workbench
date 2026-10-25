@@ -85,13 +85,16 @@ async function startBackend() {
     windowsHide:true,stdio:['ignore',out,out,'ipc']});fs.closeSync(out);
   backend.on('error',e=>log('backend_error',{message:e.message}));
   backend.on('exit',(code)=>{log('backend_exit',{code});if(ready&&!quitting){dialog.showErrorBox('工作台服务已退出','请重新打开工作台。项目数据保存在原目录。');void stop();}});
-  for(let n=0;n<100;n++) {
+  // Cold starts and migrations can take longer on a busy disk. Bound elapsed
+  // time, not the number of fast connection refusals, while preserving PID checks.
+  const startupDeadline=Date.now()+60000;
+  while(true) {
     if(quitting)return;
     if(backend.exitCode!==null)throw new Error('工作台服务启动失败，详情见 data/desktop-server.log。');
     try { const h=await(await fetch(base+'/api/health',{signal:AbortSignal.timeout(700)})).json();
       if(h.app==='agent-workbench'&&h.pid===backend.pid){log('backend_ready',{pid:h.pid,port});break;}
     }catch{}
-    if(n===99)throw new Error('启动超时，详情见 data/desktop-server.log。');
+    if(Date.now()>=startupDeadline)throw new Error('启动超过 60 秒，详情见 data/desktop-server.log。');
     await new Promise(r=>setTimeout(r,200));
   }
   if(quitting)return;

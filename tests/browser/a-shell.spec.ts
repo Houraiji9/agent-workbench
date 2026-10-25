@@ -99,9 +99,10 @@ test('提需求时选择“这次不安排审查”：原因必填并记录在�
   await page.getByRole('button', { name: '提需求', exact: true }).click();
   const d = page.getByRole('dialog', { name: '提一个需求' });
   await d.getByLabel('你想完成什么？').fill('浏览器测试：不审查的小改动');
-  await d.getByText('特殊安排（一般不用改）').click();
-  await d.getByLabel('这次不安排其他 Agent 审查，交付后我自己试用确认').check();
-  await d.getByLabel('说明一下原因').fill('测试：小改动我自己看');
+  // 2026-10-25 勘误：入口已改为“规划与审查”折叠里的“交付后的审查”下拉（Sonnet 改版），按当前界面操作。
+  await d.getByText(/^规划与审查/).click();
+  await d.getByLabel('交付后的审查').selectOption('not_requested');
+  await d.getByLabel('不安排审查的原因').fill('测试：小改动我自己看');
   await d.getByRole('button', { name: '先记下来' }).click();
   // 保存后对话框关闭（原断言“仍可见”只在保存请求尚未返回的瞬间成立，属于时序巧合）
   await expect(page.getByRole('dialog', { name: '提一个需求' })).toHaveCount(0);

@@ -2,7 +2,7 @@ import {taskAction,actionGroups,type ActionGroup} from '../../shared/workflow-vi
 import {UserDecision,pendingDecisions} from '../ui/UserDecision.js';
 // 今天：接力棒在你手里的事放最前面，其次是 Agent 正在做的，再是最近完成。右侧是日程、额度与连接。
 import React,{useState} from 'react';
-import { Copy, Send, ArrowRight, MessageCircleQuestion, CircleCheckBig, LifeBuoy, ClipboardPaste, Sparkles, CalendarClock, Gauge, PlugZap, PencilLine, Folder } from 'lucide-react';
+import { Copy, ArrowRight, MessageCircleQuestion, CircleCheckBig, LifeBuoy, ClipboardPaste, Sparkles, CalendarClock, Gauge, PlugZap, Folder } from 'lucide-react';
 import { useStore } from '../app/store.js';
 import { type R, relayOf, requestRelay, byUrgency, isYourTurn, isTheirTurn, reviewSkippedTask } from '../lib/flow.js';
 import { greeting, todayLine, relative, daysUntil, dayCountText, plainDay } from '../lib/format.js';
@@ -13,20 +13,23 @@ import { copyOrder, copyPlanning, copyRework, markDispatched, continueTask } fro
 import {waitingForDependencies} from '../../shared/execution-order.js';
 import {ExecutionList,OrderStep} from '../ui/ExecutionOrder.js';
 import {RequestPreview} from '../ui/RequestPreview.js';
+import {RequestMoreActions,requestStatusText} from '../ui/RequestActions.js';
 
 export function Today() {
   const s = useStore();
   const { data } = s;
-  const [arrangeOpen,setArrangeOpen]=useState(true);
   const [projectFilter,setProjectFilter]=useState(''),[ownerFilter,setOwnerFilter]=useState(''),[search,setSearch]=useState(''),[limit,setLimit]=useState(20),[groupFilter,setGroupFilter]=useState('all'),[sort,setSort]=useState('recent');
+  const visible=(id:string)=>!data.projects.some((p:R)=>p.id===id&&(p.shelved||p.archived));
+  const tasks=data.tasks.filter((t:R)=>visible(t.project_id));
+  const heldJobs=(data.agent_jobs||[]).filter((j:R)=>['running','launching'].includes(j.status)&&data.tasks.some((t:R)=>t.id===j.task_id&&!visible(t.project_id)));
   const match=(t:R)=>(!projectFilter||t.project_id===projectFilter)&&(!ownerFilter||s.executorOf(t)===ownerFilter)&&(!search||t.title.toLowerCase().includes(search.toLowerCase()));
-  const requests = data.requests.filter((q: R) => q.status === 'awaiting_planning'&&!data.projects.find((p:R)=>p.id===q.project_id)?.archived)
+  const requests = data.requests.filter((q: R) => q.status === 'awaiting_planning'&&visible(q.project_id))
     .sort((a: R, b: R) => String(b.created_at).localeCompare(String(a.created_at)));
   const decisions=pendingDecisions(data),needsDecision=new Set(decisions.map(d=>d.task_id));
-  const yours = data.tasks.filter((t:R)=>!needsDecision.has(t.id)&&isYourTurn(t)&&match(t)).sort((a:R,b:R)=>sort==='oldest'?String(a.updated_at||'').localeCompare(String(b.updated_at||'')):byUrgency(a,b));
-  const theirs = data.tasks.filter((t:R)=>!needsDecision.has(t.id)&&isTheirTurn(t)).sort(byUrgency);
-  const waiting = data.tasks.filter(waitingForDependencies);
-  const done = data.tasks.filter((t: R) => t.status === 'accepted')
+  const yours = tasks.filter((t:R)=>!needsDecision.has(t.id)&&isYourTurn(t)&&match(t)).sort((a:R,b:R)=>sort==='oldest'?String(a.updated_at||'').localeCompare(String(b.updated_at||'')):byUrgency(a,b));
+  const theirs = tasks.filter((t:R)=>!needsDecision.has(t.id)&&isTheirTurn(t)).sort(byUrgency);
+  const waiting = tasks.filter(waitingForDependencies);
+  const done = tasks.filter((t: R) => t.status === 'accepted')
     .sort((a: R, b: R) => String(b.acceptance_record?.confirmed_at || b.updated_at).localeCompare(String(a.acceptance_record?.confirmed_at || a.updated_at))).slice(0, 4);
   const visibleRequests=requests.filter((q:R)=>(!projectFilter||q.project_id===projectFilter)&&!ownerFilter&&(!search||q.text.toLowerCase().includes(search.toLowerCase())));
   const visibleDecisions=decisions.filter(d=>data.tasks.some((t:R)=>t.id===d.task_id&&match(t)));
@@ -45,22 +48,26 @@ export function Today() {
 
     <div className="today-grid">
       <div className="today-main">
+        {heldJobs.length>0&&<div className="banner quiet"><div><strong>已收纳项目还有 {heldJobs.length} 次调用在运行</strong><p>收纳只暂停新安排，运行中的调用不会自动停止。</p>{heldJobs.map((j:R)=><button key={j.id} className="btn small" onClick={()=>s.openTask(j.task_id)}>查看运行中的任务</button>)}</div></div>}
         {empty && <Welcome />}
 
         {!empty && <Section title={<>轮到你了 {yourCount > 0 && <span className="count">{yourCount}</span>}</>} label="轮到你了">
+          {/* 先按“要做的动作”分流，再用搜索和下拉细筛；没有事项的动作不占位置。 */}
+          <div className="attention-kinds" role="group" aria-label="按动作筛选待办">{[['all','全部'],['answer','待回答'],['trial','待试用'],['decision','异常需决定'],['arrange','待安排']].map(([key,label])=>{const count=key==='all'?yourCount:yours.filter((t:R)=>taskAction(t).group===key).length+(key==='arrange'?visibleRequests.length:0)+(key==='decision'?visibleDecisions.length:0);if(!count&&key!=='all'&&groupFilter!==key)return null;return <button key={key} className={'chip'+(groupFilter===key?' on':'')} aria-pressed={groupFilter===key} onClick={()=>{setGroupFilter(key);setLimit(20)}}>{label}（{count}）</button>})}</div>
           <div className="attention-filters">
             <input aria-label="搜索待办" placeholder="搜索要处理的事项" value={search} onChange={e=>{setSearch(e.target.value);setLimit(20)}}/>
             <select aria-label="按项目筛选待办" value={projectFilter} onChange={e=>{setProjectFilter(e.target.value);setLimit(20)}}><option value="">全部项目</option>{data.projects.map((p:R)=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
             <select aria-label="按负责人筛选待办" value={ownerFilter} onChange={e=>{setOwnerFilter(e.target.value);setLimit(20)}}><option value="">全部负责人</option>{data.agents.map((a:R)=><option key={a.id} value={a.id}>{a.name}</option>)}</select>
+            <select aria-label="待办排序" value={sort} onChange={e=>setSort(e.target.value)}><option value="recent">按优先级排序</option><option value="oldest">最久未更新在前</option></select>
           </div>
-          <label className="attention-sort">排序 <select aria-label="待办排序" value={sort} onChange={e=>setSort(e.target.value)}><option value="recent">优先级与最近更新</option><option value="oldest">最久未更新在前</option></select></label>
-          <div className="attention-kinds" role="group" aria-label="按动作筛选待办">{[['all','全部'],['answer','待回答'],['trial','待试用'],['decision','异常需决定'],['arrange','待安排']].map(([key,label])=>{const count=key==='all'?yourCount:yours.filter((t:R)=>taskAction(t).group===key).length+(key==='arrange'?visibleRequests.length:0)+(key==='decision'?visibleDecisions.length:0);return <button key={key} className={'btn small '+(groupFilter===key?'primary':'')} aria-pressed={groupFilter===key} onClick={()=>{setGroupFilter(key);setArrangeOpen(true);setLimit(20)}}>{label}（{count}）</button>})}</div>
           {yourCount===0&&<Empty title={waiting.length?'后续任务正在等待前序':'当前筛选下没有待办'}/>}
           {(['answer','trial','decision','arrange'] as ActionGroup[]).map(group=>{
             const rows=yours.filter((t:R)=>taskAction(t).group===group),extras=group==='arrange'?visibleRequests:[],cards=group==='decision'?visibleDecisions:[];
             const count=rows.length+extras.length+cards.length;if(!count||(groupFilter!=='all'&&groupFilter!==group))return null;
-            const content=<><div className="turn-list">{cards.slice(0,limit).map(d=><UserDecision key={d.id} decision={d}/>)}{rows.slice(0,limit).map((t:R)=><TaskTurn key={t.id} t={t}/>)}{extras.slice(0,limit).map((q:R)=><RequestTurn key={q.id} q={q}/>)}</div>{count>limit&&<button className="btn ghost" onClick={()=>setLimit(n=>n+20)}>显示更多{actionGroups[group]}</button>}</>;
-            return group==='arrange'?<details className="attention-group arrange-group" key={group} open={arrangeOpen} onToggle={e=>setArrangeOpen(e.currentTarget.open)}><summary>{actionGroups[group]} <span className="count">{count}</span><small>需要你转发或继续的事项</small></summary>{content}</details>:<section className="attention-group" aria-label={actionGroups[group]} key={group}><h3>{actionGroups[group]} <span className="count">{count}</span></h3>{content}</section>;
+            // 待安排多为“复制后交给执行者”的例行动作，用紧凑行显示，免得淹没需要思考的事项。
+            const compact=group==='arrange';
+            const content=<><div className={'turn-list'+(compact?' compact-list':'')}>{cards.slice(0,limit).map(d=><UserDecision key={d.id} decision={d}/>)}{extras.slice(0,limit).map((q:R)=><RequestTurn key={q.id} q={q}/>)}{rows.slice(0,limit).map((t:R)=><TaskTurn key={t.id} t={t} compact={compact}/>)}</div>{count>limit&&<button className="btn ghost" onClick={()=>setLimit(n=>n+20)}>显示更多{actionGroups[group]}</button>}</>;
+            return <section className={'attention-group'+(group==='arrange'?' arrange-group':'')} aria-label={actionGroups[group]} key={group}><h3>{actionGroups[group]} <span className="count">{count}</span></h3>{content}</section>;
           })}
         </Section>}
 
@@ -138,7 +145,7 @@ function TurnContext({ projectId, agentId, role }: { projectId: string; agentId:
   </div>;
 }
 
-function TaskTurn({ t }: { t: R }) {
+function TaskTurn({ t, compact }: { t: R; compact?: boolean }) {
   const s = useStore();
   const who = s.executorOf(t);
   const relay = relayOf(t, s.name, who);
@@ -148,7 +155,6 @@ function TaskTurn({ t }: { t: R }) {
   if (t.status === 'ready') actions = <button className="btn primary" disabled={s.busy} onClick={() => void copyOrder(s, t)}><Copy size={16} />生成并复制执行单</button>;
   else if (t.status === 'awaiting_dispatch') actions = <>
     <button className="btn primary" disabled={s.busy} onClick={() => void copyOrder(s, t)}><Copy size={16} />复制执行单</button>
-
   </>;
   else if (t.status==='changes_requested') actions=<button className="btn primary" disabled={s.busy} onClick={()=>void continueTask(s,t)}>原会话继续返修</button>;
   else if (['waiting_input','closeout_waiting_input'].includes(t.status)&&t.question_answered)actions=<button className="btn primary" disabled={s.busy} onClick={()=>void continueTask(s,t)}>把答复交回原会话</button>;
@@ -159,7 +165,7 @@ function TaskTurn({ t }: { t: R }) {
   else if (['awaiting_confirmation'].includes(t.status)) actions = <button className="btn primary" onClick={open}><CircleCheckBig size={16} />去试用确认</button>;
   else actions = <button className="btn primary" onClick={open}><LifeBuoy size={16} />看看怎么处理</button>;
 
-  return <article className={'turn clickable t-' + relay.tone} aria-label={t.title} onClick={e => { if (!(e.target as HTMLElement).closest('button')) open(); }}>
+  return <article className={'turn clickable t-' + relay.tone + (compact ? ' compact' : '')} aria-label={t.title} onClick={e => { if (!(e.target as HTMLElement).closest('button')) open(); }}>
     <div className="turn-heading">
       <TurnContext projectId={t.project_id} agentId={handingToReviewer ? t.reviewer_id : who} role={handingToReviewer ? '审查' : '执行'} />
       <div className="turn-top">
@@ -181,9 +187,8 @@ function RequestTurn({ q }: { q: R }) {
     <div className="turn-heading">
       <TurnContext projectId={q.project_id} agentId="codex" role="规划" />
       <div className="turn-top">
-        <Pill tone="you">等待规划</Pill>
+        <Pill tone="you">{requestStatusText.awaiting_planning}</Pill>
         <span className="turn-meta">{relative(q.created_at, s.tz)}提出</span>
-
       </div>
     </div>
     <RequestPreview request={q} className="turn-title as-text"/>
@@ -191,11 +196,7 @@ function RequestTurn({ q }: { q: R }) {
     <div className="turn-actions">
       <button className="btn primary" disabled={s.busy} onClick={() => void copyPlanning(s, q)}><Copy size={16} />复制规划请求</button>
       <button className="btn" onClick={() => s.openDialog('import-plan')}><ClipboardPaste size={16} />粘贴 Codex 的计划</button>
-      <div className="turn-more" role="group" aria-label="其他操作">
-        <button onClick={()=>s.openDialog('request',{request:q})}><PencilLine size={13}/>编辑需求</button>
-        <button onClick={()=>s.openDialog('request-action',{request:q,action:'recall'})}>暂时不做</button>
-        <button className="danger" onClick={()=>s.openDialog('request-action',{request:q,action:'delete'})}>删除</button>
-      </div>
+      <RequestMoreActions q={q}/>
     </div>
   </article>;
 }

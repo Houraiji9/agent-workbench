@@ -1,3 +1,4 @@
+import {planningOriginLabel} from '../../shared/planning-origin.js';
 import {UserDecision,pendingDecisions} from '../ui/UserDecision.js';
 // 任务抽屉：接力线 → 现在要做什么 → 成果 → 要求 → 过程 → 更多信息。整页不跳转，关掉就回到原处。
 import React, { useEffect, useRef, useState } from 'react';
@@ -8,11 +9,17 @@ import { type R, relayOf, eventText, dispositionText, reviewSkippedTask } from '
 import { relative, fullDate, bytes } from '../lib/format.js';
 import { Drawer, RelayTrack, Pill, Notice } from '../ui/kit.js';
 import { AgentIcon } from '../ui/AgentIcon.js';
-import { copyOrder, copyRework, markDispatched, copyReviewOrder, copyReviewFeedback, copyCloseoutOrder, continueTask } from './actions.js';
+import { copyOrder, copyRework, markDispatched, copyReviewOrder, copyReviewFeedback, copyCloseoutOrder, continueTask, dispatchTask } from './actions.js';
 import { userAcceptanceItems } from '../../core/acceptance.js';
 import {ArtifactLocation} from '../ui/ArtifactLocation.js';
 import {TaskOrder,OrderStatus} from '../ui/ExecutionOrder.js';
 import {waitingForDependencies} from '../../shared/execution-order.js';
+import { AgentAutomationStatus, automationActive } from '../ui/AgentAutomationStatus.js';
+import { AgentAutomationControls } from '../ui/AgentAutomationControls.js';
+import { TaskExecutionPolicy } from '../ui/TaskExecutionPolicy.js';
+import { deliverySummary } from '../ui/DeliveryProfileFields.js';
+
+const executionContinuationStates = new Set(['ready', 'awaiting_dispatch', 'dispatched', 'waiting_input', 'blocked', 'changes_requested', 'awaiting_closeout', 'closing', 'closeout_waiting_input', 'closeout_blocked']);
 
 export function TaskDrawer({ id }: { id: string }) {
   const s = useStore();
@@ -26,11 +33,26 @@ export function TaskDrawer({ id }: { id: string }) {
       .catch(e => { if (n === seq.current) setError((e as Error).message); });
   }, [id, s.changeTick]);
 
+  const active = automationActive(detail?.task?.automation);
+  useEffect(() => {
+    if (!active) return;
+    const controller = new AbortController();
+    let loading = false;
+    const timer = setInterval(() => {
+      if (loading) return;
+      loading = true;
+      void api('/tasks/' + id, undefined, controller.signal).then(setDetail).catch(e => {
+        if (!controller.signal.aborted) setError((e as Error).message);
+      }).finally(() => { loading = false; });
+    }, 2500);
+    return () => { clearInterval(timer); controller.abort(); };
+  }, [id, active]);
+
   return <Drawer onClose={s.closeTask} label="任务详情">
     {!detail ? <div className="drawer-body">
       <div className="drawer-top"><span /><button className="icon-btn" aria-label="关闭任务" onClick={s.closeTask}><X size={20} /></button></div>
       {error ? <Notice tone="error">{error === '记录不存在' ? '找不到这项任务，可能链接已过期。' : error}</Notice> : <p className="muted">正在读取…</p>}
-    </div> : <TaskBody detail={detail} />}
+    </div> : <>{error&&<Notice tone="error">任务状态暂未更新：{error}</Notice>}<TaskBody detail={detail} /></>}
   </Drawer>;
 }
 
@@ -38,12 +60,21 @@ function TaskBody({ detail }: { detail: R }) {
   const s = useStore();
   const t = detail.task;
   const run = detail.runs.find((r: R) => r.id === t.current_run_id);
+  const deliveryProfile = t.delivery_profile || run?.delivery_profile || run?.execution_contract?.delivery_profile;
+  const portableVerified = deliveryProfile?.deployment?.verification === 'portable_manifest' && !!run?.deployment?.verified;
   const who = run?.agent_id || t.agent_id;
   const relay = relayOf(t, s.name, who);
   const current = detail.artifacts.filter((a: R) => a.run_id === t.current_run_id && a.current);
   const older = detail.artifacts.filter((a: R) => !current.includes(a));
   const events = [...detail.events].sort((a: R, b: R) => String(a.received_at).localeCompare(String(b.received_at)));
   const lastMessage = [...events].reverse().find((e: R) => e.run_id === t.current_run_id && e.disposition === 'applied')?.data?.message;
+  const continuationDisabled = s.busy || automationActive(t.automation) || (t.execution_route
+    ? !executionContinuationStates.has(t.status)
+    : ['accepted', 'cancelled', 'rework_linked', 'awaiting_confirmation'].includes(t.status));
+  const stoppedExecution = t.status === 'running' && t.execution_route && t.automation?.role === 'execution'
+    && !automationActive(t.automation) && !t.automation.superseded && (['failed', 'interrupted'].includes(t.automation.status) || t.automation.cancel_requested);
+  const recoveryRequired = t.automation?.recovery_required || detail.agent_jobs?.some((job: R) => job.recovery_required);
+  const restartDisabled = s.busy || recoveryRequired || detail.agent_jobs?.some((job: R) => automationActive(job));
 
   return <div className="drawer-body">
     <div className="drawer-top">
@@ -59,11 +90,17 @@ function TaskBody({ detail }: { detail: R }) {
     </div>
 
     <details className="fold"><summary>完整执行流程</summary><RelayTrack relay={relay}/></details>
-    {run&&<div className="tool-row"><button className="btn small" disabled={s.busy||['accepted','cancelled','rework_linked','awaiting_confirmation'].includes(t.status)} onClick={()=>void continueTask(s,t)}>同会话继续</button><button className="btn small ghost" disabled={s.busy||['accepted','cancelled','rework_linked','awaiting_confirmation'].includes(t.status)} onClick={()=>void continueTask(s,t,false)}>新会话接手</button></div>}
-    {t.delivery_target==='runtime'&&<Notice tone={run?.deployment?.verified?'info':'warn'}>{run?.deployment?.verified?'本机安装已校验，可在运行目录试用。':'交付目标是本机程序；尚未校验安装，不能把候选当作已可试用。'}</Notice>}
-    <details className="fold"><summary>上下文与客户端状态</summary>{run?.context_usage?<p>接口已提供 {run.context_usage.requests} 次上下文，共 {run.context_usage.characters} 字符，其中增量 {run.context_usage.delta||0} 次。字符数不等于模型计费 token。</p>:<p>当前执行尚无简版接口的上下文统计；不把缺失数据当作零消耗。</p>}<p>同会话增量可用；自动客户端投递尚未连接。复制简讯不会被标为已发送或已接单。</p></details>
+    {run&&<div className="tool-row"><button className="btn small" disabled={continuationDisabled} onClick={()=>void continueTask(s,t)}>同会话继续</button><button className="btn small ghost" disabled={stoppedExecution ? restartDisabled : continuationDisabled} onClick={()=>void continueTask(s,t,false)}>{stoppedExecution ? '停止后重新开始' : '新会话接手'}</button></div>}
+    {stoppedExecution && <p className="muted small">{recoveryRequired ? '仍有调用尚未核实结束，请先展开下方“高级恢复”核实原调用，再重新开始。' : '使用新会话重新开始，原会话与已有回执保留。'}</p>}
+    <AgentAutomationStatus job={t.automation}/>
+    <AgentAutomationControls key={t.id} task={t} jobs={detail.agent_jobs}/>
+    {portableVerified&&<Notice tone="info">本机便携清单已核验。</Notice>}
+    {run?.deployment_evidence&&<details className="fold"><summary>部署证据与来源</summary><p className="muted small">{portableVerified?'便携清单由工作台核验；健康和回退说明来自执行者报告。':'执行者报告，工作台未主动验证线上。'}</p><pre className="pre">{typeof run.deployment_evidence==='string'?run.deployment_evidence:JSON.stringify(run.deployment_evidence,null,2)}</pre></details>}
+    <details className="fold"><summary>上下文与客户端状态</summary>{run?.context_usage?<p>接口已提供 {run.context_usage.requests} 次上下文，共 {run.context_usage.characters} 字符，其中增量 {run.context_usage.delta||0} 次。字符数不等于模型计费 token。</p>:<p>当前执行尚无简版接口的上下文统计；不把缺失数据当作零消耗。</p>}<p>{t.execution_route?'本任务已指定客户端；续作会尝试连接原会话，能否恢复以实际调用结果为准。':'本任务未配置自动调用路线；继续操作会准备可复制的兼容入口。'}复制简讯不代表已发送或已接单。</p><button className="link" onClick={()=>s.go({page:'settings'})}>查看本机客户端</button></details>
+    <TaskExecutionPolicy key={(run?.id||t.id)+':'+(t.pending_arrangement?.saved_at||'')} task={t} run={run} runs={detail.runs} jobs={detail.agent_jobs||[]}/>
+    {(run?.execution_contract?.review_policy||t.review_policy)?.mode==='light'&&<Notice>本次为有限审查，只检查：{((run?.execution_contract?.review_policy||t.review_policy)?.focus||[]).join('；')}。其他范围仍需另行验证，不代表完整审查通过。</Notice>}
 
-    {pendingDecisions(s.data).some(d=>d.task_id===t.id)?pendingDecisions(s.data).filter(d=>d.task_id===t.id).map(d=><UserDecision key={d.id} decision={d}/>):<NowCard detail={detail} relay={relay} run={run} who={who} current={current} lastMessage={lastMessage} />}
+    {pendingDecisions(s.data,true).some(d=>d.task_id===t.id)?pendingDecisions(s.data,true).filter(d=>d.task_id===t.id).map(d=><UserDecision key={d.id} decision={d}/>):<NowCard detail={detail} relay={relay} run={run} who={who} current={current} lastMessage={lastMessage} />}
     <TaskOrder task={t}/>
     {run?.closeout?.result&&<section className="block" aria-label="收尾结果"><h2>执行者收尾结果</h2><ul className="plain-list">{run.closeout.items.map((item:R)=><li key={item.id}><strong>{item.text}</strong><p>{run.closeout.results.find((x:R)=>x.item_id===item.id)?.evidence}</p></li>)}</ul><details className="fold"><summary>完整收尾报告</summary><pre className="pre">{run.closeout.result}</pre></details></section>}
 
@@ -75,6 +112,8 @@ function TaskBody({ detail }: { detail: R }) {
 
     <section className="block" aria-label="这项任务要做什么">
       <h2>这项任务要做什么</h2>
+      <p>冻结的重要程度：{t.importance==='critical'?'重点':'普通'}</p>
+      {deliveryProfile&&<p>冻结的交付方案：{deliverySummary(deliveryProfile)}</p>}
       <p>{t.goal}</p>
       {t.deliverables?.length > 0 && <><h3>要交付的东西</h3><ul className="plain-list">{t.deliverables.map((d: string, i: number) => <li key={i}>{d}</li>)}</ul></>}
       <h3>最后由你确认的事</h3>
@@ -115,6 +154,7 @@ function NowCard({ detail, relay, run, who, current, lastMessage }: { detail: R;
   const s = useStore();
   const t = detail.task;
   const noReview = reviewSkippedTask(t);
+  const reviewInvocationFailed = t.automation?.role === 'review' && ['failed', 'interrupted'].includes(t.automation.status);
   const steps = (items: React.ReactNode[]) => <ol className="steps">{items.map((x, i) => <li key={i}><span>{x}</span></li>)}</ol>;
   let body: React.ReactNode = null;
 
@@ -122,10 +162,12 @@ function NowCard({ detail, relay, run, who, current, lastMessage }: { detail: R;
 
   switch (t.status) {
     case 'ready':
+      if(t.execution_route){body=<><p>按计划调用 {s.name(who)}，执行者接单后会回报进度。</p><button className="btn primary" disabled={s.busy||automationActive(t.automation)} onClick={()=>void dispatchTask(s,t)}>开始执行</button></>;break;}
       body = <>{steps([<>点下面的按钮，生成执行单并复制</>, <>打开 <b>{s.name(who)}</b>，把内容粘贴进去发送</>, <>回到这里点“我已经发给它”</>])}
         <div className="now-actions"><button className="btn primary" disabled={s.busy} onClick={() => void copyOrder(s, t)}><Copy size={16} />生成并复制执行单</button></div></>;
       break;
     case 'awaiting_dispatch':
+      if(t.execution_route){const retry=['failed','interrupted'].includes(t.automation?.status);body=<><p>{retry?'先核对原客户端已结束，再重新调用，避免重复执行。':'执行单已准备好，调用成功后等待执行者回报接单。'}</p><button className="btn primary" disabled={s.busy||automationActive(t.automation)} onClick={()=>void dispatchTask(s,t,false,retry)}>{retry?'原会话已结束，重试调用':'开始执行'}</button></>;break;}
       body = <>{steps([<>复制执行单</>, <>打开 <b>{s.name(who)}</b>，粘贴并发送</>, <>发完回来点“我已经发给它”</>])}
         <div className="now-actions">
           <button className="btn primary" disabled={s.busy} onClick={() => void copyOrder(s, t)}><Copy size={16} />复制执行单</button>
@@ -150,22 +192,28 @@ function NowCard({ detail, relay, run, who, current, lastMessage }: { detail: R;
     case 'submitted':
       body = noReview ? null : <>
         {t.review_handoff_issue&&<blockquote className="agent-says">{t.review_handoff_issue}</blockquote>}
-        <p>{t.review_stage==='running'?s.name(t.reviewer_id)+' 已接单，正在审查。':t.review_delivery==='agent'?s.name(who)+' 正在调用审查工具。':'把审查单发给 '+s.name(t.reviewer_id)+'，它会按单回传报告。'}</p>
+        <p>{reviewInvocationFailed?'审查调用已停止更新，请查看失败原因；原接单记录保留。':t.review_stage==='running'?s.name(t.reviewer_id)+' 已接单，正在审查。':t.review_route?'工作台按本次计划调用独立审查者，报告会自动附到任务。':'等待规划者安排独立审查；正常派审由规划者和工作台处理。'}</p>
         <div className="now-actions">
-          <button className="btn primary" disabled={s.busy} onClick={()=>void copyReviewOrder(s,detail)}><Copy size={16}/>复制审查单</button>
-          <button className="btn" onClick={()=>s.openDialog('review-order',{detail})}>更换审查者</button>
+          {t.review_route&&!automationActive(t.automation)&&(t.review_stage!=='running'||reviewInvocationFailed)&&(!t.automation_policy?.auto_review||reviewInvocationFailed)&&<button className="btn primary" disabled={s.busy} onClick={()=>void dispatchTask(s,t,true,reviewInvocationFailed)}>{reviewInvocationFailed?'原会话已结束，重试审查':'开始独立审查'}</button>}
+        </div>
+        {reviewInvocationFailed&&<p className="muted small">重试前请先核对原审查客户端已结束。工作台也会检查旧进程；仍在运行或无法确认时会拒绝重复启动并说明原因。</p>}
+        <details className="fold"><summary>手动转发或导入审查</summary><p className="muted small">仅在使用无法连接本机的客户端，或你明确选择手动处理时使用。</p><div className="now-actions">
+          <button className="btn" disabled={automationActive(t.automation)} onClick={()=>s.openDialog('review-order',{detail})}>更换审查者</button>
+          <button className="btn" disabled={s.busy||automationActive(t.automation)} onClick={()=>void copyReviewOrder(s,detail)}><Copy size={16}/>复制审查单</button>
           <button className="btn" onClick={()=>s.openDialog('review-receipt',{detail})}>导入审查回执</button>
           {t.reviewer_id==='grok-build'&&<button className="btn" onClick={()=>s.openDialog('grok-review',{detail})}>读取 Grok 审查</button>}
           <button className="btn ghost" disabled={!current.length} onClick={()=>s.openDialog('review',{detail})}>登记审查结果</button>
-        </div></>;
+        </div></details></>;
       break;
     case 'changes_requested': {
       const last = detail.reviews.filter((r: R) => r.run_id === t.current_run_id&&!r.revoked_at).slice(-1)[0];
+      if(t.execution_route){body=<>{last?.findings&&<blockquote className="agent-says"><b>{s.name(last.reviewer_id)} 的意见：</b>{last.findings}</blockquote>}<p>{t.automation_policy?.auto_rework?'工作台按已登记的返工策略继续；超过轮次或调用受阻时交回规划者。':'由规划者按本轮意见安排返修，也可继续原会话处理。'}</p><button className="btn" disabled={s.busy||automationActive(t.automation)} onClick={()=>void continueTask(s,t)}>继续返修</button></>;break;}
       body = <>{last?.findings && <blockquote className="agent-says"><b>{s.name(last.reviewer_id)} 的意见：</b>{last.findings}</blockquote>}
         <div className="now-actions"><button className="btn primary" disabled={s.busy} onClick={()=>void copyReviewFeedback(s,t)}><Copy size={16}/>复制修改意见给执行者</button><button className="btn" onClick={()=>s.openDialog('review-order',{detail})}>重新安排审查</button></div></>;
       break;
     }
     case 'in_review': case 'awaiting_closeout': case 'closing': case 'closeout_blocked':
+      if(t.execution_route){body=<>{lastMessage&&t.status==='closeout_blocked'&&<blockquote className="agent-says">{lastMessage}</blockquote>}<ul className="check-list">{run?.closeout?.items?.map((item:R)=><li key={item.id}>{item.text}</li>)}</ul><p className="muted small">由原执行者完成剩余事项，收尾回执通过后再交你试用。</p>{!automationActive(t.automation)&&t.status!=='closing'&&<button className="btn" disabled={s.busy} onClick={()=>void continueTask(s,t)}>继续执行者收尾</button>}</>;break;}
       body = <>{lastMessage && t.status === 'closeout_blocked' && <blockquote className="agent-says">{lastMessage}</blockquote>}
         <ul className="check-list">{run?.closeout?.items?.map((item:R)=><li key={item.id}>{item.text}</li>)}</ul>
         <div className="now-actions"><button className="btn primary" disabled={s.busy} onClick={()=>void copyCloseoutOrder(s,t)}><Copy size={16}/>复制收尾单给执行者</button>
@@ -243,7 +291,7 @@ function Timeline({ detail, events }: { detail: R; events: R[] }) {
   const t = detail.task;
   const runs = [...detail.runs].sort((a: R, b: R) => String(a.created_at).localeCompare(String(b.created_at)));
   return <ol className="timeline">
-    <li className="tl-quiet"><span className="tl-dot" /><div><b>任务由 Codex 规划创建</b><small>{fullDate(t.created_at, s.tz)}</small></div></li>
+    <li className="tl-quiet"><span className="tl-dot" /><div><b>规划来源：{planningOriginLabel(t)}</b><p>规划模型：{t.planning_origin?.reported_model?`${t.planning_origin.reported_model}（规划者自述，未独立核验）`:'未知，未补造'}</p><small>{fullDate(t.created_at, s.tz)}</small></div></li>
     {runs.map((r: R, n: number) => <React.Fragment key={r.id}>
       <li className="tl-quiet"><span className="tl-dot" /><div><b>{n === 0 ? '生成执行单' : `第 ${n + 1} 次执行：重新生成执行单`}，交给 {s.name(r.agent_id)}</b><small>{fullDate(r.created_at, s.tz)}</small></div></li>
       {events.filter(e => e.run_id === r.id).map(e => <li key={e.id} className={'tl-' + e.event_type + (e.disposition !== 'applied' ? ' tl-off' : '')}>

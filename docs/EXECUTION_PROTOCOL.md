@@ -1,5 +1,38 @@
 # 执行包与回执协议 v1
 
+本文件是协议参考，不是每个执行/审查会话的必读调度手册。执行者从当前 Run 的 RUN.md 开始，审查者从当前 RA 的 REVIEW.md 开始，按其中固定入口读取本轮范围并回报。多客户端路由、发现和自动策略只给规划者，见 CODEX_PLANNER.md。
+
+## 客户端调用与业务回执
+
+执行单固定本轮 `importance`、`model_selection`、`delivery_profile`。重点需求主执行、子代理与独审均遵守规划者已明确选择的最佳能力模型，资源不足或实际型号偏离时回报并重新规划，不静默换用默认型号。缺失真实模型身份时保留 unknown，不推测实际使用了指定型号。
+
+通用部署（远程服务、其他本机软件等）交付时在 submitted 的 data 填 `delivery_version`。审查通过或用户明确免审后，执行者调用 `get_deployment_context` 取得本 Run、目标档案指纹、版本、完整产物集合与审查绑定；实际部署后用 `report_deployment_evidence` 提交 `deployment_evidence/health_evidence/rollback_evidence`。CLI 对应 `agent.ts <Run> deployment-context` 与 `deployment-evidence <JSON文件>`。这类回执明确标注“执行者报告，服务端未验证实际部署”；不能冒充工作台已连接服务器。收尾与用户验收重新核对绑定。工作台便携安装继续使用 `report_runtime_deployment` 的清单、全部受管文件、版本和目录核验。
+
+同项目连续合法更新可在收尾/验收记录后继版本依据：仅接受时间后继、独立审查通过且具有有效部署证据的版本，包括用户已经验收的后继版本。便携版本以当前安装清单和全部受管文件为依据；该版本所属任务后来返工，不会仅因 current_run_id 改变就抹去仍有效的已审部署事实。旧 Run 仍须保留提交状态、有效独审、匹配的归档产物及部署回执，源码当前哈希也必须有受审记录覆盖。后继版本的审查者须同时独立于当前 Run 和后继 Run 的执行者。收尾、部署与后继证据统一按创建时间及数据库插入顺序选择最新审查；时间相同时以后插入记录为准，最新记录撤回或不通过都不能回退到更早的通过结论。通用部署没有本机安装清单作为依据，仍要求当前 Run，并核对相同目标、冻结档案、版本、产物与审查绑定，继续标为执行者报告，不等于服务端验证线上运行。未知漂移仍拒绝。旧 Review、部署回执与历史执行包不改写，后继证据不等于旧任务已被用户验收或退回意见已经解决。
+
+计划可记录 execution_route、review_route、automation_policy 与 context_contract。工作台按路线创建调用记录，通过本机发现的客户端执行；调用身份不代替 Run / RA 的独立凭据。任务详情 automation 显示 queued / launching / running / completed / failed / interrupted、执行或审查角色、客户端、实际会话编号及失败原因。completed 只表示客户端进程结束，不能据此写 submitted、passed 或 accepted；这些状态仍由各自有效回执推进。
+
+外部主执行由用户在页面启动；MCP 的 dispatch_run 不授予 Agent 启动权。dispatch_review 可由执行者直接调用；continue_run 可为没有外部调用路线的本人任务建立手工返修单，外部主执行返修仍由用户启动。get_agent_job 查询记录。同会话续接只能使用真实记录的会话编号；无编号或无法恢复必须如实说明。自动审查按计划处理；自动返修和收尾另需用户在页面开启启动许可，新旧任务均默认由用户启动，不重写冻结执行包或历史报告。context_contract 限定本轮必读与按理由补读的文件/行范围、项目内输出目录和内容大小；资料规则不能扩大 allowed_paths。
+
+Harness 正常会话缓存按客户端机制保存；主动产物、报告、脚本、截图与临时文件只写项目授权范围。客户端拒绝、权限不足或安全限制不得绕过。清理不再手动删除：确认不再使用的本轮临时内容移入项目根“待清理”目录，记录原路径、新路径和原因，由用户删除。移动前核验范围、链接和占用；验证证据、有效成果、正式记录及仍被占用的文件保留原处，移动受阻时说明原因。
+
+## 子代理委派登记与回报
+
+主执行由用户启动；已经由用户启动的执行者可按本 Run 的授权直接安排独立审查和白名单子代理。只用 RUN.md 提供的固定 MCP 或 CLI 入口，不要求执行者查找所有客户端。`agent.ts <Run ID> start` 是当前会话接单回执，不是启动主执行程序；独立审查使用当前 Run 的 `review` 入口，由实际审查者按 RA 回传，执行者不能代写结论。
+
+执行者只能为当前正在运行的 Run 使用 `register_delegation` 登记委派。提交前确认用户允许子代理、模型在本 Run 的子模型名单内，并遵守并发、层数、次数、上下文预算、必读文件、授权路径和输出目录限制。每项委派需有独立请求编号、具体目标和有限材料范围。
+
+当前 Run 的便捷命令为 `scripts/agent.ts <Run ID> register-delegation <JSON文件>` 与 `scripts/agent.ts <Run ID> report-delegation <JSON文件>`，沿用 RUN.md 指定的 Node/tsx 和 WORKBENCH_ROOT。帮助用 `--help`，无需读取执行凭据。JSON 不需填写 `run_id`；CLI 固定使用命令行 Run，不允许输入改换身份。CLI 只负责文件读取、固定 Run 与登记请求编号，模型、范围、预算、状态及额外字段由现有后端 schema 和权限规则校验。
+
+- 登记 JSON 必填 `model`、`goal`、`required_files`、`allowed_paths`、`output_dir`、`context_bytes`；可选 `parent_id`、UUID 格式的 `request_id`。未传请求编号时，CLI 按当前 Run 和内容生成稳定 UUID；相同内容重试仍指向同一委派，JSON 排版和字段顺序不影响编号。创建内容相同的新委派时显式给新 UUID；已指定的编号及内容冲突仍由后端拒绝。
+- 回报 JSON 必填 `delegation_id`、`status`（`running`、`completed`、`failed`、`cancelled`）；可选 `session_id`、`actual_model`、`summary`、`artifacts`。此接口没有 `request_id`，重复相同回报沿用后端内容摘要幂等。无法确认的会话和实际模型省略，不借用主会话编号，也不将请求模型当作实际模型。
+
+登记只会创建一条授权与审计记录，不会启动子代理或客户端。客户端内部的原生子代理只能接收指令约束；工作台目前不能强制拦截其模型、权限或执行范围，也不能保证完整观测。不要声称工作台已自动启动或强制控制这些子代理。
+
+实际执行后调用 `report_delegation`，据实报告状态、真实会话编号、实际模型、简要结果和实际产物路径。不要虚构会话、模型、产物或完成状态。记录会标明来源为执行者报告，不能当成独立核验或审查结论；产物仍受本 Run 的允许路径检查。
+
+Token 预算仅为软提醒，不保证对客户端内部消耗硬性封顶。项目用量只归入明确关联的项目/任务/Run；没有可靠关联或来源指标缺失时保留未知与缺失，不按零推算。
+
 ## 审查结论后的权限（2026-10-23 返工）
 
 `export_review_order` 使用后台认证的角色，不接受请求体指定角色。runner/planner 仅在当前 Run 为 submitted、review_stage 与当前审查单均非 completed、且没有未撤回的审查时可安排或改派。已有 changes_requested、passed 或进入收尾/待验收阶段后返回 403，并保留原审查、任务和收尾记录。用户页面通过会话和 CSRF 仍可明确重新安排，撤回原因与原报告保留。
@@ -10,7 +43,7 @@ Task ID、Run ID 使用带前缀 UUID，不以路径为身份。Task.version 是
 
 执行包路径：`<项目>/.agent-workbench/tasks/T-.../`。Task 级保留 `task.json` 当前投影与 `EXECUTION.md` 当前入口；每次执行在 `runs/R-.../` 独立保存 `RUN.md`、`task.json`、`CONTEXT.md`、`events/`、`RESULT.md` 和 `artifacts/`。2026-10-21 起新包的上下文固定在本 Run 内；旧包原样保留。
 
-EXECUTION.md 指向最新 RUN.md；历史 RUN.md 不覆盖。复制按钮只生成/复制执行包，不标 running。用户点击已交给 Agent 才 dispatched；有效 started 才 running。
+EXECUTION.md 指向最新 RUN.md；历史 RUN.md 不覆盖。复制按钮只生成/复制执行包，不标 running。手动转发可登记 dispatched；自动调用另有调用记录，有效 started 才表示执行者已接单。
 
 导出先提交数据库 Run 与 Task，package_status=pending 时不接收回执/派发。文件全部写完后才标 ready 并返回准确入口；写盘失败可重复导出修复同一个 Run，不制造第二份任务。task.json 投影使用提交后的 current_run_id/revision/status，文件不能反向覆盖账本。
 
@@ -41,7 +74,7 @@ identity 必须等于执行单 Agent ID；cwd 必须是该 Run 的真实授权�
 
 1.5 秒补扫，最近 250 ms 文件防抖；半写入 JSON 保留错误记录并在下次重试；不删除原文件。重复 event_id 同内容返回原记录，pending 则重新尝试应用；异内容报冲突。跨 Run、旧版本、身份/cwd 不匹配拒绝。乱序事件 pending，前序到达后顺序处理。确定性状态非法事件标 rejected 并消耗该 seq，修正后用下一 seq；瞬时 IO 失败仍 pending、不消耗序号，重放相同回执即可重试。不能覆盖历史。
 
-状态：ready → awaiting_dispatch → dispatched（可选）→ running → waiting_input/blocked → started 恢复 running → submitted → awaiting_closeout（审查通过）→ closing → awaiting_confirmation → accepted；running 可 failed。Review 要求修改则 changes_requested，不能进入验收。accepted 由用户在页面亲自确认（含会话预填的确认卡），并需具备匹配 hash 的独立通过 Review、执行收尾和使用结果确认（兼容旧版逐项协议）。事件不能上报 accepted。Review 证据默认为 user_attested，不伪称系统自动核验了模型执行；当前实现由用户登记真实审查引用。
+状态：ready → awaiting_dispatch → dispatched（可选）→ running → waiting_input/blocked → started 恢复 running → submitted → awaiting_closeout（审查通过）→ closing → awaiting_confirmation → accepted；running 可 failed。Review 要求修改则 changes_requested，不能进入验收。accepted 由用户在页面亲自确认（含会话预填的确认卡），并需具备匹配 hash 的独立通过 Review、执行收尾和使用结果确认（兼容旧版逐项协议）。事件不能上报 accepted。Review 按实际回传方式保留来源：独立 reviewer 回传、用户导入与手工登记分别记录；人工证据不伪称为已自动核验的模型执行。
 
 新 Run 必须传当前 expected_revision；原计划 expected_version 与状态 revision 分开。受保护目录 dataDir、.git、.codex 和凭据始终优先于 allowed_paths，登记项目根不授予这些路径的读写权限。受控 CLI/MCP 对本 Run 令牌的内部读取属于回报机制，不授予执行者浏览全部密钥的权限。同 Windows 用户具有系统文件权限，本工作台不是操作系统进程隔离沙箱。
 
@@ -117,10 +150,16 @@ RESULT 内容必须覆盖：完成内容、变更文件、测试命令及实际�
 
 重复事件 ID + 相同内容幂等；内容冲突拒绝；乱序等待；非法转换留档并消费 seq。先查询 get_closeout_context 的 next_seq 再回报。复制收尾单、保存用户回答、读取上下文均不自动开始工作。收尾记录及报告随备份恢复，原始源码仍由项目路径管理。
 
-一般审查可通过 `export_review_order` 指定 `delivery_mode=manual|agent`。后者表示执行者负责调用已可用的独立模型；审查者本人 started 才标记审查中。失败使用 `report_review_handoff`，以 revision 校验并撤销该 RA 权限，回到人工安排。Reviewer 只能提交审查，执行者只能提交自己的收尾，用户才能验收。
+一般审查由规划者 dispatch_review 或已启用的 auto_review 调用独立客户端；审查者本人 started 才标记审查中。export_review_order 保留 delivery_mode=manual|agent 作为旧协议兼容；仅生成文件入口不等于调用。旧调用失败可使用 report_review_handoff，以 revision 校验并撤销该 RA 权限，交回规划者处理，不能默认转为用户转发待办。Reviewer 只能提交审查，执行者只能提交自己的收尾，用户才能验收。
 
 ## 会话直接管理（2026-10-23）
 
 本地 Agent 可在会话里直接办理需求、项目、团队、额度、订阅和回答。验收、退回、撤回审查与已有结论后的改派由 Agent 预填确认卡，用户在首页点一次后生效，不用重复填表。主会话 MCP 默认 manager；已有连接重连后生效。未加载 MCP 的客户端可用项目内 workbench 命令入口。详见 [会话管理手册](CONVERSATION_MANAGEMENT.md)。关键决定仅由用户通过页面确认；执行和审查凭据仍负责本单回报。
 
 执行/收尾回执只通过本Run独立runner连接或签名文件回传；manager没有import_execution_receipt，也不能通过旧工具重放历史回执。远程回执由用户在页面导入，记录来源user_imported。Agent不得使用页面会话或鼠标代用户操作导入。
+
+## 用户修改执行安排（2026-10-25）
+
+用户可在页面任务详情的“执行安排”里修改执行者、主模型和子代理（`POST /api/tasks/:id/arrangement`，仅页面会话与 CSRF；Agent 凭据不能调用）。按阶段生效：未生成执行单直接采用；已生成但未接单（`awaiting_dispatch`/`dispatched` 且未 started）时旧 Run 标为 cancelled 并留档，按新安排生成新 Run，旧 Run 的回执被拒绝；执行中、审查中或待收尾时保存为 `task.pending_arrangement`，下一次生成 Run（返修、重试、停止后重新开始）时采用并清除；失败、取消或需要修改时直接生成下一版。
+
+用户选择会写入新的 `model_selection`：被改动的主/子模型标 `decided_by: "user"`，`user_decision` 记录原规划主模型；新增候选的能力评估为 `unknown`，不冒称最佳能力，可用性只表示模型目录当前列出。规划者提交的计划不能声明 `decided_by` 或 `user_decision`。每个 Run 的 `execution_contract` 仍在创建时冻结，历史 Run 不改写；新 Run 的 `arrangement` 字段记录来源与上一版设置。审查者、任务范围、允许路径、审查与验收规则不随之改变；改派到其他客户端时不沿用原自动执行路线，改为手动交给执行者。执行者看到执行单写明“用户选择，覆盖规划建议”时，按该模型执行，不得自行改回、升档或降档。

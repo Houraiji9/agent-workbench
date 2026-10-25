@@ -5,7 +5,7 @@ import {api} from '../api.js';
 import {Pill} from './kit.js';
 import type {R} from '../lib/flow.js';
 
-export const pendingDecisions=(data:R):R[]=>(data.user_decisions||[]).filter((d:R)=>d.status==='pending'&&Date.parse(d.expires_at)>Date.now());
+export const pendingDecisions=(data:R,includeShelved=false):R[]=>(data.user_decisions||[]).filter((d:R)=>d.status==='pending'&&Date.parse(d.expires_at)>Date.now()&&(includeShelved||!data.projects.some((p:R)=>p.id===d.project_id&&(p.shelved||p.archived))));
 export function UserDecision({decision:d}:{decision:R}){
   const s=useStore();
   const resolve=(choice:'confirm'|'cancel')=>s.act(()=>api(`/user-decisions/${d.id}/${choice}`,{}),choice==='confirm'?'已确认':'已取消');

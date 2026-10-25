@@ -9,7 +9,7 @@ test('项目资料可编辑并在刷新后保留；打开的旧表单不会覆�
   await page.goto('/#/projects/' + m.project.id);
   await page.getByRole('button', { name: '编辑资料' }).click();
   const d = page.getByRole('dialog', { name: '编辑项目资料' });
-  await d.getByLabel('现在处在什么阶段').fill('测试阶段：设计');
+  await d.getByText('项目近况（可选）').click();await d.getByLabel('现在处在什么阶段').fill('测试阶段：设计');
   await d.getByLabel('下一步打算').fill('测试下一步：开始实现');
   await d.getByRole('button', { name: '保存' }).click();
   await page.reload();
@@ -67,7 +67,7 @@ test('项目页签：成果集中可查、经验可记录（必须有来源）�
   await expect(d).toHaveCount(0);
   await expect(page.locator('.memory').getByText('测试经验：直接改生产库不行')).toBeVisible();
   await expect(page.locator('.memory').filter({ hasText: '测试经验' })).toContainText('候选');
-  await page.getByRole('tab', { name: '文件夹与资料' }).click();
+  await page.getByRole('tab', { name: '资料与设置' }).click();
   await expect(page.getByText(m.root,{exact:true})).toBeVisible();
   const download = page.waitForEvent('download');
   await page.getByRole('link', { name: '导出项目上下文' }).click();

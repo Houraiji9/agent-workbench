@@ -1,8 +1,12 @@
 import {z} from 'zod';
+import {importanceSchema} from './priority-policy.ts';
+import {deliveryProfileSchema} from './delivery-profile.ts';
 
 export const projectEditSchema = z.object({
   version: z.number().int().positive(),
   changes: z.object({
+    importance: importanceSchema.optional(),
+    delivery_profile: deliveryProfileSchema.optional(),
     source_root: z.string().trim().max(1000).nullable().optional(),
     runtime_root: z.string().trim().max(1000).nullable().optional(),
     delivery_target: z.enum(['source','runtime']).optional(),

@@ -37,6 +37,8 @@ test('会话管理 HTTP：备忘→编辑→现在开始→规划→执行单，
     assert.equal((await f.post('manage_requests',input({action:'delete',request_id:q.id,version:2}))).status,409);
     await f.run('manage_tasks',{action:'cancel',task_id:tid,revision:f.wb.get('tasks',tid).revision});
     const audit=f.wb.db.prepare("SELECT data FROM audit WHERE actor='manager'").all() as any[];assert(audit.length>3);assert(audit.every(a=>JSON.parse(a.data).user_instruction===instruction));
+    const planAudit=f.wb.db.prepare("SELECT actor,data FROM audit WHERE action='submit_plan'").get() as any;
+    assert.equal(planAudit.actor,'planner');assert.equal(JSON.parse(planAudit.data).planning_origin.authenticated_role,'manager');
     assert.equal((await f.post('get_management_result',{request_id:body.request_id})).data.status,'completed');
   }finally{await f.app.close()}
 });

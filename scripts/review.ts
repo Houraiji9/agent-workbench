@@ -14,12 +14,14 @@ const call=async(tool:string,input:unknown)=>{
 };
 try{
   let result:unknown;
-  if(action==='context')result=await call('get_review_assignment',{review_id:assignment});
+  if(action==='context')result=await call('get_review_assignment',{review_id:assignment,...(arg?{mode:'delta',known_context_hash:arg}:{mode:'brief'})});
+  else if(action==='ack')result=await call('ack_review_context',{review_id:assignment,context_hash:arg});
+  else if(action==='read')result=await call('read_review_context_file',{...JSON.parse(readBounded(path.resolve(arg),64*1024).toString('utf8')),review_id:assignment});
   else if(action==='started')result=await call('report_review_started',{review_id:assignment,identity:arg});
   else if(action==='submit'){
     const parsed=reviewResultInput.parse(JSON.parse(readBounded(path.resolve(arg),512*1024).toString('utf8')));
     if(parsed.review_id!==assignment)throw Error('结果文件属于另一张审查单');
     result=await call('submit_review_result',parsed);
-  }else throw Error('用法：npm run review -- <审查单ID> context | started <AgentID> | submit <结果JSON路径>');
+  }else throw Error('用法：review <审查单ID> context [known_hash] | ack <hash> | read <请求JSON路径> | started <AgentID> | submit <结果JSON路径>');
   console.log(JSON.stringify(result,null,2));
 }catch(error){console.error((error as Error).message);process.exitCode=1}

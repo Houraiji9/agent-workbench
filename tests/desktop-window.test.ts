@@ -7,7 +7,7 @@ import {randomUUID} from 'node:crypto';
 import {_electron as electron} from 'playwright';
 import {ROOT} from '../src/core/config.ts';
 
-test('桌面最小化到任务栏、关闭到托盘、恢复同一窗口、托盘退出释放后台', {skip:process.platform!=='win32',timeout:60000}, async()=>{
+test('桌面最小化到任务栏、关闭到托盘、恢复同一窗口、托盘退出释放后台', {skip:process.platform!=='win32',timeout:180000}, async()=>{
   const root=path.join(ROOT,'.test-tmp','desktop-window-'+randomUUID());
   fs.mkdirSync(path.join(root,'config'),{recursive:true});
   for(const name of ['src','scripts','migrations','dist','desktop'])fs.cpSync(path.join(ROOT,name),path.join(root,name),{recursive:true});
@@ -24,7 +24,7 @@ test('桌面最小化到任务栏、关闭到托盘、恢复同一窗口、托�
   const waitFor=async(fn:()=>Promise<boolean>)=>{for(let i=0;i<60;i++){if(await fn())return;await new Promise(r=>setTimeout(r,100))}assert.fail('Desktop state did not settle')};
   let exited=false;
   try{
-    const page=await desktop.firstWindow();await page.waitForURL(`http://127.0.0.1:${port}/`,{timeout:20000});
+    const page=await desktop.firstWindow();await page.waitForURL(`http://127.0.0.1:${port}/`,{timeout:70000});
     await page.locator('nav').getByRole('button',{name:'今天',exact:true}).waitFor();
     const first=await desktop.evaluate(({BrowserWindow})=>{const w=BrowserWindow.getAllWindows()[0];return {id:w.id,visible:w.isVisible()}});
     assert(first.visible);const backend=await health();

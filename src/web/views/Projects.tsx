@@ -1,5 +1,6 @@
 import {ProjectSummary} from '../ui/ProjectSummary.js';
 import {RelationshipGraph} from '../ui/RelationshipGraph.js';
+import {deliverySummary} from '../ui/DeliveryProfileFields.js';import {deliveryForView} from '../../shared/delivery-view.js';
 // 项目：总览卡片 + 从 Agent 会话里发现的文件夹；单个项目分为进展、成果、图解、经验、文件夹五个页签。
 import React, { useState } from 'react';
 import { Plus, FolderOpen, Copy, PencilLine, Link2, Download, Network, ArrowLeft, Lightbulb, FolderSearch, FileText, MessagesSquare, Archive, RotateCcw } from 'lucide-react';
@@ -14,6 +15,12 @@ import { agentLabel } from './dialogs/ResourceDialogs.js';
 import {ArtifactLocation} from '../ui/ArtifactLocation.js';
 import {ExecutionList,OrderStep,OrderStatus} from '../ui/ExecutionOrder.js';
 import {RequestPreview} from '../ui/RequestPreview.js';
+import {requestMeta,requestStatusText} from '../ui/RequestActions.js';
+import {MoreMenu} from '../ui/MoreMenu.js';
+import {byExecutionOrder} from '../../shared/execution-order.js';
+import {ProjectFilesPanel} from '../ui/ProjectFilesPanel.js';
+import {ProjectInsightsPanel} from '../ui/ProjectInsightsPanel.js';
+import {ProjectPolicyPanel} from '../ui/ProjectPolicyPanel.js';
 
 function projectStats(data: R, id: string) {
   const tasks = (data.tasks as R[]).filter(t => t.project_id === id);
@@ -29,17 +36,18 @@ export function Projects() {
   const s = useStore();
   const { data } = s;
   const suggestions = folderSuggestions(data.sessions, data.projects);
-  const [query,setQuery]=useState(''),[limit,setLimit]=useState(24);const archived=s.route.tab==='archived';
-  const projects=(data.projects as R[]).filter(p=>!!p.archived===archived&&(s.route.tab!=='attention'||projectStats(data,p.id).yours>0)&&(s.route.tab!=='working'||projectStats(data,p.id).working>0)&&[p.name,p.goal,...p.paths].join(' ').toLowerCase().includes(query.trim().toLowerCase())).sort((a,b)=>String(b.updated_at).localeCompare(String(a.updated_at)));
+  const [query,setQuery]=useState(''),[limit,setLimit]=useState(24);const archived=s.route.tab==='archived',shelved=s.route.tab==='shelved';
+  const projects=(data.projects as R[]).filter(p=>(archived?!!p.archived:shelved?!p.archived&&!!p.shelved:!p.archived&&!p.shelved)&&(s.route.tab!=='attention'||projectStats(data,p.id).yours>0)&&(s.route.tab!=='working'||projectStats(data,p.id).working>0)&&[p.name,p.goal,...p.paths].join(' ').toLowerCase().includes(query.trim().toLowerCase())).sort((a,b)=>String(b.updated_at).localeCompare(String(a.updated_at)));
+  const restoreProject=(p:R)=>void s.act(async()=>{const r=await api(`/projects/${p.id}/hold`,{version:p.version,shelved:false});await s.refresh();return r},'项目已恢复，原任务和历史保留');
   return <div className="page-wrap">
     <header className="page-head">
-      <div><h1>项目</h1><p>每个项目的任务、成果、图解和经验都收在一起。</p></div>
+      <div><h1>项目</h1><p>看每个项目的进展、任务和成果。</p></div>
       <button className="btn primary" onClick={() => s.openDialog('project-register')}><Plus size={18} />添加项目</button>
     </header>
-    <Tabs label="项目状态" value={s.route.tab||'active'} onChange={tab=>{setLimit(24);s.go({page:'projects',tab})}} tabs={[[ 'active','当前项目'],['attention','需要你'],['working','进行中'],['archived','已归档']]}/>
+    <Tabs label="项目状态" value={s.route.tab||'active'} onChange={tab=>{setLimit(24);s.go({page:'projects',tab})}} tabs={[[ 'active','当前项目'],['attention','需要你'],['working','进行中'],['shelved','收纳暂缓'],['archived','已归档']]}/>
     <input className="filter-input" aria-label="搜索项目" placeholder="搜索项目名称、目标或文件夹" value={query} onChange={e=>{setQuery(e.target.value);setLimit(24)}}/>
-    {!projects.length&&<Empty title={query?'没有找到匹配项目':archived?'暂无已归档项目':'暂无当前项目'}/>}
-    <div className="project-grid">
+    {!projects.length&&<Empty title={query?'没有找到匹配项目':archived?'暂无已归档项目':shelved?'暂无收纳暂缓的项目':'暂无当前项目'}/>}
+    {shelved ? <Section title="收纳暂缓的项目"><div className="row-list">{projects.slice(0,limit).map(p=><div className="row static" key={p.id}><span className="row-main"><strong>{p.name}</strong><small>{p.goal||'还没写项目目标'}</small><code>{p.source_root||p.paths[0]}</code></span><button className="btn small" onClick={()=>s.go({page:'projects',id:p.id})}>查看</button><button className="btn small primary" disabled={s.busy} onClick={()=>restoreProject(p)}>恢复安排</button></div>)}</div></Section> : <div className="project-grid">
       {projects.slice(0,limit).map(p => {
         const st = projectStats(data, p.id);
         const last = st.tasks.map(t => t.updated_at).sort().pop() || p.updated_at;
@@ -54,7 +62,7 @@ export function Projects() {
           <p className="pc-foot"><span>{p.stage || '阶段未填写'}</span><span>{relative(last, s.tz)}有动静</span></p>
         </button>;
       })}
-    </div>
+    </div>}
 
     {projects.length>limit&&<button className="btn ghost" onClick={()=>setLimit(limit+24)}>显示更多（共 {projects.length} 个）</button>}
     {!archived&&!query&&suggestions.length > 0 && <Section title={<><FolderSearch size={19} />Agent 最近在这些文件夹工作过</>} label="发现的文件夹">
@@ -85,24 +93,28 @@ export function ProjectView({ id }: { id: string }) {
     <header className="page-head project-head">
       <div className="project-copy">
         <h1>{p.name}{p.archived&&<> <Pill tone="quiet">已归档</Pill></>}</h1>
-        
-
       </div>
       <div className="head-actions">
-        <button className="btn" onClick={() => s.openDialog('project-edit', { project: p })}><PencilLine size={16} />编辑资料</button>
-        <button className="btn" onClick={()=>s.openDialog('project-archive',{project:p})}>{p.archived?<RotateCcw size={16}/>:<Archive size={16}/>} {p.archived?'恢复项目':'归档项目'}</button>
         <button className="btn primary" disabled={!!p.archived} onClick={() => s.openDialog('request', { projectId: p.id })}><Plus size={17} />提需求</button>
+        <button className="btn" onClick={() => s.openDialog('project-edit', { project: p })}><PencilLine size={16} />编辑资料</button>
+        <MoreMenu>
+          {!p.archived&&<button disabled={s.busy} onClick={()=>void s.act(async()=>{const r=await api(`/projects/${p.id}/hold`,{version:p.version,shelved:!p.shelved});await s.refresh();return r},p.shelved?'项目已恢复':'已收纳，暂缓后续新安排')}>{p.shelved?'恢复项目安排':'收纳并暂缓新安排'}</button>}
+          <button onClick={()=>s.openDialog('project-archive',{project:p})}>{p.archived?<RotateCcw size={15}/>:<Archive size={15}/>} {p.archived?'恢复项目':'归档项目'}</button>
+        </MoreMenu>
       </div>
     </header>
-    <ProjectSummary key={p.id} text={p.goal||''} />
-    <div className="head-facts project-facts">
-          <span><small>现在阶段</small>{p.stage || '未填写'}</span>
-          <span><small>下一步</small>{p.next_step || '未填写'}</span>
-        </div>
-    <details className="project-location-summary"><summary>{p.delivery_target==='runtime'?'交付到本机 · 工作位置':'源码与工作位置'}</summary><span>开发：{p.source_root||p.paths[0]}</span>{p.runtime_root&&<span>运行：{p.runtime_root}</span>}</details>
-    <Tabs label="项目内容" value={tab} onChange={s.setTab} tabs={[['progress', '任务', st.yours || undefined], ['files', '成果', files.length || undefined], ['diagrams', '关系图', diagrams.length || undefined], ['memory', '经验', memories.length || undefined], ['folders', '文件夹与资料']]} />
+    <ProjectSummary key={p.id} text={p.goal||''} onAdd={p.archived?undefined:()=>s.openDialog('project-edit',{project:p})}>
+      <div className="head-facts project-facts">
+        <span><small>现在阶段</small>{p.stage || '未填写'}</span>
+        <span><small>下一步</small>{p.next_step || '未填写'}</span>
+        <span className="project-progress" aria-label="任务进展"><small>任务进展</small><span>{st.yours>0&&<b className="fact-you">{st.yours} 件等你</b>}<b>{st.working}</b> 进行中 · <b>{st.done}</b> 已完成 · 共 {st.tasks.length}</span></span>
+      </div>
+    </ProjectSummary>
+    {p.shelved&&<Notice tone="warn">当前调用继续；后续新派发已暂停。停止当前调用请在任务中单独操作。</Notice>}
+    <Tabs label="项目内容" value={tab} onChange={s.setTab} tabs={[['progress', '任务', st.yours || undefined], ['files', '成果', files.length || undefined], ['insights','用量与过程'], ['diagrams', '关系图', diagrams.length || undefined], ['memory', '经验', memories.length || undefined], ['folders', '资料与设置']]} />
     {tab === 'progress' && <Progress project={p} tasks={st.tasks} />}
-    {tab === 'files' && <Files files={files} />}
+    {tab === 'files' && <><ProjectFilesPanel projectId={p.id}/><Section title="执行交付的成果"><Files files={files}/></Section></>}
+    {tab === 'insights' && <ProjectInsightsPanel projectId={p.id}/>}
     {tab === 'diagrams' && <><RelationshipGraph projectId={p.id}/><details className="fold"><summary>保存的图解快照（{diagrams.length}）</summary><Diagrams project={p} diagrams={diagrams}/></details></>}
     {tab === 'memory' && <Memories project={p} memories={memories} />}
     {tab === 'folders' && <Folders project={p} />}
@@ -114,23 +126,23 @@ function Progress({ project, tasks }: { project: R; tasks: R[] }) {
   const requests = (s.data.requests as R[]).filter(q => q.project_id === project.id && ['draft','awaiting_planning'].includes(q.status));
   const active = tasks.filter(t => !['accepted', 'cancelled', 'rework_linked'].includes(t.status)).sort(byUrgency);
   const finished = tasks.filter(t => ['accepted', 'cancelled', 'rework_linked'].includes(t.status)).sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
-  const [showAll, setShowAll] = useState(false);
+  const [showAll, setShowAll] = useState(false),[activeLimit,setActiveLimit]=useState(20);
   if (!tasks.length && !requests.length) return <Empty icon={<Lightbulb size={28} />} title="这个项目还没有任务" action={!project.archived&&<button className="btn primary" onClick={() => s.openDialog('request', { projectId: project.id })}>提第一个需求</button>}>提一个需求，Codex 会把它拆成任务。</Empty>;
+  const ordered=[...active].sort(byExecutionOrder);
   return <>
-    {requests.length > 0 && <Section title="需求">
+    {requests.length > 0 && <Section title="需求" aside={<button className="link" onClick={()=>s.go({page:'requests',id:project.id,tab:requests.some(q=>q.status==='awaiting_planning')?'waiting':'drafts'})}>在需求箱管理</button>}>
       <div className="row-list">{requests.map(q => <div key={q.id} className="row static req-row">
-        <Pill tone={q.status==='draft'?'quiet':'you'}>{q.status==='draft'?'待开始':'等待规划'}</Pill>
-        <div className="row-main"><RequestPreview request={q}/><small>{relative(q.updated_at||q.created_at, s.tz)}更新</small></div>
+        <Pill tone={q.status==='draft'?'quiet':'you'}>{requestStatusText[q.status]}</Pill>
+        <div className="row-main"><RequestPreview request={q}/><small>{requestMeta(q,project)} · {relative(q.updated_at||q.created_at, s.tz)}更新</small></div>
         {!project.archived&&<span className="row-tools">
           {q.status==='awaiting_planning'&&<button className="btn small" disabled={s.busy} onClick={() => void copyPlanning(s, q)}><Copy size={15} />复制规划请求</button>}
           {q.status==='draft'&&<button className="btn small" disabled={s.busy} onClick={()=>void startPlanning(s,q)}>现在开始</button>}
-          <button className="btn small" onClick={()=>s.openDialog('request',{request:q})}><PencilLine size={15}/>编辑</button>
-          <button className="btn small ghost" onClick={()=>s.openDialog('request-action',{request:q,action:'delete'})}>删除</button>
         </span>}
       </div>)}</div>
     </Section>}
     {active.length > 0 && <Section title="执行顺序" label="执行顺序">
-      <ExecutionList tasks={active}/>
+      <ExecutionList tasks={ordered.slice(0,activeLimit)}/>
+      {ordered.length>activeLimit&&<button className="btn ghost" onClick={()=>setActiveLimit(n=>n+20)}>显示更多（共 {ordered.length} 项）</button>}
     </Section>}
     {finished.length > 0 && <Section title="已经结束">
       <div className="row-list">{(showAll ? finished : finished.slice(0, 6)).map(t => <TaskRow key={t.id} t={t} />)}</div>
@@ -184,7 +196,7 @@ function Diagrams({ project, diagrams }: { project: R; diagrams: R[] }) {
   return <>
     <div className="banner">
       <Network size={22} />
-      <div><strong>用一张图看懂项目</strong><p>上方关系图来自当前任务、执行和会话记录。这里保存的图解是生成时的快照；任务依赖会按实际登记的关系绘制。</p></div>
+      <div><strong>项目总览图</strong><p>保存的是生成当时的快照；上方关系图始终来自当前记录。</p></div>
       <button className="btn primary" disabled={busy} onClick={() => void generate()}>{busy ? '正在生成并检查…' : '生成项目总览'}</button>
     </div>
     {list.length ? <div className="diagram-grid">{list.map(d => <button key={d.id} className="diagram-card" onClick={() => s.openDialog('diagram', { diagram: d })}>
@@ -201,7 +213,7 @@ function Memories({ project, memories }: { project: R; memories: R[] }) {
   return <>
     <div className="banner quiet">
       <Lightbulb size={22} />
-      <div><strong>项目经验</strong><p>记下已确定的决定、遇到的问题和下次继续的位置。</p></div>
+      <div><strong>项目经验</strong><p>决定、问题和下次继续的位置。</p></div>
       <button className="btn" onClick={() => s.openDialog('memory', { projectId: project.id })}><Plus size={16} />记一条</button>
     </div>
     {sorted.length ? <div className="memory-list">{sorted.map(m => <article key={m.id} className={'memory m-' + m.status}>
@@ -215,7 +227,18 @@ function Memories({ project, memories }: { project: R; memories: R[] }) {
 function Folders({ project }: { project: R }) {
   const s = useStore();
   const sessions = (s.data.sessions as R[]).filter(x => x.project_id === project.id).sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+  const delivery = deliveryForView(project, project), portable = delivery.deployment.verification === 'portable_manifest';
   return <>
+    <Section title="默认交付">
+      <dl className="setting-facts">
+        <div><dt>交付目标</dt><dd>{deliverySummary(delivery)}</dd></div>
+        <div><dt>重要程度</dt><dd>{project.importance==='critical'?'重点':'普通'}</dd></div>
+        {project.source_root&&project.source_root!==project.paths[0]&&<div><dt>开发目录</dt><dd><code>{project.source_root}</code></dd></div>}
+        {portable&&project.runtime_root&&<div><dt>本机运行目录</dt><dd><code>{project.runtime_root}</code></dd></div>}
+      </dl>
+      <div className="tool-row"><button className="btn small" onClick={() => s.openDialog('project-edit', { project })}><PencilLine size={15} />编辑资料</button></div>
+    </Section>
+    <ProjectPolicyPanel key={project.id} project={project}/>
     <Section title="项目文件夹">
       <div className="path-list">{project.paths.map((path: string, i: number) => <div key={path} className="path-row">
         <FolderOpen size={18} /><code>{path}</code>
@@ -226,9 +249,8 @@ function Folders({ project }: { project: R }) {
       </div>)}</div>
       <div className="tool-row">
         <button className="btn small" onClick={() => s.openDialog('project-path', { project })}><Link2 size={15} />关联另一个文件夹</button>
-        <a className="btn small" href={'/api/projects/' + project.id + '/context?download=1'} download><Download size={15} />导出项目上下文</a>
+        <a className="btn small" href={'/api/projects/' + project.id + '/context?download=1'} download title="导出目标、任务、经验和最近会话，可交给新的 Agent 了解项目"><Download size={15} />导出项目上下文</a>
       </div>
-      <p className="muted small">“导出项目上下文”会生成一个文件，里面有目标、任务、经验和最近会话，可以交给新的 Agent 快速了解项目。</p>
     </Section>
     <Section title={<><MessagesSquare size={18} />关联的会话 <span className="count">{sessions.length}</span></>} label="关联的会话">
       {sessions.length ? <div className="row-list">{sessions.slice(0, 20).map(x => <button key={x.id} className="row" onClick={() => s.openDialog('session', { session: x })}>

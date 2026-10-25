@@ -18,6 +18,7 @@ import {assertMayArrangeReview} from './review-permissions.ts';
 import {prepareDecision,decisionReceipt} from './user-decisions.ts';
 import {createBackup} from '../../scripts/backup.ts';
 import {artifactFile,openArtifactFolder,type revealFile} from './artifact-folders.ts';
+import {arrangementProposalInput,proposeTaskArrangement} from './task-arrangement.ts';
 
 const text=z.string().trim().min(1).max(20000),key=text.max(200),version=z.number().int().positive();
 const action=<T extends z.ZodRawShape>(name:string,fields:T)=>z.object({action:z.literal(name),...fields}).strict();
@@ -70,9 +71,11 @@ export const managementTools:Record<string,Tool>={
     action('dispatch',{task_id:key,revision:version}),action('cancel',{task_id:key,revision:version}),
     action('reply',{task_id:key,data:replySchema}),action('accept',{task_id:key,run_id:key,revision:version}),
     action('reject',{task_id:key,revision:version,run_id:key,note:text.max(10000),artifact_hashes:z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(1),followup_task_id:key.optional()}),
-    action('rework',{task_id:key,revision:version,feedback_id:key})
+    action('rework',{task_id:key,revision:version,feedback_id:key}),
+    action('propose_arrangement',{task_id:key,data:arrangementProposalInput})
   ])),asynchronous:v=>v.action==='rework',execute:({wb},v)=>{
     if(v.action==='reply')return wb.saveReply(v.task_id,v.data);
+    if(v.action==='propose_arrangement')return proposeTaskArrangement(wb,v.task_id,v.data);
     if(v.action==='accept'||v.action==='reject')return prepareDecision(wb,v.action,v);
     if(v.action==='rework')return reworkOrder(wb,v.task_id,{revision:v.revision,feedback_id:v.feedback_id});
     return wb.manualAction(v.task_id,v.action,v.revision);

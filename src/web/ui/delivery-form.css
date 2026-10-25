@@ -1,0 +1,15 @@
+.delivery-profile-fields { display: grid; gap: 14px; }
+.delivery-artifacts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.delivery-artifacts legend { margin-bottom: 10px; }
+.delivery-artifacts .check { min-width: 0; margin: 0; }
+.delivery-notes > .field + .field { margin-top: 12px; }
+.delivery-brief { min-width: 0; }
+.delivery-brief p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); font-size: 13px; }
+.delivery-form .fold { margin-top: 0; }
+.delivery-form > .fold { border-top: 1px solid var(--line); padding-top: 10px; }
+.delivery-form .fold > summary { min-height: 32px; }
+.delivery-form .fold > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.delivery-form .fold > .field + .field { margin-top: 14px; }
+.delivery-form .fold > .muted { margin-bottom: 0; }
+.delivery-form .review-warning { color: var(--danger, var(--ink-2)); font-size: 13px; }
+@media (max-width: 420px) { .delivery-artifacts { grid-template-columns: 1fr; } }

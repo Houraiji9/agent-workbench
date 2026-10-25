@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { relayOf, isYourTurn, isTheirTurn, byUrgency, folderSuggestions, statusText, reviewSkippedTask } from '../src/web/lib/flow.ts';
 import { relative, daysUntil, dayCountText, money, subscriptionPrice, bigNumber } from '../src/web/lib/format.ts';
 import { parseHash, routeHash } from '../src/web/app/store.tsx';
+import { taskAction } from '../src/shared/workflow-view.ts';
 
 const name = (id: string) => ({ codex: 'Codex', zcode: 'Zcode', 'grok-build': 'Grok Build', claude: 'Claude' } as Record<string, string>)[id] || id;
 const task = (status: string, extra: Record<string, unknown> = {}) => ({ id: 'T-x', status, agent_id: 'zcode', reviewer_id: 'grok-build', review_policy: { mode: 'required' }, ...extra });
@@ -55,6 +56,30 @@ test('轮到你 / 正在处理 互不重叠，结束的任务不出现在任何�
   }
   const sorted = [task('ready'), task('waiting_input'), task('blocked')].sort(byUrgency).map(t => t.status);
   assert.deepEqual(sorted, ['waiting_input', 'blocked', 'ready']);
+});
+
+test('等待用户问题优先于执行或审查调用的活动与失败状态', () => {
+  for (const status of ['waiting_input', 'closeout_waiting_input']) {
+    for (const automationStatus of ['queued', 'launching', 'running', 'failed', 'interrupted']) {
+      for (const role of ['execution', 'review']) {
+        const waiting = task(status, { automation: { status: automationStatus, role, reason: '客户端调用原因' } });
+        const context = `${status} / ${automationStatus} / ${role}`;
+        assert.deepEqual(taskAction(waiting), { group: 'answer', owner: 'user', label: '去回答' }, context);
+        assert.equal(isYourTurn(waiting), true, context);
+        assert.equal(isTheirTurn(waiting), false, context);
+        const relay = relayOf(waiting, name);
+        assert.equal(relay.holder, 'you', context);
+        assert.equal(relay.tone, 'you', context);
+        assert.match(relay.headline, /问题|回答/, context);
+
+        const answered = { ...waiting, question_answered: true };
+        assert.deepEqual(taskAction(answered), { group: 'arrange', owner: 'user', label: '答复已保存，继续原会话' }, context);
+        assert.equal(isYourTurn(answered), true, context);
+        assert.equal(isTheirTurn(answered), false, context);
+        assert.match(relayOf(answered, name).headline, /答复已保存/, context);
+      }
+    }
+  }
 });
 
 test('文件夹建议只来自真实会话目录，排除已登记项目，不猜测路径', () => {

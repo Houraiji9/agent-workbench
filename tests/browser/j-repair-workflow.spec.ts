@@ -37,7 +37,7 @@ test('类型筛选传到服务端，旧任务仍能被找到',async({page})=>{
 test('写入成功后快照读取失败，提示已保存而非再次提交，并自动恢复',async({page})=>{
  const m=await makeTask(page,{title:'写入后刷新失败测试'});await page.goto('/#/projects/'+m.project.id);await page.getByRole('button',{name:'编辑资料'}).click();
  let failed=true;await page.route('**/api/state',async r=>{if(failed)return r.fulfill({status:503,json:{error:'测试快照暂不可用'}});await r.continue()});
- const d=page.getByRole('dialog',{name:'编辑项目资料'});await d.getByLabel('现在处在什么阶段').fill('已保存的新阶段');await d.getByRole('button',{name:'保存'}).click();
+ const d=page.getByRole('dialog',{name:'编辑项目资料'});await d.getByText('项目近况（可选）').click();await d.getByLabel('现在处在什么阶段').fill('已保存的新阶段');await d.getByRole('button',{name:'保存'}).click();
  await expect(page.getByRole('alert')).toContainText('操作已保存');await expect(d).toHaveCount(0);failed=false;
  await expect(page.getByText('已保存的新阶段')).toBeVisible({timeout:10000});expect((await m.get('/state')).projects.find((p:any)=>p.id===m.project.id).version).toBe(2);
 });
@@ -46,7 +46,7 @@ test('快照接口挂起也能超时恢复，不会永久停在保存中',async(
  const m=await makeTask(page,{title:'挂起同步恢复测试'});await page.goto('/#/projects/'+m.project.id);await page.getByRole('button',{name:'编辑资料'}).click();
  let stall=true,release!:()=>void;const gate=new Promise<void>(r=>release=r);
  await page.route('**/api/state',async r=>{if(stall){await gate;try{await r.abort()}catch{}}else await r.continue()});
- const d=page.getByRole('dialog',{name:'编辑项目资料'});await d.getByLabel('现在处在什么阶段').fill('挂起之后仍然保存');await d.getByRole('button',{name:'保存'}).click();
+ const d=page.getByRole('dialog',{name:'编辑项目资料'});await d.getByText('项目近况（可选）').click();await d.getByLabel('现在处在什么阶段').fill('挂起之后仍然保存');await d.getByRole('button',{name:'保存'}).click();
  try{
   await expect(page.getByRole('alert')).toContainText('操作已保存',{timeout:25000});await expect(d).toHaveCount(0);
   stall=false;release();await expect(page.getByText('挂起之后仍然保存')).toBeVisible({timeout:15000});

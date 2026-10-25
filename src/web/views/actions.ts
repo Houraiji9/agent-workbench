@@ -4,7 +4,7 @@ import type { Store } from '../app/store.js';
 import type { R } from '../lib/flow.js';
 
 export async function startPlanning(s:Store,q:R){return s.act(async()=>{
- const next=await api('/requests/'+q.id+'/edit',{project_id:q.project_id,text:q.text,status:'awaiting_planning',kind:q.kind||'idea',version:q.version,skip_review:q.review_policy?.mode==='not_requested',review_note:q.review_policy?.note||''});
+ const next=await api('/requests/'+q.id+'/edit',{project_id:q.project_id,text:q.text,status:'awaiting_planning',kind:q.kind||'idea',version:q.version,workflow_kind:q.workflow_kind||'standard',desired_output:q.desired_output||'',success_criteria:q.success_criteria||'',review_mode:q.review_policy?.mode||'required',review_focus:q.review_policy?.focus||[],skip_review:q.review_policy?.mode==='not_requested',review_note:q.review_policy?.note||''});
  s.go({page:'requests',tab:'waiting'});s.openDialog('request-handoff',{request:next});return next;
 })}
 
@@ -52,4 +52,19 @@ export function reviewRequestText(t: R, run: R | undefined, artifacts: R[], name
 
 export async function copyCloseoutOrder(s:Store,t:R){return s.act(async()=>{const r=await api('/closeout-orders',{run_id:t.current_run_id,expected_revision:t.revision});await s.copy(r.entry,'收尾单已复制，粘贴回原执行者即可');return r})}
 
-export async function continueTask(s:Store,t:R,sameSession=true){return s.act(async()=>{const r=await api('/tasks/'+t.id+'/continue',{revision:t.revision,same_session:sameSession});await s.copy(r.entry,sameSession?'续作简讯已复制，粘贴回原会话':'接手资料已复制；缺失历史可按需读取');return r})}
+export async function dispatchTask(s:Store,t:R,review=false,freshSession=false){return s.act(async()=>{
+ let current=t;
+ if(!review&&t.status==='ready'&&!t.current_run_id){await api('/tasks/'+t.id+'/export',{version:t.version});current=(await api('/tasks/'+t.id)).task;}
+ return api('/tasks/'+t.id+(review?'/dispatch-review':'/dispatch'),{expected_revision:current.revision,request_id:crypto.randomUUID(),fresh_session:freshSession});
+},'调用请求已登记，接单与交付状态会按实际回执更新')}
+
+export async function continueTask(s:Store,t:R,sameSession=true){return s.act(async()=>{
+ if(t.execution_route){
+  const r=await api('/tasks/'+t.id+'/continue',{expected_revision:t.revision,request_id:crypto.randomUUID(),fresh_session:!sameSession});
+  // 下一版安排换成没有自动路线的负责人时，只生成执行单，由用户交给执行者。
+  if(r?.automatic_delivery===false&&r.entry)await s.copy(r.entry,'新负责人没有自动调用路线：新执行单已复制，请交给执行者');
+  else s.toast(sameSession?'已请求续接原会话':'已请求新会话接手');
+  return r;
+ }
+ const r=await api('/tasks/'+t.id+'/continue',{revision:t.revision,same_session:sameSession});await s.copy(r.entry,sameSession?'续作简讯已复制，粘贴回原会话':'接手资料已复制；缺失历史可按需读取');return r;
+})}

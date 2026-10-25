@@ -41,7 +41,7 @@ test('审查交接卡显示当前审查者图标，改派同步，审查通过�
   await expectIcon(active.locator('.agent-icon img'),'claude.svg');
   await review('submit_review_result',{...order.context.final_response,review_id:order.review_id,verdict:'passed',findings:[],limitations:['隔离测试回执'],evidence:['页面图标切换检查'],report_markdown:'隔离测试审查报告，仅用于验证当前交接图标随角色切换。'});
   await expect(card.locator('.turn-agent')).toHaveAttribute('title','执行：Codex');await expectIcon(card.locator('.turn-agent img'),'codex.svg');
-  await expect(card.getByRole('button',{name:'交回执行者收尾'})).toBeVisible();
+  await expect(card.getByRole('button',{name:'原会话继续收尾'})).toBeVisible();
   expect((await m.get('/tasks/'+m.tid)).task.status).toBe('awaiting_closeout');
 });
 
@@ -66,11 +66,11 @@ test('待手动转发审查单在轮到你了；直接调用待接单显示执�
   await page.goto('/');const card=page.getByRole('article',{name:m.title});await expect(card.getByRole('button',{name:'交给审查者'})).toBeVisible();
   const t=(await m.get('/tasks/'+m.tid)).task;
   const order=await m.post('/review-orders',{run_id:m.rid,reviewer_id:'claude',expected_revision:t.revision,reason:'测试执行者直接调用 CLI',delivery_mode:'agent'});
-  await expect(card.getByRole('button',{name:'交给审查者'})).toHaveCount(0);await expect(page.getByText('Codex 正在安排 Claude 审查',{exact:true})).toBeVisible();
+  await expect(card.getByRole('button',{name:'交给审查者'})).toHaveCount(0);await expect(page.getByText('Codex 已交付，等待独立审查',{exact:true})).toBeVisible();
   const key=JSON.parse(fs.readFileSync(path.join(boot.root,'data/review-keys',order.review_id+'.json'),'utf8')).token;
   const start=await fetch('http://127.0.0.1:14318/api/mcp/report_review_started',{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify({review_id:order.review_id,identity:'claude'})});expect(start.ok).toBe(true);
   await expect(page.getByText('Claude 正在独立审查',{exact:true})).toBeVisible();await shot(page,'审查-直接调用实际接单');
   const detail=await m.get('/tasks/'+m.tid),token=JSON.parse(fs.readFileSync(path.join(boot.root,'data/run-keys',m.rid+'.json'),'utf8')).token;
   const failed=await fetch('http://127.0.0.1:14318/api/mcp/report_review_handoff',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({run_id:m.rid,review_id:order.review_id,expected_revision:detail.task.revision,reason:'CLI 登录已失效，请重新选择审查者'})});expect(failed.ok).toBe(true);
-  await expect(page.getByRole('article',{name:m.title}).getByRole('button',{name:'交给审查者'})).toBeVisible();await page.goto('/#/today?task='+m.tid);await expect(drawer(page)).toContainText('CLI 登录已失效');await expect(drawer(page).getByRole('button',{name:'更换审查者',exact:true})).toBeVisible();
+  await expect(page.getByRole('article',{name:m.title}).getByRole('button',{name:'交给审查者'})).toBeVisible();await page.goto('/#/today?task='+m.tid);await expect(drawer(page)).toContainText('CLI 登录已失效');await drawer(page).getByText('手动转发或导入审查',{exact:true}).click();await expect(drawer(page).getByRole('button',{name:'更换审查者',exact:true})).toBeVisible();
 });

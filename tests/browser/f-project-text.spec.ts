@@ -35,7 +35,7 @@ test('项目目标保留 LF/CRLF 换行与空行；编辑保存不丢全文',asy
     const dialog=page.getByRole('dialog',{name:'编辑项目资料'});
     // HTML textarea exposes LF; changing a different field must preserve stored CRLF.
     await expect(dialog.getByLabel('项目目标')).toHaveValue(paragraphs);
-    await dialog.getByLabel('现在处在什么阶段').fill('测试：只修改阶段');
+    await dialog.getByText('项目近况（可选）').click();await dialog.getByLabel('现在处在什么阶段').fill('测试：只修改阶段');
     await dialog.getByRole('button',{name:'保存',exact:true}).click();
     await expect(dialog).toHaveCount(0);
     expect((await m.get('/state')).projects.find((p:any)=>p.id===m.project.id).goal).toBe(original);
@@ -80,9 +80,9 @@ test('长项目标题/目标/阶段/下一步在深浅主题与宽窄窗口中�
       const a=metrics.buttons[i],b=metrics.buttons[j];expect(Math.min(a.right,b.right)-Math.max(a.left,b.left)>1&&Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top)>1).toBe(false);
     }
     await page.getByRole('button',{name:'编辑资料',exact:true}).click();await expect(page.getByRole('dialog',{name:'编辑项目资料'})).toBeVisible();await page.keyboard.press('Escape');
-    await page.getByRole('button',{name:'归档项目',exact:true}).click();await expect(page.getByRole('dialog',{name:'归档项目'})).toBeVisible();await page.keyboard.press('Escape');
+    await page.locator('.more-menu > summary').click();await page.getByRole('button',{name:'归档项目',exact:true}).click();await expect(page.getByRole('dialog',{name:'归档项目'})).toBeVisible();await page.keyboard.press('Escape');
     await page.locator('.head-actions').getByRole('button',{name:'提需求',exact:true}).click();await expect(page.getByRole('dialog')).toBeVisible();await page.keyboard.press('Escape');
-    await page.getByRole('tab',{name:'文件夹与资料',exact:true}).click();await expect(page.locator('.project-head h1')).toBeVisible();
+    await page.getByRole('tab',{name:'资料与设置',exact:true}).click();await expect(page.locator('.project-head h1')).toBeVisible();
     await page.goto('/#/projects');await page.getByRole('textbox',{name:'搜索项目'}).fill(name);
     const card=page.locator('.project-card').filter({hasText:name});await expect(card).toHaveCount(1);
     expect(await noHorizontalScroll(page),`${theme}/${width} 项目列表不得横向滚动`).toBe(true);

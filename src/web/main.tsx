@@ -34,7 +34,8 @@ function Shell() {
   const [palette, setPalette] = useState(false);
   const { route, data } = s;
   const decisions=pendingDecisions(data),decisionTasks=new Set(decisions.map(d=>d.task_id));
-  const yours = decisions.length + data.tasks.filter((t:Record<string,any>)=>!decisionTasks.has(t.id)&&isYourTurn(t)).length + data.requests.filter((q: Record<string, unknown>) => q.status === 'awaiting_planning' && !data.projects.find((p:Record<string,unknown>)=>p.id===q.project_id)?.archived).length;
+  const visible=(id:unknown)=>!data.projects.some((p:Record<string,unknown>)=>p.id===id&&(p.shelved||p.archived));
+  const yours = decisions.length + data.tasks.filter((t:Record<string,any>)=>visible(t.project_id)&&!decisionTasks.has(t.id)&&isYourTurn(t)).length + data.requests.filter((q: Record<string, unknown>) => q.status === 'awaiting_planning' && visible(q.project_id)).length;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

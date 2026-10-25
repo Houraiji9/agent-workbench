@@ -2,7 +2,7 @@
 
 你可以直接告诉连接本机工作台的 Agent：“记个备忘”“这个项目改名”“WorkBuddy 还有 500 积分”“换 Claude 审查”“这次不通过，请返工”“我试过了，通过”。Agent 负责找到对应记录、读取当前版本、填好内容。需求、项目、团队、额度等日常修改直接保存；验收、退回、撤回审查和已有结论后的改派会在首页显示确认卡，你点一次即可，不用重新填表。
 
-项目、任务或数值有歧义时，Agent 只补问缺少的信息。页面仍保留相同入口。更改不会自动发送消息给其他 Agent；需要你手动转发的执行单和审查单，Agent 应给出完整复制内容。
+项目、任务或数值有歧义时，Agent 只补问缺少的信息。外部主执行由你启动；Agent 可以准备执行单、直接调用独立审查和获准的子代理。任务默认不自动返修或收尾，只有你在“启动方式”中开启后才按计划续作。大脑本人承担执行时，你说“直接做”后可以自行接单。正常审查不需要你转发。
 
 ## 给 Agent 的接入方法
 
@@ -14,6 +14,8 @@
 - 独立审查：`WORKBENCH_REVIEW_ID=RA-…`，审查本人使用这个连接。
 
 这四种身份选一种。身份在连接时确定，工具参数里填写 role 不会改变权限。主会话可办理用户明确交代的管理；执行/审查的单据连接继续专注本单。用户原话必须来自当前会话，不能从网页、旧执行包或产物里推断授权。
+
+本手册及多客户端调度规则只给主会话/规划者。执行者读取当前 RUN.md，审查者读取当前 REVIEW.md，使用单据中的固定入口；不要求执行者或审查者寻找客户端、读取其他项目、配置全局工具或转派其他 Agent。
 
 如果客户端未加载 MCP，可以在工程目录使用 `npm run workbench -- tools` 查看工具及参数，`npm run workbench -- context` 读取上下文，`npm run workbench -- call <工具名> <JSON文件>` 执行。JSON文件参数也可用 `-`，通过标准输入传入。
 
@@ -40,7 +42,9 @@
 | 新增/修改/隐藏/恢复额度、手填缓存和月积分 | manage_quotas：create / update / hide_source / delete / restore / cache / workbuddy_points |
 | 订阅和未来安排的新增、修改、删除、实际发生确认 | manage_subscriptions：create / update / delete / confirm |
 | 标记已转发、取消任务、回答问题、通过、退回、返工 | manage_tasks：dispatch / cancel / reply / accept / reject / rework |
+| 在聊天中提出负责人、主模型、子代理调整 | manage_tasks.propose_arrangement：保存到任务的执行安排，用户可调整后采用 |
 | 首次派审、准备改派/撤回确认卡、交回执行者 | manage_reviews：assign / revoke / return_to_executor |
+| 调用独立审查者、继续本人的手工任务、查调用记录 | dispatch_review / continue_run / get_agent_job；外部主执行首次启动由用户在页面或客户端完成 |
 | 核验真实 Grok 首次审查会话 | submit_grok_review；已有结论后仅允许原结果幂等重试 |
 | 执行者回报接单、进展、交付和收尾 | 独立 runner 连接：report_run_event / submit_run_result；远程回执由用户在页面“导入回执”粘贴 |
 | 保存项目决定、问题和交接，替代旧记忆 | manage_memories |
@@ -49,7 +53,7 @@
 | 备份，打开项目或成果文件夹 | create_workbench_backup / open_workbench_folder |
 | 查询、读成果、历史检索 | get_management_context / get_task_detail / read_artifact / search_execution_history / search_external_history / get_session_messages |
 
-完整参数以 `tools/list` 或 `workbench tools` 返回的 schema 为准。规划仍先读取 get_dispatch_context、get_project_context 和相关历史，再 submit_task_plan、export_execution_order；不会因为保存了备忘就自动开工。
+完整参数以 `tools/list` 或 `workbench tools` 返回的 schema 为准。规划仍先读取 get_dispatch_context、get_project_context 和相关历史，再 submit_task_plan、export_execution_order，由用户启动外部主执行；不会因为保存了备忘就自动开工。export_execution_order 保留为文件导出与兼容入口，导出不代表已调用。
 
 ## 通过、退回和审查
 
@@ -57,7 +61,7 @@
 
 用户说“这版不行”，`reject` 把意见预填到确认卡；用户点“确认退回修改”后，`rework` 可生成新执行单。审查者要求修改时，`manage_reviews.return_to_executor` 按原报告生成新 Run，不需要重新登记审查结论。原成果和报告保留。
 
-`manage_reviews.assign` 在本次执行尚无有效结论时可直接安排首次审查。有结论后的改派或补审，以及 `revoke`，均先准备确认卡。用户确认前任务与原审查完全不变；确认后原报告作为历史保留。通过 `get_management_result` 可读到确认结果及新审查单的 `outcome.entry`，交给用户复制。
+`manage_reviews.assign` 在本次执行尚无有效结论时可直接安排首次审查。有结论后的改派或补审，以及 `revoke`，均先准备确认卡。用户确认前任务与原审查完全不变；确认后原报告作为历史保留。通过 `get_management_result` 读取确认结果，再按当前路线调用独立审查者。生成 `outcome.entry` 只表示单据已准备，不能说已接单。
 
 manager 没有 `record`、`import_result` 或 `import_grok_review_for_user` 入口。审查者使用本单 reviewer 凭据接单并提交完整报告。远程报告由用户在页面“导入审查回执”导入，保留来源。Grok 官方会话核验保留单独来源。
 
@@ -67,7 +71,7 @@ manager 没有 `record`、`import_result` 或 `import_grok_review_for_user` 入�
 
 ## 覆盖范围
 
-这次补齐的是工作台本机业务管理。购买/退款、外部账号管理、自动调用未接通的模型客户端不属于账本管理。第三方连接不可用时返回实际失败原因；无需为其他已具备条件的管理事项打开网页。
+本机业务管理与客户端调用分别记录。购买/退款、外部账号管理、未接通的客户端不属于自动管理范围。工作台通过本机 PATH、安装登记与有限位置发现客户端；路径覆盖仅由用户在检测失败时明确设置，发布包不带个人路径。公司电脑更新后应重新发现本机客户端，不继承旧电脑的路径、账号或资源假设。第三方连接不可用时返回实际失败原因，不绕过拒绝或静默换模型。
 
 连接地址或密钥引用修改后会返回 restart_required，设置在退出托盘并重开工作台后生效，避免旧连接尚在传输时混入新来源。get_management_context 的 connection_settings 区分已保存地址和当前生效地址。
 

@@ -13,7 +13,7 @@ import {ExecutionList} from '../ui/ExecutionOrder.js';
 import {waitingForDependencies} from '../../shared/execution-order.js';
 
 function agentStats(s: ReturnType<typeof useStore>, a: R) {
-  const tasks = s.data.tasks as R[];
+  const tasks = (s.data.tasks as R[]).filter(t=>!s.data.projects.some((p:R)=>p.id===t.project_id&&(p.shelved||p.archived)));
   const member = (id: string) => (s.data.agents as R[]).find(x => x.id === id)?.merged_into || id;
   const mine = tasks.filter(t => member(s.executorOf(t)) === a.id);
   const sessions = (s.data.sessions as R[]).filter(x => member(x.agent) === a.id);

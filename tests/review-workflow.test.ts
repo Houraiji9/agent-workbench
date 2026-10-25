@@ -91,7 +91,7 @@ test('真实 CLI 和 stdio MCP 能完成非 Grok 审查，不需要全局 Agent 
   const f=delivered(),o=order(f);f.wb.close();const {app,wb}=await createApp(f.config,{background:false});await app.listen({host:'127.0.0.1',port:0});
   const port=(app.server.address() as any).port;f.config.port=port;const env:NodeJS.ProcessEnv={...process.env,WORKBENCH_DATA_DIR:f.config.dataDir,WORKBENCH_PORT:String(port),WORKBENCH_REVIEW_ID:o.review_id};delete env.WORKBENCH_RUN_ID;
   const client=new Client({name:'review-test',version:'1'}),transport=new StdioClientTransport({command:process.execPath,args:['--import','tsx','src/mcp/index.ts'],cwd:ROOT,env:env as Record<string,string>,stderr:'pipe'});
-  try{await client.connect(transport);const list=await client.listTools();assert.deepEqual(list.tools.map(t=>t.name).sort(),['get_review_assignment','report_review_started','submit_review_result']);
+  try{await client.connect(transport);const list=await client.listTools();assert.deepEqual(list.tools.map(t=>t.name).sort(),['ack_review_context','get_review_assignment','read_review_context_file','report_review_started','submit_review_result']);
     assert.equal((await client.callTool({name:'get_review_assignment',arguments:{review_id:o.review_id}})).isError,false);
     const cli=await promisify(execFile)(process.execPath,['--import','tsx','scripts/review.ts',o.review_id,'started','zcode'],{cwd:ROOT,env,windowsHide:true});assert.equal(JSON.parse(cli.stdout).status,'running');
     const response=await client.callTool({name:'submit_review_result',arguments:result(o,{verdict:'passed',findings:[]})});assert.equal(response.isError,false);assert.equal(wb.get('tasks',f.tid).status,'awaiting_closeout');
@@ -125,7 +125,7 @@ test('Windows 审查单原文命令及 MCP 参数在外部目录、无 PATH 时�
     const mcp=text.match(/独立 stdio MCP：command=(.+?)，args=\[(.+?)\]，cwd=(.+?)，env WORKBENCH_REVIEW_ID=(RA-[a-f0-9-]{36})/);assert(mcp);
     const args=mcp[2].split(',');assert.equal(args[0],'--import');assert(args[1].startsWith('file:///'));assert.equal(mcp[4],o.review_id);
     await client.connect(new StdioClientTransport({command:mcp[1],args,cwd,env:{...env,WORKBENCH_REVIEW_ID:mcp[4]} as Record<string,string>,stderr:'pipe'}));
-    assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),['get_review_assignment','report_review_started','submit_review_result']);
+    assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),['ack_review_context','get_review_assignment','read_review_context_file','report_review_started','submit_review_result']);
     const reply=await client.callTool({name:'get_review_assignment',arguments:{review_id:o.review_id}});assert.equal(reply.isError,false);
     assert.equal(JSON.parse((reply.content as any)[0].text).assignment.status,'completed');
   }finally{await client.close();await app.close()}

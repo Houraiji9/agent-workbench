@@ -9,6 +9,7 @@ import type {Workbench} from './workbench.ts';
 import type {Row} from './schema.ts';
 import {assert,hash,id,now,readBounded,safePath,DomainError} from './security.ts';
 import {reviewSkipped} from './acceptance.ts';
+import {reviewScope} from './review-scope.ts';
 import {assertMayArrangeReview,reviewActor,type ReviewCaller} from './review-permissions.ts';
 
 const uuid=z.string().uuid();
@@ -74,7 +75,7 @@ export function getReviewContext(wb:Workbench,runId:string){
   for(const a of artifacts){const file=safePath(a.archive_path,[path.join(wb.config.dataDir,'artifacts')]);assert(hash(readBounded(file,20*1024*1024))===a.sha256,'归档产物已变化，需重新交付',409)}
   const binding={task_id:task.id,run_id:run.id,task_version:task.version,reviewer_id:task.reviewer_id,...(task.current_review_assignment_id?{review_assignment_id:task.current_review_assignment_id}:{}),artifacts:artifacts.map(a=>({id:a.id,sha256:a.sha256})),review_files:run.review_files||[]};
   const digest=hash(JSON.stringify(binding));
-  return {...binding,title:task.title,revision:task.revision,review_digest:digest,cwd:run.cwd,run_directory:run.directory,
+  return {...binding,review_scope:reviewScope(task,run),title:task.title,revision:task.revision,review_digest:digest,cwd:run.cwd,run_directory:run.directory,
     artifacts:artifacts.map(a=>({id:a.id,label:a.label,sha256:a.sha256,archive_path:a.archive_path})),
     final_response:{task_id:task.id,run_id:run.id,review_digest:digest,verdict:'passed 或 changes_requested',findings:['实际发现的问题；没有则空数组'],limitations:['未验证的范围；没有则空数组']},
     instructions:task.reviewer_id==='grok-build'?'由独立 Grok Build 检查当前交付，以 final_response 返回 JSON；完成后 submit_grok_review 回传真实 session_id。若资源不足，先 get_review_candidates 再 export_review_order 改派。':'先 get_review_candidates 核对资源，再 export_review_order 生成可复制的审查单。审查者用独立审查 MCP 或执行单内的 review 命令接单、提交报告。'};

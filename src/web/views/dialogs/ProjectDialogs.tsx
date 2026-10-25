@@ -7,6 +7,9 @@ import type { R } from '../../lib/flow.js';
 import { fullDate } from '../../lib/format.js';
 import { Dialog, Field, Notice } from '../../ui/kit.js';
 import { useSubmit } from './useSubmit.js';
+import { DeliveryProfileFields, ImportanceField, deliverySummary } from '../../ui/DeliveryProfileFields.js';
+import type { DeliveryProfile } from '../../../core/delivery-profile.ts';
+import { deliveryForView } from '../../../shared/delivery-view.js';
 
 const Foot = ({ onClose, saving, label, disabled }: { onClose(): void; saving: boolean; label: string; disabled?: boolean }) => <footer className="dialog-foot inline">
   <button type="button" className="btn ghost" onClick={onClose}>取消</button>
@@ -64,19 +67,31 @@ export function AddRootDialog({ preset, onClose }: { preset?: string; onClose():
 
 export function EditProjectDialog({ project, onClose }: { project: R; onClose(): void }) {
   const [p] = useState(project);
-  const [v, setV] = useState({ name: p.name, goal: p.goal || '', stage: p.stage || '', next_step: p.next_step || '', source_root:p.source_root||p.paths[0]||'', runtime_root:p.runtime_root||'', delivery_target:p.delivery_target||'source', workflow_mode:p.workflow_mode||'compact' });
+  const [profile, setProfile] = useState<DeliveryProfile>(() => deliveryForView(p, p));
+  const [importance, setImportance] = useState<'normal'|'critical'>((p.importance || 'normal') as 'normal'|'critical');
+  const [v, setV] = useState({ name: p.name, goal: p.goal || '', stage: p.stage || '', next_step: p.next_step || '', source_root:p.source_root||p.paths[0]||'', workflow_mode:p.workflow_mode||'compact' });
   const { error, saving, run } = useSubmit();
   const set = (k: keyof typeof v) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setV({ ...v, [k]: e.target.value });
+  const portable = profile.deployment.mode === 'local' && profile.deployment.verification === 'portable_manifest';
   return <Dialog title="编辑项目资料" sub="用自己的话写就行，Codex 规划时会读到。" onClose={onClose} label="编辑项目资料">
-    <form className="form" onSubmit={e => { e.preventDefault(); void run(() => api('/projects/' + p.id + '/edit', { version: p.version, changes: {...v,source_root:v.source_root||null,runtime_root:v.runtime_root||null} }), '项目资料已保存'); }}>
+    <form className="form delivery-form" onInvalidCapture={e=>{
+      // Native validation must reveal a required field before the browser focuses it.
+      let ancestor=(e.target as HTMLElement).parentElement;
+      while(ancestor&&ancestor!==e.currentTarget){if(ancestor instanceof HTMLDetailsElement)ancestor.open=true;ancestor=ancestor.parentElement;}
+    }} onSubmit={e => { e.preventDefault(); void run(() => api('/projects/' + p.id + '/edit', { version: p.version, changes: {...v,source_root:v.source_root||null,runtime_root:portable?profile.deployment.target:null,importance,delivery_profile:profile} }), '项目资料已保存'); }}>
       <Field label="项目名称"><input data-autofocus required maxLength={199} value={v.name} onChange={set('name')} /></Field>
       <Field label="项目目标"><textarea rows={3} maxLength={5000} value={v.goal} onChange={set('goal')} /></Field>
-      <Field label="现在处在什么阶段"><input maxLength={200} value={v.stage} onChange={set('stage')} /></Field>
-      <Field label="下一步打算"><textarea rows={2} maxLength={2000} value={v.next_step} onChange={set('next_step')} /></Field>
-      <details className="fold"><summary>开发位置与交付方式</summary>
+      <ImportanceField value={importance} onChange={setImportance}/>
+      <div className="delivery-brief"><p title={deliverySummary(profile)}>默认交付：{deliverySummary(profile)}</p></div>
+      <details className="fold"><summary>修改默认交付</summary>
+        <DeliveryProfileFields value={profile} onChange={setProfile}/>
+      </details>
+      <details className="fold"><summary>项目近况（可选）</summary>
+        <Field label="现在处在什么阶段"><input maxLength={200} value={v.stage} onChange={set('stage')} /></Field>
+        <Field label="下一步打算"><textarea rows={2} maxLength={2000} value={v.next_step} onChange={set('next_step')} /></Field>
+      </details>
+      <details className="fold"><summary>开发设置</summary>
         <Field label="源码目录"><input value={v.source_root} onChange={set('source_root')} /></Field>
-        <Field label="本机运行目录"><input value={v.runtime_root} onChange={set('runtime_root')} placeholder="留空表示只交付源码或成果" /></Field>
-        <Field label="交付目标"><select value={v.delivery_target} onChange={e=>setV({...v,delivery_target:e.target.value})}><option value="source">源码或成果</option><option value="runtime">安装到本机后试用</option></select></Field>
         <Field label="执行资料"><select value={v.workflow_mode} onChange={e=>setV({...v,workflow_mode:e.target.value})}><option value="compact">简版与同会话增量</option><option value="full">完整执行资料</option></select></Field>
         <p className="muted small">只可使用本项目已关联范围内的目录。此设置不改变已有执行单，也不取消独立审查要求。</p>
       </details>

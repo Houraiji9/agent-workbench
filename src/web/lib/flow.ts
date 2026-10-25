@@ -1,3 +1,4 @@
+import {planningOriginLabel} from '../../shared/planning-origin.js';
 import {taskAction} from '../../shared/workflow-view.js';
 export {taskDisplayStatus} from '../../shared/workflow-view.js';
 // 工作接力：把账本里的任务状态翻译成“接力棒现在在谁手里、下一步做什么”。
@@ -66,8 +67,8 @@ export function relayOf(t: R, name: (id: string) => string, executor?: string): 
   const reviewer = skippedReview ? '本次不审查' : name(t.reviewer_id);
   const legs: Leg[] = [
     { key: 'ask', label: '提出需求', who: '你' },
-    { key: 'plan', label: '规划拆分', who: 'Codex' },
-    { key: 'handoff', label: '交给执行者', who: '你' },
+    { key: 'plan', label: '规划拆分', who: planningOriginLabel(t) },
+    { key: 'handoff', label: '交给执行者', who: t.execution_route ? '工作台' : '你' },
     { key: 'work', label: '执行', who: doer },
     { key: 'review', label: '独立审查', who: reviewer },
     { key: 'closeout', label: '执行收尾', who: doer },
@@ -78,9 +79,11 @@ export function relayOf(t: R, name: (id: string) => string, executor?: string): 
   if(t.status==='awaiting_confirmation'&&t.delivery_target==='runtime'&&!t.deployment?.verified)return r(5,'agent','working','等待本机安装验证','执行者先完成运行目录更新与验证，再交你试用');
   if(waitingForDependencies(t))return r(2,'none','quiet','等待前序任务完成','先完成下方列出的任务并确认验收，再交给执行者');
   if(hasPendingDecision(t))return r(['accept','reject'].includes(t.pending_user_decision.action)?6:4,'you','you',t.pending_user_decision.title,'查看已填好的事项，确认后生效');
+  if(t.automation&&!t.automation.superseded&&['failed','interrupted'].includes(t.automation.status)&&!['waiting_input','closeout_waiting_input','accepted','cancelled','rework_linked'].includes(t.status))return r(t.automation.role==='review'?4:3,'you','problem','客户端调用受阻',t.automation.reason||'查看调用记录，处理本机客户端问题后再继续');
+  if(t.automation&&['queued','launching','running'].includes(t.automation.status)&&!['waiting_input','closeout_waiting_input','awaiting_confirmation','accepted','cancelled','rework_linked'].includes(t.status))return r(t.automation.role==='review'?4:3,t.automation.role==='review'?'reviewer':'agent',t.automation.role==='review'?'review':'working',t.automation.role==='review'?'正在调用独立审查者':'正在调用执行者','等待实际回执更新进度，无需转发执行单或审查单');
   switch (t.status) {
-    case 'ready': return r(2, 'you', 'you', '计划已经排好，还没生成执行单', `生成执行单并复制，发给 ${doer}`);
-    case 'awaiting_dispatch': return r(2, 'you', 'you', `执行单已准备好，等你交给 ${doer}`, `把简版执行单粘贴给 ${doer}，接单回执会自动更新状态`);
+    case 'ready': return t.execution_route?r(2,'agent','quiet','计划已经排好，等待调用执行者',`按计划调用 ${doer}，接单后自动更新`):r(2, 'you', 'you', '计划已经排好，还没生成执行单', `生成执行单并复制，发给 ${doer}`);
+    case 'awaiting_dispatch': return t.execution_route?r(2,'agent','quiet','执行单已准备好，等待调用执行者',`按计划调用 ${doer}，接单后自动更新`):r(2, 'you', 'you', `执行单已准备好，等你交给 ${doer}`, `把简版执行单粘贴给 ${doer}，接单回执会自动更新状态`);
     case 'dispatched': return r(3, 'agent', 'working', `已经发给 ${doer}，等它确认接单`, `${doer} 读完执行单后会回报“开始”，你不用做什么`);
     case 'running': return r(3, 'agent', 'working', `${doer} 正在做`, `等 ${doer} 回报进展或交付；有问题它会来问你`);
     case 'waiting_input': return r(3, 'you', 'you', `${doer} 有个问题要问你`, '写下你的回答，保存后复制给它');
@@ -89,7 +92,7 @@ export function relayOf(t: R, name: (id: string) => string, executor?: string): 
     case 'submitted':
       return skippedReview
         ? r(5, 'you', 'you', `${doer} 已交付，等待收尾`, `把收尾单交给 ${doer}`)
-        : r(4, t.review_stage==='running'?'reviewer':t.review_delivery==='agent'?'agent':'you', 'review', t.review_stage==='running'?`${reviewer} 正在独立审查`:t.review_delivery==='agent'?`${doer} 正在安排 ${reviewer} 审查`:`${doer} 已交付，等你交给 ${reviewer} 审查`, t.review_stage==='running'?`${reviewer} 已接单，完成后会回传报告`:t.review_delivery==='agent'?'等待审查者接单；如调用受阻，可改为手动转发':`把审查单发给 ${reviewer}，完成后报告会附在任务里`);
+        : r(4, t.review_stage==='running'?'reviewer':t.review_delivery==='agent'?'agent':'you', 'review', t.review_stage==='running'?`${reviewer} 正在独立审查`:`${doer} 已交付，等待独立审查`, t.review_stage==='running'?`${reviewer} 已接单，完成后会回传报告`:t.review_delivery==='agent'?`${doer} 按计划安排审查调用，无需你转发`:'当前为手动交接，请按任务入口交给审查者');
     case 'changes_requested': return r(4, 'you', 'problem', `${reviewer} 审查后要求修改`, '在原会话继续，只处理本轮新增修改意见');
     case 'acceptance_rejected': return r(6,'you','problem','你已确认本次结果不通过',`复制返工要求，交给 ${doer} 修改`);
     case 'rework_linked': return r(3,'none','quiet','本次验收未通过，已由后续任务接替','查看后续任务的进展；原交付与意见保留在这里');
@@ -109,7 +112,7 @@ export function requestRelay(): Relay {
   return {
     legs: [
       { key: 'ask', label: '提出需求', who: '你' },
-      { key: 'plan', label: '规划拆分', who: 'Codex' },
+      { key: 'plan', label: '规划拆分', who: '规划模型' },
       { key: 'handoff', label: '交给执行者', who: '你' },
       { key: 'work', label: '执行', who: '待定' },
       { key: 'review', label: '独立审查', who: '待定' },
@@ -117,8 +120,8 @@ export function requestRelay(): Relay {
       { key: 'confirm', label: '你试用确认', who: '你' },
     ],
     at: 1, holder: 'you', tone: 'you', skippedReview: false,
-    headline: '需求已记下，等 Codex 规划',
-    next: '复制规划请求发给 Codex；它提交计划后，任务会自动出现在这里',
+    headline: '需求已记下，等待规划',
+    next: '选择规划连接，或在 GPT 聊天里规划并粘贴回传；保存计划后任务会出现在这里',
   };
 }
 

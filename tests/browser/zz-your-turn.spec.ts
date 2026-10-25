@@ -21,7 +21,7 @@ test('轮到你了分开展示项目、执行者和规划者；长名称与明�
   const q = await h.post('/requests', {project_id: a.project.id, text: '测试：还没有分配执行者的后续需求'});
   await focusCards(page, [a.tid, b.tid, c.tid], q.id);
   await page.goto('/#/today');
-  await expect(page.locator('.arrange-group')).toHaveAttribute('open','');
+  await expect(page.locator('.arrange-group .turn').first()).toBeVisible();
   const section = page.getByRole('region', {name: '轮到你了'});
   for (const [t, who] of [[a, 'Codex'], [b, 'Zcode'], [c, custom.name]] as const) {
     const card = section.getByRole('article', {name: t.title, exact: true});

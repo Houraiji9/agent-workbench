@@ -22,7 +22,12 @@ function useFocusTrap(open: boolean, onClose: () => void) {
       }
     };
     node?.addEventListener('keydown', onKey);
-    return () => { node?.removeEventListener('keydown', onKey); before?.focus?.(); };
+    // 打开前的控件已隐藏或被移除时，焦点落到主内容而不是丢到页面 body。
+    return () => {
+      node?.removeEventListener('keydown', onKey);
+      if (before?.isConnected && before.getClientRects().length > 0) before.focus({ preventScroll: true });
+      else document.getElementById('main')?.focus({ preventScroll: true });
+    };
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   return ref;
 }

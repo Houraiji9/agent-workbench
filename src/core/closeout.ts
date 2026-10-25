@@ -7,23 +7,28 @@ import type {Row,RunEvent} from './schema.ts';
 import {ROOT} from './config.ts';
 import {assert,id,hash,now,readBounded,safePath,atomicWrite} from './security.ts';
 import {reviewSkipped} from './acceptance.ts';
+import {runTask} from './workflow-policy.ts';
+import {resolveDeliveryProfile,deliveryProfileDigest} from './delivery-profile.ts';
+import {reviewedSourceSuccessor,type SuccessorEvidence} from './delivery-successor.ts';
+import {latestReview} from './latest-review.ts';
+export {latestReview} from './latest-review.ts';
 
 export const closeoutStates=['awaiting_closeout','closing','closeout_waiting_input','closeout_blocked'];
 export const reviewableStates=['submitted','in_review','changes_requested',...closeoutStates,'awaiting_confirmation'];
 export const closeoutInput=z.object({detail:z.enum(['brief','full']).optional(),run_id:z.string().regex(/^R-[a-f0-9-]{36}$/)}).strict();
 export const closeoutOrderInput=closeoutInput.extend({expected_revision:z.number().int()}).strict();
-export function latestReview(wb:Workbench,rid:string):Row|undefined{
-  const row=wb.db.prepare("SELECT data FROM reviews WHERE run_id=? AND json_extract(data,'$.revoked_at') IS NULL ORDER BY json_extract(data,'$.created_at') DESC,rowid DESC LIMIT 1").get(rid) as any;
-  return row?JSON.parse(row.data):undefined;
-}
 function artifacts(wb:Workbench,rid:string){return wb.all('artifacts').filter(a=>a.run_id===rid&&a.current).sort((a,b)=>a.id.localeCompare(b.id))}
 function binding(wb:Workbench,t:Row,r:Row){
+  const task=runTask(t,r);
   const review=latestReview(wb,r.id),files=artifacts(wb,r.id);
   assert(files.length>0,'缺少当前交付');
-  assert(reviewSkipped(t)||review?.verdict==='passed','须先完成独立 Review',409);
+  assert(reviewSkipped(task)||review?.verdict==='passed','须先完成独立 Review',409);
   const hashes=files.map(a=>a.sha256).sort();
-  if(!reviewSkipped(t))assert(JSON.stringify([...review!.artifact_hashes].sort())===JSON.stringify(hashes),'审查产物版本不匹配',409);
-  return {review_id:reviewSkipped(t)?null:review!.id,artifact_hashes:hashes,digest:hash(JSON.stringify({run:r.id,review:reviewSkipped(t)?null:review!.id,files:files.map(a=>[a.id,a.sha256]),review_files:r.review_files||[]}))};
+  if(!reviewSkipped(task))assert(JSON.stringify([...review!.artifact_hashes].sort())===JSON.stringify(hashes),'审查产物版本不匹配',409);
+  // Keep the original legacy serialization byte-for-byte; existing closeouts remain valid.
+  const payload:Row={run:r.id,review:reviewSkipped(task)?null:review!.id,files:files.map(a=>[a.id,a.sha256]),review_files:r.review_files||[]};
+  if(task.delivery_profile||r.delivery_version!==undefined){payload.delivery_profile_sha256=deliveryProfileDigest(resolveDeliveryProfile(task,wb.get('projects',t.project_id)));payload.delivery_version=r.delivery_version??null;}
+  return {review_id:reviewSkipped(task)?null:review!.id,artifact_hashes:hashes,digest:hash(JSON.stringify(payload))};
 }
 /** Called inside the caller's transaction. A new review always gets a new closeout identity. */
 export function stageCloseout(wb:Workbench,t:Row,r:Row){
@@ -38,12 +43,15 @@ export function invalidateCloseout(wb:Workbench,r:Row,reason:string){
   r.closeout_history=[...(r.closeout_history||[]),{...r.closeout,superseded_at:now(),superseded_reason:reason}];
   r.closeout=null;wb.put('runs',r,{task_id:r.task_id});
 }
-export function verifyDelivery(wb:Workbench,t:Row,r:Row){
+export function verifyDelivery(wb:Workbench,t:Row,r:Row,options:{allowSuccessor?:boolean}={}):Array<SuccessorEvidence&{path:string;sha256:string}>{
+  const evidence:Array<SuccessorEvidence&{path:string;sha256:string}>=[];
   for(const a of artifacts(wb,r.id))assert(hash(readBounded(safePath(a.archive_path,[path.join(wb.config.dataDir,'artifacts')]),20*1024*1024))===a.sha256,'归档产物已被更改，请新开执行重新交付和审查',409);
   for(const f of r.review_files||[]){
     assert(fs.existsSync(f.path),'受审文件已删除，请新开执行重新交付和审查：'+f.path,409);
-    assert(hash(readBounded(safePath(f.path,t.allowed_paths),20*1024*1024))===f.sha256,'受审文件已变化，请新开执行重新交付和审查：'+f.path,409);
+    const currentHash=hash(readBounded(safePath(f.path,t.allowed_paths),20*1024*1024));
+    if(currentHash!==f.sha256){const successor=options.allowSuccessor?reviewedSourceSuccessor(wb,runTask(t,r),r,f.path,currentHash):null;assert(successor,'受审文件已变化，请新开执行重新交付和审查：'+f.path,409);evidence.push({...successor,path:f.path,sha256:currentHash});}
   }
+  return evidence;
 }
 export function getCloseoutContext(wb:Workbench,rid:string){
   const r=wb.get('runs',rid),t=wb.get('tasks',r.task_id);
@@ -54,8 +62,9 @@ export function getCloseoutContext(wb:Workbench,rid:string){
 export function assertCloseoutComplete(wb:Workbench,t:Row,r:Row){
   const b=binding(wb,t,r);
   assert(t.status==='awaiting_confirmation'&&r.closeout?.status==='completed'&&r.closeout.digest===b.digest,'请先由执行者完成收尾，再确认验收',409);
-  verifyDelivery(wb,t,r);verifyRuntime(wb,t,r);
+  const source=verifyDelivery(wb,t,r,{allowSuccessor:true}),runtime=verifyRuntime(wb,t,r,{allowSuccessor:true});
   assert(hash(readBounded(safePath(r.closeout.report_path,[r.directory])))===r.closeout.report_sha256,'收尾报告已变化，请重新核对',409);
+  if(source.length||runtime.length){r.closeout.successor_evidence={source,runtime};wb.put('runs',r,{task_id:t.id});}
 }
 function quote(s:string){return "'"+s.replaceAll("'","''")+"'"}
 /** Exporting or copying never starts work. Safe to repeat for the same closeout. */
@@ -69,7 +78,7 @@ export function writeCloseoutOrder(wb:Workbench,rid:string){
   if(!fs.existsSync(order)){atomicWrite(order,body);atomicWrite(path.join(dir,'result.example.json'),JSON.stringify(example,null,2))}
   return {closeout_id:c.closeout.id,run_id:rid,order_path:order,entry:`审查${c.review?'已通过':'未安排'}，请执行者继续完成收尾。\n请完整读取并执行：${order}\nTask ${t.id} / Run ${rid} / 收尾单 ${c.closeout.id}。先报告 closeout_started 接单，完成逐项收尾后再交用户验收。`};
 }
-export function exportCloseoutOrder(wb:Workbench,input:unknown){const v=closeoutOrderInput.parse(input),r=wb.get('runs',v.run_id),t=wb.get('tasks',r.task_id);assert(t.revision===v.expected_revision,'任务已变化，请刷新',409);return writeCloseoutOrder(wb,r.id)}
+export function exportCloseoutOrder(wb:Workbench,input:unknown){const v=closeoutOrderInput.parse(input),r=wb.get('runs',v.run_id),t=wb.get('tasks',r.task_id);assert(t.revision===v.expected_revision,'任务已变化，请刷新',409);assert(!wb.get('projects',t.project_id).dispatch_paused,'项目已收纳暂缓，请恢复后再安排收尾',409);return writeCloseoutOrder(wb,r.id)}
 /** Shares the existing signed event stream, transaction and replay protection. Run remains submitted. */
 export function applyCloseoutEvent(wb:Workbench,e:RunEvent,t:Row,r:Row,created:string[]){
   const c=getCloseoutContext(wb,r.id);assert(r.status==='submitted'&&e.data.closeout_id===c.closeout.id,'收尾单已更新或编号不符',409);
@@ -77,16 +86,17 @@ export function applyCloseoutEvent(wb:Workbench,e:RunEvent,t:Row,r:Row,created:s
   assert(allowed[e.event_type]?.includes(t.status),'当前阶段不能应用这条收尾回报',409);
   const closeout=r.closeout;
   if(e.event_type==='closeout_completed'){
-    verifyDelivery(wb,t,r);verifyRuntime(wb,t,r);
+    const source=verifyDelivery(wb,t,r,{allowSuccessor:true}),runtime=verifyRuntime(wb,t,r,{allowSuccessor:true});
     assert(e.data.result&&e.data.result.trim().length>=20,'请提交完整收尾报告（至少20字）');
     const results=e.data.closeout_results||[];
     assert(results.length===closeout.items.length&&new Set(results.map(x=>x.item_id)).size===results.length&&closeout.items.every((i:Row)=>results.some(x=>x.item_id===i.id)),'请逐项回报所有收尾事项');
     closeout.results=results;closeout.result=e.data.result;closeout.completed_at=now();closeout.status='completed';
     const file=safePath(path.join(r.directory,'closeouts',closeout.id,'CLOSEOUT-RESULT.md'),[r.directory],true);
     atomicWrite(file,e.data.result);created.push(file);closeout.report_path=file;closeout.report_sha256=hash(e.data.result);
+    if(source.length||runtime.length)closeout.successor_evidence={source,runtime};
     t.status='awaiting_confirmation';
   }else{
-    if(e.event_type==='closeout_started'){verifyDelivery(wb,t,r);closeout.started_at||=now()}
+    if(e.event_type==='closeout_started'){const source=verifyDelivery(wb,t,r,{allowSuccessor:true});if(source.length)closeout.successor_evidence={source,runtime:[]};closeout.started_at||=now()}
     if(['closeout_blocked','closeout_waiting_input'].includes(e.event_type))assert(e.data.message.trim().length>=5,'请写清楚收尾阻碍或需要回答的问题');
     t.status=({closeout_started:'closing',closeout_progress:'closing',closeout_blocked:'closeout_blocked',closeout_waiting_input:'closeout_waiting_input'} as Row)[e.event_type];closeout.status=t.status;
   }

@@ -10,6 +10,7 @@ test('用户不安排审查：交付并收尾后待你试用，没有“登记�
   await card.getByRole('button', { name: '去试用确认' }).click();
   const d = drawer(page);
   await expect(d.getByText('审查：本次不安排')).toBeVisible();
+  await d.getByText('完整执行流程',{exact:true}).click();
   await expect(d.getByRole('list', { name: '任务进度' })).toContainText('本次不审查');
   await expect(d.getByText('本次审查：未安排。')).toBeVisible();
   await d.getByRole('button', { name: '更多信息与操作' }).click();
@@ -35,7 +36,7 @@ test('Agent 提问：保存回答、修改、刷新仍在；恢复执行后历�
   await expect(d.getByRole('region', { name: '现在要做什么' }).getByText('测试问题：按钮用蓝色还是绿色？')).toBeVisible();
   await d.getByLabel('你的回答').fill('用蓝色');
   await d.getByRole('button', { name: '保存并复制回答' }).click();
-  await expect(d.getByText(/已保存/)).toBeVisible();
+  await expect(d.getByText(/^已保存（/)).toBeVisible();
   await expect(d.getByRole('button', { name: '再复制一次' })).toBeVisible();
   const clip = await page.evaluate(() => navigator.clipboard.readText());
   expect(clip).toContain('我的回答：用蓝色');
