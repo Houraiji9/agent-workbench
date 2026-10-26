@@ -114,3 +114,5 @@ test('execution, review, and child instructions preserve explicit selections and
   assert.match(priorityInstructions(task(),'critical'),/禁止隐式回退/);
   assert.match(priorityInstructions({},'normal'),/能力足够且经济/);
 });
+import {userReviewSelection,storedModelSelectionSchema} from '../src/core/priority-policy.ts';
+test('explicit user reviewer override preserves original planner contract without inventing model capability or availability',()=>{const original=task(),frozen=JSON.stringify(original.model_selection);const selected=userReviewSelection(original.model_selection,{reviewer_id:'user-reviewer',requested_model:'user-model',reason:'用户要求当前任务改用此审查者'});assert.equal(JSON.stringify(original.model_selection),frozen);assert.equal(storedModelSelectionSchema.parse(selected).review?.decided_by,'user');const candidate=selected!.evaluation.considered.find(c=>c.agent_id==='user-reviewer');assert.equal(candidate?.availability,'unknown');assert.equal(candidate?.capability_assessment,'unknown');validatePriorityPlan({...original,reviewer_id:'user-reviewer',review_route:{model:'user-model'},model_selection:selected},'critical');});

@@ -3,6 +3,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { api, setCsrf } from '../api.js';
 import type { R } from '../lib/flow.js';
 import { snapshotRefresh } from './snapshot.js';
+import {readRecentProjects,recentProjectsKey,type RecentProjects} from '../../shared/request-projects.js';
 
 export interface Route { page: string; id?: string; tab?: string; task?: string }
 
@@ -49,6 +50,8 @@ export interface Store {
   changeTick: number;
   theme: string;
   setTheme(t: string): void;
+  recentProjects: RecentProjects;
+  rememberProject(id: string): void;
 }
 
 const Ctx = createContext<Store>(null as unknown as Store);
@@ -68,6 +71,17 @@ export function StoreProvider({ children, fallback }: { children: (ready: boolea
   const [live, setLive] = useState<Store['live']>('connecting');
   const [changeTick, setChangeTick] = useState(0);
   const [theme, setThemeState] = useState(readTheme);
+  const [recentProjects,setRecentProjects] = useState<RecentProjects>(() => {
+    try { return readRecentProjects(localStorage.getItem(recentProjectsKey)); } catch { return {}; }
+  });
+  const rememberProject = useCallback((id: string) => {
+    if (!id) return;
+    setRecentProjects(previous => {
+      const next = readRecentProjects(JSON.stringify({...previous,[id]:new Date().toISOString()}));
+      try { localStorage.setItem(recentProjectsKey,JSON.stringify(next)); } catch { /* 本次会话仍保留最近使用记录。 */ }
+      return next;
+    });
+  },[]);
   const mounted = useRef(true);
   const streamReady = useRef(false);
   const toastSeq = useRef(0);
@@ -149,6 +163,10 @@ export function StoreProvider({ children, fallback }: { children: (ready: boolea
     setRoute(r);
   }, []);
 
+  const routeProject = data && (route.task ? data.tasks.find((t:R)=>t.id===route.task)?.project_id : ['projects','requests'].includes(route.page) ? route.id : undefined);
+  const activeRouteProject = routeProject && data?.projects.some((p:R)=>p.id===routeProject&&!p.archived&&!p.shelved) ? routeProject : undefined;
+  useEffect(() => { if(activeRouteProject)rememberProject(activeRouteProject); },[activeRouteProject,rememberProject]);
+
   const store = useMemo<Store | null>(() => {
     if (!data) return null;
     const agents = new Map<string, R>(data.agents.map((a: R) => [a.id, a]));
@@ -191,9 +209,9 @@ export function StoreProvider({ children, fallback }: { children: (ready: boolea
       },
       pname: id => (id ? projects.get(id)?.name || '未知项目' : '未关联项目'),
       executorOf: t => (t.current_run_id && runs.get(t.current_run_id)?.agent_id) || t.agent_id,
-      live, changeTick, theme, setTheme: setThemeState,
+      live, changeTick, theme, setTheme: setThemeState, recentProjects, rememberProject,
     };
-  }, [data, route, dialog, busy, live, changeTick, theme, navigate, refresh, toast]);
+  }, [data, route, dialog, busy, live, changeTick, theme, navigate, refresh, toast, recentProjects, rememberProject]);
 
   if (!store) return <>{fallback ? fallback(bootError) : null}</>;
   return <Ctx.Provider value={store}>

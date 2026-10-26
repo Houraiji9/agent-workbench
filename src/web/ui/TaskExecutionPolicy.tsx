@@ -1,6 +1,7 @@
 // 执行安排：看清本轮实际用谁、什么模型和子代理；在同一任务里改，按阶段说明何时生效，旧执行单与成果保留。
 import React,{useState} from 'react';import {api} from '../api.js';import {useStore} from '../app/store.js';import type {R} from '../lib/flow.js';import {ExecutionPolicyFields} from './ExecutionPolicyFields.js';import {Notice,Field} from './kit.js';
 import {arrangementPhase,arrangementEffect,arrangementSave} from '../../shared/arrangement.js';
+import {taskDisplayStatus} from '../../shared/workflow-view.js';
 
 const sourceText=(c:R|undefined|null)=>c?.model_selection?.user_decision||c?.policy_source==='user_task'?'你的选择':c?.policy_source==='user_request'?'你的需求设置':c?.policy_source==='project_default'?'项目默认':'规划建议';
 const runStatusText:R={awaiting_dispatch:'待交给执行者',dispatched:'已转发待接单',running:'执行中',submitted:'已交付',failed:'失败',cancelled:'已作废或取消'};
@@ -54,6 +55,6 @@ export function TaskExecutionPolicy({task,run,runs=[],jobs=[]}:{task:R;run?:R|nu
       <div className="tool-row"><button className="btn small primary" disabled={s.busy} onClick={submit}>{arrangementSave[phase]}</button><button className="btn small ghost" onClick={()=>setEditing(false)}>取消</button></div>
       <p className="muted small">你的选择优先于规划建议；审查者、任务范围和验收权限不随之改变。</p>
     </section>}
-    {ordered.length>1&&<details className="fold"><summary>历次执行单（{ordered.length}）</summary><ol className="arrangement-history">{ordered.map((r,i)=><li key={r.id}><b>第 {i+1} 版</b> {s.name(r.agent_id)} · {r.requested_model||'未指定模型'} · {r.execution_contract?.execution_policy?.allow_subagents?'子代理：'+(r.execution_contract.execution_policy.child_models||[]).join('、'):'不用子代理'} · {runStatusText[r.status]||r.status}{r.arrangement?` · ${r.arrangement.source==='user_pending'?'采用你保存的下一版安排':'你修改了安排'}`:''}{r.id===run?.id?' · 当前':''}</li>)}</ol></details>}
+    {ordered.length>1&&<details className="fold"><summary>历次执行单（{ordered.length}）</summary><ol className="arrangement-history">{ordered.map((r,i)=><li key={r.id}><b>第 {i+1} 版</b> {s.name(r.agent_id)} · {r.requested_model||'未指定模型'} · {r.execution_contract?.execution_policy?.allow_subagents?'子代理：'+(r.execution_contract.execution_policy.child_models||[]).join('、'):'不用子代理'} · {r.id===task.current_run_id&&taskDisplayStatus(task)==='continuation_pending'?'原会话待续接':runStatusText[r.status]||r.status}{r.arrangement?` · ${r.arrangement.source==='user_pending'?'采用你保存的下一版安排':'你修改了安排'}`:''}{r.id===run?.id?' · 当前':''}</li>)}</ol></details>}
   </details>;
 }

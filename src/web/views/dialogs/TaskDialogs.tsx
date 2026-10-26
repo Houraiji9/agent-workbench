@@ -1,17 +1,16 @@
 // 需求、计划、回执、审查、确认、改派、取消与成果预览。
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { isModelRetired } from '../../../shared/model-policy.js';
 import { Copy, Download, CircleCheckBig } from 'lucide-react';
 import { api } from '../../api.js';
 import { useStore } from '../../app/store.js';
 import type { R } from '../../lib/flow.js';
-import { reviewSkippedTask } from '../../lib/flow.js';
 import { bytes, fullDate } from '../../lib/format.js';
 import { Dialog, Field, Notice } from '../../ui/kit.js';
 import { MarkdownText } from '../../ui/TextView.js';
 import { userAcceptanceItems } from '../../../core/acceptance.js';
 import { useSubmit, parseJson } from './useSubmit.js';
-import {copyRework} from '../actions.js';
+import {copyOrderText,copyRework} from '../actions.js';
 import {ArtifactLocation} from '../../ui/ArtifactLocation.js';
 
 const Foot = ({ onClose, saving, label, cancel = '取消', disabled }: { onClose(): void; saving: boolean; label: string; cancel?: string; disabled?: boolean }) => <>
@@ -116,23 +115,37 @@ export function RevokeReviewDialog({detail,review,onClose}:{detail:R;review:R;on
 
 export function AcceptDialog({ detail, onClose }: { detail: R; onClose(): void }) {
   const s=useStore();
+  const formId=useId();
   const [t] = useState(detail.task);
   const [items] = useState<string[]>(() => userAcceptanceItems(detail.task));
   const [hashes] = useState<string[]>(() => detail.artifacts.filter((a: R) => a.run_id === detail.task.current_run_id && a.current).map((a: R) => a.sha256));
   const [checks, setChecks] = useState<boolean[]>(() => items.map(() => false));
+  const [preview,setPreview]=useState<R|null>(null);
   const { error, saving, run } = useSubmit();
-  const noReview = reviewSkippedTask(t);
-  return <Dialog title="试用后确认完成" sub="试用后，确认结果是否符合你的需求。" onClose={onClose} label="确认完成">
-    <form className="form" onSubmit={e => { e.preventDefault(); void run(() => api('/tasks/' + t.id + '/accept', {
+  const current=detail.artifacts.filter((a:R)=>a.run_id===t.current_run_id&&a.current);
+  if(preview)return <ArtifactDialog key={preview.id} artifact={preview} onClose={()=>setPreview(null)} backLabel="返回试用确认"/>;
+  return <Dialog title="试用后确认完成" sub="打开成果并亲自试用后，再逐项确认。" onClose={onClose} label="确认完成" footer={<>
+    <button type="button" className="btn danger" disabled={saving||!hashes.length} onClick={()=>s.openDialog('reject',{detail})}>不通过，退回修改</button>
+    <button type="button" className="btn ghost" disabled={saving} onClick={onClose}>稍后再说</button>
+    <button type="submit" form={formId} className="btn primary" disabled={saving||!hashes.length||!checks.every(Boolean)}>{saving?'正在保存…':'确认结果符合需求'}</button>
+  </>}>
+    <div className="trial-context"><span className="muted small">{s.pname(t.project_id)}</span><strong>{t.title}</strong></div>
+    <section aria-label="本次可查看的成果"><h3 className="trial-section-title">本次成果（{current.length}）</h3>
+      <div className="trial-artifacts">{current.map((a:R)=><div className="trial-artifact" key={a.id}>
+        <button className="link" type="button" onClick={()=>setPreview(a)}>查看成果：{a.label}</button>
+        <ArtifactLocation artifact={a} compact/>
+      </div>)}</div>
+      {!current.length&&<Notice tone="warn">本次成果尚未就绪，请稍后再确认。</Notice>}
+    </section>
+    <form id={formId} className="form" onSubmit={e => { e.preventDefault(); if(saving||!hashes.length||!checks.every(Boolean))return; void run(() => api('/tasks/' + t.id + '/accept', {
       revision: t.revision, artifact_hashes: hashes, mode: 'user_experience', user_checks: checks,
     }), '已确认完成，成果已归档'); }}>
-      <div className="confirm-list">
+      <h3 className="trial-section-title">请你逐项确认</h3><div className="confirm-list">
         {items.map((a, i) => <label key={i} className="check big"><input type="checkbox" required checked={checks[i]} onChange={e => setChecks(c => c.map((x, n) => n === i ? e.target.checked : x))} />{a}</label>)}
       </div>
       {!t.user_acceptance?.length && <p className="muted small">这项任务没有单独写确认项，以上是通用的确认内容。</p>}
       
       {error && <Notice tone="error">{error}</Notice>}
-      <footer className="dialog-foot inline"><button type="button" className="btn danger" disabled={saving} onClick={()=>s.openDialog('reject',{detail})}>不通过，退回修改</button><Foot onClose={onClose} saving={saving} label="确认结果符合需求" cancel="稍后再说" disabled={!checks.every(Boolean)} /></footer>
     </form>
   </Dialog>;
 }
@@ -162,9 +175,10 @@ export function RetryDialog({ detail, onClose }: { detail: R; onClose(): void })
   return <Dialog title="换人或重新做一次" sub="会新开一次执行，之前的执行单、回执和成果都保留。" onClose={onClose} label="重新执行">
     <form className="form" onSubmit={e => { e.preventDefault(); if (blocked || !options.some(a => a.id === agent)) return; void run(async () => {
       const r = await api('/tasks/' + t.id + '/export', { version: t.version, new_run: true, agent_id: agent, expected_revision: t.revision, requested_model: modelValue || null });
-      await s.copy(r.entry, `新的执行单已复制，发给 ${s.name(agent)} 后记得点“我已经发给它”`);
+      s.closeDialog();
+      await copyOrderText(s,r.entry, `新的执行单已复制，发给 ${s.name(agent)} 后记得点“我已经发给它”`,t);
       return r;
-    }); }}>
+    },undefined,false); }}>
       <fieldset className="agent-pick" aria-label="交给谁">
         <legend className="field-label">交给谁</legend>
         {options.map(a => <label key={a.id} className={agent === a.id ? 'on' : ''}>
@@ -202,7 +216,7 @@ const imageExt = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
 const htmlExt = ['.html', '.htm'];
 const textExt = ['.md', '.txt', '.json', '.csv', '.diff', '.patch', ''];
 
-export function ArtifactDialog({ artifact: a, onClose }: { artifact: R; onClose(): void }) {
+export function ArtifactDialog({ artifact: a, onClose, backLabel }: { artifact: R; onClose(): void;backLabel?:string }) {
   const s = useStore();
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -222,6 +236,7 @@ export function ArtifactDialog({ artifact: a, onClose }: { artifact: R; onClose(
   const pretty = text !== null && a.extension === '.json' ? (() => { try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; } })() : text;
   return <Dialog wide title={a.label} sub={`${bytes(a.size)} · ${fullDate(a.created_at, s.tz)}${a.source === 'author_submitted' ? ' · 执行者提交' : ''}`} onClose={onClose} label="查看成果"
     footer={<>
+      {backLabel&&<button className="btn" onClick={onClose}>{backLabel}</button>}
       {isMd && <button className="btn ghost" onClick={() => setRaw(!raw)}>{raw ? '排版显示' : '显示原文'}</button>}
       <a className="btn" href={'/api/artifacts/' + a.id + '/content?download=1'} download><Download size={16} />下载文件</a>
     </>}>

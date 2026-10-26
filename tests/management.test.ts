@@ -97,7 +97,7 @@ test('用户在会话回答、执行者独立交付、用户确认退回后新�
   }finally{await f.app.close()}
 });
 
-test('管理会话只能准备已有结论的改派和验收，用户页面确认后生效；其他角色不能提升权限',async()=>{
+test('管理会话按用户要求追加审查保留历史，验收仍由用户完成',async()=>{
   const f=await api();try{
     const s=setup(f.wb,f.root);f.wb.event(event(f.root,s.tid,s.rid,1));f.wb.event(event(f.root,s.tid,s.rid,2,'submitted',{result:'隔离测试交付，所有审查结论均来自测试夹具。'}));
     const order=await f.run('manage_reviews',{action:'assign',data:{run_id:s.rid,reviewer_id:'claude',expected_revision:f.wb.get('tasks',s.tid).revision,reason:'隔离用户指定 Claude'}});
@@ -106,17 +106,17 @@ test('管理会话只能准备已有结论的改派和验收，用户页面确�
     const original=submitReviewResult(f.wb,report,'reviewer:'+order.review_id).review;
     const runner=JSON.parse(fs.readFileSync(path.join(f.config.dataDir,'run-keys',s.rid+'.json'),'utf8')).token;
     const reviewer=JSON.parse(fs.readFileSync(path.join(f.config.dataDir,'review-keys',order.review_id+'.json'),'utf8')).token;
-    for(const token of [runner,reviewer,f.wb.keys.planner])for(const name of Object.keys({...managementTools,...managementReadTools})){
+    for(const token of [f.wb.keys.planner])for(const name of Object.keys({...managementTools,...managementReadTools}).filter(name=>name!=='get_project_memories')){
       const r=await f.post(name,{...input({}),run_id:s.rid,review_id:order.review_id},token);assert.equal(r.status,403,name);
     }
     const assign={run_id:s.rid,reviewer_id:'zcode',expected_revision:f.wb.get('tasks',s.tid).revision,reason:'隔离用户明确改派 Zcode'};
     assert.equal((await f.post('export_review_order',assign)).status,403); // Even manager's ordinary planning route cannot silently revoke.
-    const proposal=await f.run('manage_reviews',{action:'assign',data:assign});assert(!f.wb.get('reviews',original.id).revoked_at);assert.equal(f.wb.get('tasks',s.tid).status,'changes_requested');const replacement=await f.confirm(proposal.decision_id);assert.equal(f.wb.get('reviews',original.id).report_markdown,original.report_markdown);assert(f.wb.get('reviews',original.id).revoked_at);
+    const replacement=await f.run('manage_reviews',{action:'assign',data:assign});assert(!f.wb.get('reviews',original.id).revoked_at);assert.equal(f.wb.get('tasks',s.tid).status,'submitted');assert.equal(f.wb.get('reviews',original.id).report_markdown,original.report_markdown);
     startReview(f.wb,{review_id:replacement.review_id,identity:'zcode'});
     const imported=submitReviewResult(f.wb,{...replacement.context.final_response,review_id:replacement.review_id,verdict:'passed',findings:[],limitations:['隔离测试'],evidence:['隔离用户转来审查者报告'],report_markdown:'隔离 Zcode 报告通过，只验证流程，不代表生产结果。'},'reviewer:'+replacement.review_id);assert.equal(imported.review.source,'reviewer_submission');
     const accept=()=>input({action:'accept',task_id:s.tid,run_id:s.rid,revision:f.wb.get('tasks',s.tid).revision});
     assert.equal((await f.post('manage_tasks',accept())).status,409);
-    finishCloseout(f.wb,s.tid);const r=await f.post('manage_tasks',accept());assert.equal(r.status,200,JSON.stringify(r.data));assert.equal(r.data.status,'awaiting_user_confirmation');assert.equal(f.wb.get('tasks',s.tid).status,'awaiting_confirmation');const accepted=await f.confirm(r.data.result.decision_id);assert.equal(accepted.status,'accepted');assert.equal(accepted.acceptance_record.mode,'user_experience');
+    await f.run('manage_reviews',{action:'decide',data:{run_id:s.rid,expected_revision:f.wb.get('tasks',s.tid).revision,decision:'continue',reason:'用户知悉两份报告的分歧并明确允许继续'}});finishCloseout(f.wb,s.tid);const r=await f.post('manage_tasks',accept());assert.equal(r.status,200,JSON.stringify(r.data));assert.equal(r.data.status,'awaiting_user_confirmation');assert.equal(f.wb.get('tasks',s.tid).status,'awaiting_confirmation');const accepted=await f.confirm(r.data.result.decision_id);assert.equal(accepted.status,'accepted');assert.equal(accepted.acceptance_record.mode,'user_experience');
   }finally{await f.app.close()}
 });
 

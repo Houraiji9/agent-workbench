@@ -1,0 +1,23 @@
+import {test,expect} from '@playwright/test';
+import fs from 'node:fs';
+import path from 'node:path';
+import {makeTask,drawer,noHorizontalScroll} from './support.js';
+test('部分审查回报后仍显示独立审查主卡、真实持有人与手动交接',async({page})=>{
+ const m=await makeTask(page,{title:'测试：部分回报仍有独立审查',stage:'submitted'});
+ const order=async(reviewer_id:string)=>{const d=await m.get('/tasks/'+m.tid);return m.post('/review-orders',{run_id:m.rid,expected_revision:d.task.revision,reviewer_id,delivery_mode:'manual',reason:'隔离回归：并行独立审查'});};
+ const first=await order('claude'),second=await order('zcode');
+ await page.goto('/#/projects/'+m.project.id+'?tab=insights');
+ let flow=page.getByRole('region',{name:'真实流程与交接'});await expect(flow.getByText('请将已准备的审查单交给审查者',{exact:true})).toBeVisible();await expect(flow.getByText('需要你做',{exact:true})).toBeVisible();
+ if(process.env.WORKBENCH_EVIDENCE_DIR)await flow.screenshot({animations:'disabled',path:path.join(process.env.WORKBENCH_EVIDENCE_DIR,'manual-review-handoff.png')});
+ const key=JSON.parse(fs.readFileSync(path.join(path.dirname(m.root),'data','review-keys',second.review_id+'.json'),'utf8')).token;
+ const started=await page.request.post('/api/mcp/report_review_started',{headers:{authorization:'Bearer '+key},data:{review_id:second.review_id,identity:'zcode'}});expect(started.ok(),await started.text()).toBe(true);
+ const detail=await m.get('/tasks/'+m.tid),a=detail.review_assignments.find((r:any)=>r.id===first.review_id);
+ await m.post('/review-receipts',{review_id:a.id,task_id:m.tid,run_id:m.rid,review_digest:a.review_digest,verdict:'passed',findings:[],limitations:['隔离合成回归，非真实审查'],evidence:['读取测试材料'],report_markdown:'# 隔离回归报告\n\n第一位已完成，另一位仍在审查。'});
+ await page.goto('/#/today?task='+m.tid);const now=drawer(page).getByRole('region',{name:'现在要做什么'});
+ await expect(now.getByText('独立审查仍在进行，等待尚未完成的审查者回传报告。',{exact:true})).toBeVisible();await expect(now.getByRole('button',{name:'复制收尾单给执行者'})).toHaveCount(0);await expect(now.getByRole('button',{name:'继续执行者收尾'})).toHaveCount(0);
+ if(process.env.WORKBENCH_EVIDENCE_DIR)await now.screenshot({animations:'disabled',path:path.join(process.env.WORKBENCH_EVIDENCE_DIR,'partial-review-now-card.png')});
+ await drawer(page).getByRole('button',{name:'关闭任务',exact:true}).click();const active=page.locator('.active-task').filter({hasText:m.title});await expect(active).toBeVisible();await expect(active.getByText(/Zcode · 部分审查已回报/)).toBeVisible();
+ if(process.env.WORKBENCH_EVIDENCE_DIR)await active.screenshot({animations:'disabled',path:path.join(process.env.WORKBENCH_EVIDENCE_DIR,'today-active-reviewer.png')});
+ await page.goto('/#/projects/'+m.project.id+'?tab=insights');flow=page.getByRole('region',{name:'真实流程与交接'});await expect(flow.getByText('等待审查者完成并回传审查报告',{exact:true})).toBeVisible();await expect(flow.locator('.pi-handoff').getByText(/Zcode/)).toBeVisible();
+ await page.setViewportSize({width:390,height:844});await expect(page.locator('.pi-handoff')).toBeVisible();expect(await noHorizontalScroll(page)).toBe(true);if(process.env.WORKBENCH_EVIDENCE_DIR)await flow.screenshot({animations:'disabled',path:path.join(process.env.WORKBENCH_EVIDENCE_DIR,'partial-review-handoff-narrow.png')});
+});

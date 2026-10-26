@@ -9,6 +9,7 @@ export const lineRangeSchema=z.object({start_line:z.number().int().min(1).max(10
 const contextPath=z.string().trim().min(1).max(2000).refine(v=>!/[\x00-\x1f*?]/.test(v),'需要明确的文件路径，不接受通配符');
 const fileEntry=z.object({path:contextPath,range:lineRangeSchema.optional()}).strict();
 export const contextContractSchema=z.object({
+  memory_ids:z.array(z.string().trim().min(1).max(200)).max(32).optional(),
   required:z.array(fileEntry).max(32),
   supplemental:z.array(fileEntry.extend({reason:z.string().trim().min(2).max(1000)})).max(32).default([]),
   output_dir:contextPath,
@@ -47,6 +48,7 @@ function contractBudgetKey(scope:FileScope){
 /** Validates only named paths; it neither enumerates directories nor reads file content. */
 export function validateTaskContextContract(wb:Workbench,task:Row){
   const scope=taskFileScope(wb,task);if(!scope.contract)return;
+  for(const id of scope.contract.memory_ids||[])assert(wb.maybe('memories',id)?.project_id===task.project_id,'经验不属于当前任务项目',403);
   const seen=new Set<string>();for(const e of contractEntries(scope)){
     if(fs.existsSync(e.path))assert(fs.statSync(e.path).isFile(),'上下文项必须是普通文件');
     const key=hash(JSON.stringify([process.platform==='win32'?e.path.toLowerCase():e.path,e.range||null]));assert(!seen.has(key),'上下文合同包含重复文件范围');seen.add(key);

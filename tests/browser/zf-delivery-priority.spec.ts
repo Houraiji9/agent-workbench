@@ -20,45 +20,47 @@ const remoteProfile = () => ({
   deployment: { mode: 'remote', target: '隔离远程环境', deploy: '需要保留的安装说明', health: '需要保留的检查说明', rollback: '需要保留的恢复说明', verification: 'executor_reported' },
 });
 
-test('默认表单紧凑，重点聊天规划保存重开后仍完整独审', async ({ page }, testInfo) => {
+test('主要安排直接可见，重点聊天规划保存重开后仍完整独审', async ({ page }, testInfo) => {
   const ctx = await api(page), project = await makeProject(ctx, '紧凑需求'), profile = remoteProfile();
   await ctx.post('/projects/' + project.id + '/edit', { version: project.version, changes: { name: project.name, goal: '', stage: '', next_step: '', importance: 'critical', delivery_profile: profile } });
   await page.goto('/#/requests');
   await page.getByRole('button', { name: '提需求', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '提一个需求' });
   await chooseProject(dialog, project.name);
-  await expect(dialog.getByRole('combobox')).toHaveCount(2);
+  await expect(dialog.getByRole('combobox')).toHaveCount(5);
   await expect(dialog.locator('textarea:visible')).toHaveCount(1);
-  await expect(dialog.getByLabel('规划方式')).not.toBeVisible();
+  await expect(dialog.getByLabel('交给谁规划')).toBeVisible();
   await expect(dialog.getByLabel('交付后在哪里使用')).not.toBeVisible();
   await expect(dialog.getByLabel('成果补充说明（可选）')).not.toBeVisible();
-  await expect(dialog.getByLabel('期望结果')).not.toBeVisible();
+  await expect(dialog.getByLabel('此前填写的期望结果')).toHaveCount(0);
   await expect(dialog.getByLabel('需求重要程度')).toHaveValue('critical');
   await expect(dialog.getByText('使用当前最佳能力，固定完整独立审查。')).toBeVisible();
-  await expect(dialog.locator('.delivery-brief')).toHaveText('项目交付：源码、服务或接口 · 部署到远程环境（隔离远程环境）');
-  await expect(dialog.locator('.delivery-brief')).not.toContainText('需要保留');
+  await expect(dialog.getByLabel('成果与使用位置')).toHaveValue('project');
+  await expect(dialog.locator('.request-delivery-summary')).toHaveText('源码、服务或接口 · 部署到远程环境（隔离远程环境）');
+  await expect(dialog.locator('.request-delivery-summary')).not.toContainText('需要保留');
   const text = '重点聊天规划仍完整独审 ' + project.id;
   await dialog.getByLabel('你想完成什么？').fill(text);
   await page.screenshot({ path: testInfo.outputPath('compact-request.png'), animations: 'disabled' });
-  await dialog.getByText('修改交付', { exact: true }).click();
+  await dialog.getByLabel('成果与使用位置').selectOption('custom');
   await expect(dialog.getByRole('checkbox', { name: '服务或接口', exact: true })).toBeChecked();
   await expect(dialog.getByLabel('交付后在哪里使用')).toHaveValue('remote');
-  await dialog.getByText('修改交付', { exact: true }).click();
-  await dialog.locator('summary').filter({ hasText: '规划与审查' }).click();
-  await dialog.getByLabel('规划方式').selectOption('small');
-  await expect(dialog.getByLabel('交付后的审查')).toHaveCount(0);
+  await dialog.getByLabel('成果与使用位置').selectOption('project');
+  await dialog.getByLabel('交给谁规划').selectOption('small');
+  await expect(dialog.getByLabel('交付后的审查')).toBeDisabled();
+  await expect(dialog.getByLabel('交付后的审查')).toHaveValue('required');
   await dialog.getByRole('button', { name: '先记下来', exact: true }).click();
   let request = (await ctx.get('/state')).requests.find((q: any) => q.text === text);
   expect(request).toMatchObject({ workflow_kind: 'small', importance: 'critical', delivery_profile: profile, review_policy: null });
   await page.getByRole('article', { name: text }).getByRole('button', { name: '继续编辑' }).click();
   const edit = page.getByRole('dialog', { name: '编辑需求' });
-  await expect(edit.getByLabel('规划方式')).toBeVisible();
-  await expect(edit.getByLabel('规划方式')).toHaveValue('small');
+  await expect(edit.getByLabel('交给谁规划')).toBeVisible();
+  await expect(edit.getByLabel('交给谁规划')).toHaveValue('small');
   await edit.getByLabel('需求重要程度').selectOption('normal');
   await edit.getByLabel('交付后的审查').selectOption('not_requested');
   await expect(edit.getByLabel('不安排审查的原因')).toBeVisible();
   await edit.getByLabel('需求重要程度').selectOption('critical');
-  await expect(edit.getByLabel('交付后的审查')).toHaveCount(0);
+  await expect(edit.getByLabel('交付后的审查')).toBeDisabled();
+  await expect(edit.getByLabel('交付后的审查')).toHaveValue('required');
   await expect(edit.getByLabel('不安排审查的原因')).toHaveCount(0);
   await edit.getByRole('button', { name: '保存，稍后再做', exact: true }).click();
   request = (await ctx.get('/state')).requests.find((q: any) => q.id === request.id);
@@ -72,17 +74,22 @@ test('已有自定义交付不被项目默认覆盖，跨项目隔离，展开�
   await page.goto('/#/requests?tab=drafts');
   await page.getByRole('article', { name: text }).getByRole('button', { name: '继续编辑' }).click();
   const edit = page.getByRole('dialog', { name: '编辑需求' });
-  await expect(edit.locator('.delivery-brief')).toContainText('本需求交付：源码、服务或接口');
+  await expect(edit.getByLabel('成果与使用位置')).toHaveValue('custom');
+  await expect(edit.getByRole('checkbox',{name:'服务或接口',exact:true})).toBeChecked();
+  await expect(edit.getByLabel('交付后在哪里使用')).toHaveValue('remote');
   await expect(edit.getByLabel('有限审查范围（每行一项）')).toBeVisible();
   await expect(edit.getByLabel('有限审查范围（每行一项）')).toHaveValue('核对交互与回填');
-  await expect(edit.getByLabel('期望结果')).toHaveValue('旧期望结果');
+  await expect(edit.getByLabel('此前填写的期望结果')).toHaveValue('旧期望结果');
+  await expect(edit.getByLabel('此前填写的完成标准')).toHaveValue('旧完成标准');
   await chooseProject(edit, second.name);
-  await expect(edit.locator('.delivery-brief')).toHaveText('项目交付：源码 · 不需要部署');
+  await edit.getByLabel('成果与使用位置').selectOption('project');
+  await expect(edit.locator('.request-delivery-summary')).toHaveText('源码 · 不需要部署');
+  await expect(edit.getByLabel('交付后在哪里使用')).toHaveCount(0);
   await expect(edit.getByLabel('需求重要程度')).toHaveValue('normal');
   await expect(edit.getByLabel('交付后的审查')).toHaveValue('required');
   await chooseProject(edit, first.name);
   await expect(edit.getByLabel('交付后的审查')).toHaveValue('light');
-  await edit.getByText('修改交付', { exact: true }).click();
+  await expect(edit.getByLabel('成果与使用位置')).toHaveValue('custom');
   await expect(edit.getByLabel('使用位置补充说明（可选）')).toHaveValue(custom.deployment.target);
   await edit.getByText('成果与使用说明（可选）', { exact: true }).click();
   await expect(edit.getByLabel('部署或安装方式（可选）')).toHaveValue(custom.deployment.deploy);
@@ -94,14 +101,14 @@ test('已有自定义交付不被项目默认覆盖，跨项目隔离，展开�
   expect(stored).toMatchObject({ project_id: first.id, delivery_profile: expected, review_policy: { mode: 'light', focus: ['核对交互与回填'], note: '保留已有自定义审查' }, desired_output: '旧期望结果', success_criteria: '旧完成标准' });
   await page.getByRole('article', { name: text }).getByRole('button', { name: '继续编辑' }).click();
   await expect(edit.getByLabel('有限审查范围（每行一项）')).toBeVisible();
-  await edit.getByText('修改交付', { exact: true }).click();
+  await expect(edit.getByLabel('成果与使用位置')).toHaveValue('custom');
   await edit.getByText('成果与使用说明（可选）', { exact: true }).click();
   await expect(edit.getByLabel('成果补充说明（可选）')).toHaveValue(expected.artifact_description);
   await expect(edit.getByLabel('怎样确认运行正常（可选）')).toHaveValue(expected.deployment.health);
   await page.screenshot({ path: testInfo.outputPath('custom-request-reopened.png'), fullPage: true, animations: 'disabled' });
 });
 
-test('收起的审查条件会展开并说明错误，已保存免审原因编辑可见', async ({ page }) => {
+test('审查条件直接可见且说明错误，已保存免审原因编辑可见', async ({ page }) => {
   const ctx = await api(page), project = await makeProject(ctx, '审查条件提示');
   await page.goto('/#/requests');
   await page.getByRole('button', { name: '提需求', exact: true }).click();
@@ -109,15 +116,14 @@ test('收起的审查条件会展开并说明错误，已保存免审原因编�
   await chooseProject(dialog, project.name);
   const text = '隐藏条件不能静默卡提交 ' + project.id;
   await dialog.getByLabel('你想完成什么？').fill(text);
-  const planning = dialog.locator('summary').filter({ hasText: '规划与审查' });
-  await planning.click();
   await dialog.getByLabel('交付后的审查').selectOption('light');
-  await planning.click();
+  await expect(dialog.getByLabel('有限审查范围（每行一项）')).toBeVisible();
   await dialog.getByRole('button', { name: '先记下来', exact: true }).click();
   await expect(dialog.getByLabel('有限审查范围（每行一项）')).toBeVisible();
   await expect(dialog.getByRole('alert')).toContainText('1–12 项');
   await dialog.getByLabel('交付后的审查').selectOption('not_requested');
-  await planning.click();
+  await expect(dialog.getByLabel('不安排审查的原因')).toHaveValue('本次由我自行试用，不安排独立审查');
+  await dialog.getByLabel('不安排审查的原因').fill('');
   await dialog.getByRole('button', { name: '现在开始', exact: true }).click();
   await expect(dialog.getByLabel('不安排审查的原因')).toBeVisible();
   await expect(dialog.getByRole('alert')).toContainText('至少 5 个字');
@@ -190,15 +196,15 @@ test('便携运行目录必填校验展开分组，不会在收起时静默卡�
   expect((await ctx.get('/state')).projects.find((p: any) => p.id === project.id).runtime_root).toBe(runtimeRoot);
 });
 
-test('需求中的便携位置清空后收起也能展开校验，不写入无效需求', async ({ page }) => {
+test('需求中的便携位置清空会阻止提交，不写入无效需求', async ({ page }) => {
   const ctx = await api(page), project = await makeProject(ctx, '需求便携校验');
   const runtimeRoot = path.join(project.paths[0], 'runtime'); fs.mkdirSync(runtimeRoot, { recursive: true });
   await ctx.post('/projects/' + project.id + '/edit', { version: project.version, changes: { name: project.name, goal: '', stage: '', next_step: '', runtime_root: runtimeRoot, delivery_profile: { schema: 1, artifacts: ['software'], artifact_description: '', deployment: { mode: 'local', target: runtimeRoot, deploy: '', health: '', rollback: '', verification: 'portable_manifest' } } } });
   await page.goto('/#/requests'); await page.getByRole('button', { name: '提需求', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '提一个需求' }), text = '需求便携校验 ' + project.id;
   await chooseProject(dialog, project.name); await dialog.getByLabel('你想完成什么？').fill(text);
-  await dialog.getByText('修改交付', { exact: true }).click(); await dialog.getByLabel('本机运行目录').fill('');
-  await dialog.getByText('修改交付', { exact: true }).click(); await dialog.getByRole('button', { name: '现在开始', exact: true }).click();
+  await dialog.getByLabel('成果与使用位置').selectOption('custom'); await dialog.getByLabel('本机运行目录').fill('');
+  await dialog.getByRole('button', { name: '现在开始', exact: true }).click();
   await expect(dialog.getByLabel('本机运行目录')).toBeVisible(); await expect(dialog.getByLabel('本机运行目录')).toBeFocused();
   expect((await ctx.get('/state')).requests.some((q: any) => q.text === text)).toBe(false);
 });

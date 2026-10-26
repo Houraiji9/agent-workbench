@@ -22,7 +22,7 @@ function agentStats(s: ReturnType<typeof useStore>, a: R) {
     mine,
     doing: mine.filter(t => isTheirTurn(t) && t.status !== 'submitted'),
     waiting: mine.filter(t=>isYourTurn(t)&&!['ready','awaiting_dispatch'].includes(t.status)).sort(byUrgency),
-    queue:mine.filter(t=>['ready','awaiting_dispatch'].includes(t.status)&&!waitingForDependencies(t)),
+    queue:mine.filter(t=>['ready','awaiting_dispatch'].includes(t.status)&&!waitingForDependencies(t)&&!isTheirTurn(t)),
     later:mine.filter(waitingForDependencies),
     delivered: mine.filter(t => t.status === 'submitted' && !isYourTurn(t)),
     toReview: tasks.filter(t => member(t.reviewer_id) === a.id && ['submitted', 'changes_requested'].includes(t.status)),

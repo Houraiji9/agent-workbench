@@ -35,3 +35,32 @@ test('actual and requested models stay distinct on job records; role ownership i
   const result=projectTimelineGraph({project_id:'P',tasks:[{id:'T',project_id:'P',agent_id:'executor',reviewer_id:'reviewer'}],runs:[{id:'R',task_id:'T'}],review_assignments:[{id:'RA',run_id:'R',reviewer_id:'reviewer'}],jobs:[{id:'execution',task_id:'T',run_id:'R',role:'execution',agent_id:'executor',requested_model:'requested-main',actual_model:'actual-main'},{id:'review',task_id:'T',run_id:'R',role:'review',agent_id:'reviewer',review_assignment_id:'RA',requested_model:'requested-review',actual_model:'actual-review'}]});
   const execution=result.nodes.find(n=>n.id==='job:execution')!,review=result.nodes.find(n=>n.id==='job:review')!;assert.equal(execution.agent,'executor');assert.equal(review.agent,'reviewer');assert.equal(review.actual_model,'actual-review');assert.equal(review.requested_model,'requested-review');assert.ok(result.edges.some(e=>e.from==='review_assignment:RA'&&e.to==='job:review'));assert.equal(result.edges.some(e=>e.from==='review_assignment:RA'&&e.to==='job:execution'),false);
 });
+
+test('handoffs use the current Run and distinguish planned models and user action from acceptance',()=>{
+ const graph=projectTimelineGraph({project_id:'P',tasks:[{id:'T',project_id:'P',title:'交付',status:'awaiting_confirmation',current_run_id:'R'}],runs:[{id:'OLD',task_id:'T',agent_id:'old',actual_model:'old-model'},{id:'R',task_id:'T',agent_id:'executor',requested_model:'planned'}],artifacts:[{id:'old',run_id:'OLD',current:true},{id:'A',run_id:'R',label:'交付文件',current:true},{id:'retired',run_id:'R',current:false}]});
+ const card=graph.handoffs[0];assert.equal(card.owner,'executor');assert.equal(card.requested_model,'planned');assert.equal(card.actual_model,null);assert.deepEqual(card.outputs,[{id:'A',label:'交付文件'}]);assert.equal(card.user_action,true);assert.match(card.next_step,/确认验收/);assert.equal(graph.nodes.some(n=>n.kind==='acceptance'),false);
+});
+test('handoffs show active reviewer assignment and preserve missing output',()=>{
+ const graph=projectTimelineGraph({project_id:'P',tasks:[{id:'T',project_id:'P',status:'in_review',current_run_id:'R',reviewer_id:'original'}],runs:[{id:'R',task_id:'T',agent_id:'author'}],review_assignments:[{id:'removed',run_id:'R',status:'cancelled',reviewer_id:'removed'},{id:'RA',run_id:'R',status:'running',reviewer_id:'reviewer',requested_model:'review-plan',actual_model:'review-actual'}]});
+ const card=graph.handoffs[0];assert.equal(card.owner,'reviewer');assert.equal(card.requested_model,'review-plan');assert.equal(card.actual_model,'review-actual');assert.deepEqual(card.outputs,[]);assert.equal(card.user_action,false);assert.match(card.next_step,/审查报告/);
+});
+
+test('review reports attach to their explicit assignment while legacy reports fall back to Run',()=>{
+ const graph=projectTimelineGraph({project_id:'P',tasks:[{id:'T',project_id:'P'}],runs:[{id:'R',task_id:'T'}],review_assignments:[{id:'RA',run_id:'R'}],reviews:[{id:'V',run_id:'R',review_id:'RA'},{id:'legacy',run_id:'R'},{id:'missing',run_id:'R',review_id:'missing-RA'}]});
+ assert.ok(graph.edges.some(e=>e.from==='review_assignment:RA'&&e.to==='review:V'));assert.equal(graph.edges.some(e=>e.from==='run:R'&&e.to==='review:V'),false);assert.ok(graph.edges.some(e=>e.from==='run:R'&&e.to==='review:legacy'));assert.ok(graph.unresolved.some(e=>e.from==='review_assignment:missing-RA'&&e.to==='review:missing'));
+});
+test('manual review handoff asks the user to forward prepared order; active peer keeps ownership after another report',()=>{
+ const input={project_id:'P',tasks:[{id:'T',project_id:'P',status:'submitted',review_stage:'awaiting_dispatch',current_run_id:'R',reviewer_id:'default'}],runs:[{id:'R',task_id:'T'}],review_assignments:[{id:'done',run_id:'R',reviewer_id:'completed',status:'completed'},{id:'pending',run_id:'R',reviewer_id:'peer',status:'awaiting_dispatch',delivery_mode:'manual'}]};
+ let card=projectTimelineGraph(input).handoffs[0];assert.equal(card.owner,'peer');assert.equal(card.user_action,true);assert.match(card.next_step,/已准备的审查单/);
+ input.review_assignments[1].status='running';input.tasks[0].status='in_review';input.tasks[0].review_stage='running';card=projectTimelineGraph(input).handoffs[0];assert.equal(card.owner,'peer');assert.equal(card.user_action,false);assert.match(card.next_step,/回传审查报告/);
+});
+
+test('same-session project handoff shares agent responsibility with the task view and keeps real user decisions',()=>{
+ const base={id:'T',project_id:'P',status:'awaiting_dispatch',agent_id:'executor',current_run_id:'R',execution_route:null,automation:null,same_session_continuation:{run_id:'R',agent_id:'executor'}};
+ const card=(extra:Record<string,any>={})=>projectTimelineGraph({project_id:'P',tasks:[{...base,...extra}],runs:[{id:'R',task_id:'T',agent_id:'executor'}]}).handoffs[0];
+ const same=card();assert.equal(same.status,'awaiting_dispatch');assert.equal(same.display_status,'continuation_pending');assert.equal(same.owner,'executor');assert.equal(same.user_action,false);assert.match(same.next_step,/原会话继续返修.*无需再次转发/);assert.doesNotMatch(same.next_step,/发送执行单/);
+ for(const extra of [{same_session_continuation:null},{same_session_continuation:{run_id:'old',agent_id:'executor'}},{same_session_continuation:{run_id:'R',agent_id:'other'}}]){assert.equal(card(extra).user_action,true);assert.match(card(extra).next_step,/发送执行单/);}
+ const failed=card({automation:{status:'failed',role:'execution'}});assert.equal(failed.user_action,true);assert.match(failed.next_step,/阻碍/);
+ const decision=card({pending_user_decision:{expires_at:new Date(Date.now()+60000).toISOString()}});assert.equal(decision.user_action,true);assert.match(decision.next_step,/确认事项/);
+ const closing=card({status:'awaiting_closeout'});assert.equal(closing.user_action,false);assert.match(closing.next_step,/原会话继续收尾/);
+});

@@ -79,7 +79,7 @@ export function parseAgentOutput(kind: ClientKind, line: string): ParsedAgentOut
       const success = value.subtype === 'success' && value.is_error === false && finalText !== undefined;
       return withMetadata({recognized: true, terminal: true, eventType: 'result', success, ...(success ? {finalText} : {})}, {
         sessionId: id,
-        ...(kind === 'claude' ? {usage: usage(value.usage, 'reported_total', false, value.total_cost_usd)} : {}),
+        ...(kind === 'claude' ? {usage: usage(value.usage, 'reported_total', false, value.total_cost_usd)} : {usage: usage(value.usage, 'reported_total', true)}),
       });
     }
     // Assistant/tool/user events may contain example JSON and intermediate text. Only terminal

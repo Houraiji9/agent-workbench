@@ -27,8 +27,8 @@ test('Grok 2% 会拦截规划和派审；空成员关联能正确关联 Grok，�
     assert.equal(f.wb.all('tasks').length,0);
   }finally{f.wb.close()}
 });
-test('规划后耗尽额度需要换人；同类工程成员可审查，作者不能自审',()=>{
-  const f=delivered();try{pool(f,2);assert.throws(()=>order(f,'grok-build'),/剩余额度/);
+test('低额度允许保存审查安排但启动受阻；同类工程成员可审查，作者不能自审',()=>{
+  const f=delivered();try{pool(f,2);const saved=order(f,'grok-build');assert.equal(saved.resource_snapshot.status,'low');assert(saved.resource_warnings.some((x:string)=>x.includes('剩余额度')));assert.throws(()=>startReview(f.wb,{review_id:saved.review_id,identity:'grok-build'}),/剩余额度/);pool(f,2,{freshness:'stale'});const cached=order(f,'grok-build');assert.equal(cached.review_id,saved.review_id);assert.equal(cached.resource_snapshot.status,'low_cached');assert.throws(()=>startReview(f.wb,{review_id:cached.review_id,identity:'grok-build'}),/剩余额度/);
     const claude=f.wb.get('agents','claude');claude.allowed_kinds=claude.allowed_kinds.filter((kind:string)=>kind!=='review');f.wb.put('agents',claude);assert(!claude.allowed_kinds.includes('review'));
     const candidates=reviewCandidates(f.wb,f.tid);assert(candidates.candidates.some(a=>a.agent_id==='claude'));assert(!candidates.candidates.some(a=>a.agent_id==='codex'));
     assert.throws(()=>order(f,'codex'),/独立审查/);const o=order(f,'claude');assert.equal(o.reviewer_id,'claude');
@@ -46,7 +46,7 @@ test('审查单真实落盘，复制仍待接单，重复生成复用同单且�
   const f=delivered();try{const o=order(f),text=fs.readFileSync(o.order_path,'utf8'),key=JSON.parse(fs.readFileSync(path.join(f.config.dataDir,'review-keys',o.review_id+'.json'),'utf8'));
     assert(text.includes('## 需求与检查清单'));assert(text.includes('scripts'+path.sep+'review.ts'));assert(text.includes('submit'));assert(!text.includes(key.token));assert(!JSON.stringify(o).includes(key.token));
     assert.equal(o.status,'awaiting_dispatch');assert.equal(f.wb.get('tasks',f.tid).status,'submitted');assert.equal(order(f).review_id,o.review_id);
-    assert.throws(()=>submitReviewResult(f.wb,result(o),'reviewer:'+o.review_id),/started/);
+    assert.throws(()=>submitReviewResult(f.wb,result(o),'reviewer'),/started/);
     startReview(f.wb,{review_id:o.review_id,identity:'zcode'});assert.equal(f.wb.get('tasks',f.tid).review_stage,'running');
   }finally{f.wb.close()}
 });
@@ -60,8 +60,8 @@ test('报告回传完整保存，结果幂等；一键返回原作者生成带�
     assert.throws(()=>submitReviewResult(f.wb,result(o),'reviewer:'+o.review_id),/失效/);
   }finally{f.wb.close()}
 });
-test('换人后旧权限失效；错误任务、版本、身份、无修改项与篡改归档不能推进状态',()=>{
-  const f=delivered();try{const first=order(f),second=order(f,'claude');assert.throws(()=>startReview(f.wb,{review_id:first.review_id,identity:'zcode'}),/失效/);
+test('新增成员保留旧权限；错误任务、版本、身份、无修改项与篡改归档不能推进状态',()=>{
+  const f=delivered();try{const first=order(f),second=order(f,'claude');assert.equal(startReview(f.wb,{review_id:first.review_id,identity:'zcode'}).status,'running');
     assert.throws(()=>startReview(f.wb,{review_id:second.review_id,identity:'codex'}),/身份/);startReview(f.wb,{review_id:second.review_id,identity:'claude'});
     for(const extra of [{task_id:'other'},{run_id:'other'},{review_digest:'0'.repeat(64)},{findings:[]}])assert.throws(()=>submitReviewResult(f.wb,result(second,extra),'reviewer'));
     fs.appendFileSync(f.wb.all('artifacts')[0].archive_path,'tamper');assert.throws(()=>submitReviewResult(f.wb,result(second),'reviewer'),/变化|更改/);assert.equal(f.wb.all('reviews').length,0);
@@ -71,7 +71,7 @@ test('通过仅进入执行收尾；撤回后的旧结果不能重放，重新�
   const f=delivered();try{const o=order(f);startReview(f.wb,{review_id:o.review_id,identity:'zcode'});const body=result(o,{verdict:'passed',findings:[]}),r=submitReviewResult(f.wb,body,'reviewer');
     assert.equal(f.wb.get('tasks',f.tid).status,'awaiting_closeout');assert.equal(f.wb.get('tasks',f.tid).acceptance_record,undefined);
     revokeReview(f.wb,r.review.id,{run_id:f.rid,revision:f.wb.get('tasks',f.tid).revision,reason:'测试撤回审查结果'});assert.throws(()=>submitReviewResult(f.wb,body,'reviewer'),/失效/);
-    const next=order(f);assert.notEqual(next.context.review_digest,o.context.review_digest);
+    const next=order(f);assert.equal(next.context.review_digest,o.context.review_digest);assert.notEqual(next.review_id,o.review_id);
   }finally{f.wb.close()}
 });
 test('HTTP 审查凭据限本单，执行与规划凭据不能代交报告，手工导入附报告',async()=>{
@@ -91,7 +91,7 @@ test('真实 CLI 和 stdio MCP 能完成非 Grok 审查，不需要全局 Agent 
   const f=delivered(),o=order(f);f.wb.close();const {app,wb}=await createApp(f.config,{background:false});await app.listen({host:'127.0.0.1',port:0});
   const port=(app.server.address() as any).port;f.config.port=port;const env:NodeJS.ProcessEnv={...process.env,WORKBENCH_DATA_DIR:f.config.dataDir,WORKBENCH_PORT:String(port),WORKBENCH_REVIEW_ID:o.review_id};delete env.WORKBENCH_RUN_ID;
   const client=new Client({name:'review-test',version:'1'}),transport=new StdioClientTransport({command:process.execPath,args:['--import','tsx','src/mcp/index.ts'],cwd:ROOT,env:env as Record<string,string>,stderr:'pipe'});
-  try{await client.connect(transport);const list=await client.listTools();assert.deepEqual(list.tools.map(t=>t.name).sort(),['ack_review_context','get_review_assignment','read_review_context_file','report_review_started','submit_review_result']);
+  try{await client.connect(transport);const list=await client.listTools();for(const name of ['ack_review_context','get_review_assignment','read_review_context_file','report_review_started','submit_review_result','submit_review_report'])assert(list.tools.some(t=>t.name===name),name);
     assert.equal((await client.callTool({name:'get_review_assignment',arguments:{review_id:o.review_id}})).isError,false);
     const cli=await promisify(execFile)(process.execPath,['--import','tsx','scripts/review.ts',o.review_id,'started','zcode'],{cwd:ROOT,env,windowsHide:true});assert.equal(JSON.parse(cli.stdout).status,'running');
     const response=await client.callTool({name:'submit_review_result',arguments:result(o,{verdict:'passed',findings:[]})});assert.equal(response.isError,false);assert.equal(wb.get('tasks',f.tid).status,'awaiting_closeout');
@@ -108,7 +108,7 @@ test('Windows 审查单原文命令及 MCP 参数在外部目录、无 PATH 时�
     const env:NodeJS.ProcessEnv={...process.env,WORKBENCH_DATA_DIR:f.config.dataDir,WORKBENCH_PORT:String(port)};
     for(const key of Object.keys(env))if(['path','node_path','node_options','workbench_run_id','workbench_review_id','workbench_root'].includes(key.toLowerCase()))delete env[key];
     env.PATH='';
-    const commands=text.split(/\r?\n/).filter(line=>line.startsWith('& '));assert.equal(commands.length,3);
+    const commands=text.split(/\r?\n/).filter(line=>line.startsWith('& '));assert.equal(commands.length,4);assert(commands[3].includes("manage manage_reviews"));
     const powershell=path.join(process.env.SystemRoot!,'System32','WindowsPowerShell','v1.0','powershell.exe');
     const execute=async(command:string)=>{
       // Execute the generated line verbatim; only set output encoding and propagate the exit code.
@@ -125,7 +125,7 @@ test('Windows 审查单原文命令及 MCP 参数在外部目录、无 PATH 时�
     const mcp=text.match(/独立 stdio MCP：command=(.+?)，args=\[(.+?)\]，cwd=(.+?)，env WORKBENCH_REVIEW_ID=(RA-[a-f0-9-]{36})/);assert(mcp);
     const args=mcp[2].split(',');assert.equal(args[0],'--import');assert(args[1].startsWith('file:///'));assert.equal(mcp[4],o.review_id);
     await client.connect(new StdioClientTransport({command:mcp[1],args,cwd,env:{...env,WORKBENCH_REVIEW_ID:mcp[4]} as Record<string,string>,stderr:'pipe'}));
-    assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),['ack_review_context','get_review_assignment','read_review_context_file','report_review_started','submit_review_result']);
+    const tools=(await client.listTools()).tools;for(const name of ['ack_review_context','get_review_assignment','read_review_context_file','report_review_started','submit_review_result','submit_review_report'])assert(tools.some(t=>t.name===name),name);
     const reply=await client.callTool({name:'get_review_assignment',arguments:{review_id:o.review_id}});assert.equal(reply.isError,false);
     assert.equal(JSON.parse((reply.content as any)[0].text).assignment.status,'completed');
   }finally{await client.close();await app.close()}

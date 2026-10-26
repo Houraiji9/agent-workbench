@@ -9,7 +9,8 @@ import { greeting, todayLine, relative, daysUntil, dayCountText, plainDay } from
 import { quotaPercent } from '../quota.js';
 import { Pill, RelayTrack, Empty, Section } from '../ui/kit.js';
 import { AgentIcon } from '../ui/AgentIcon.js';
-import { copyOrder, copyPlanning, copyRework, markDispatched, continueTask } from './actions.js';
+import { copyOrder, copyPlanning, copyRework, markDispatched, continueTask, openTrial } from './actions.js';
+import {TaskQuickActions} from '../ui/TaskQuickActions.js';
 import {waitingForDependencies} from '../../shared/execution-order.js';
 import {ExecutionList,OrderStep} from '../ui/ExecutionOrder.js';
 import {RequestPreview} from '../ui/RequestPreview.js';
@@ -75,17 +76,17 @@ export function Today() {
           <div className="row-list">
             {theirs.map((t: R) => {
               const who = s.executorOf(t), relay = relayOf(t, s.name, who);
-              const holder = t.status === 'submitted' && t.review_stage==='running' ? t.reviewer_id : who;
+              const holder = ['submitted','in_review'].includes(t.status) && t.review_stage==='running' ? (t.active_reviewers?.find((r:R)=>r.status==='running')?.reviewer_id||t.active_reviewers?.find((r:R)=>r.status==='awaiting_dispatch')?.reviewer_id||t.reviewer_id) : who;
               const project = s.pname(t.project_id);
-              return <button key={t.id} className="row active-task" onClick={() => s.openTask(t.id)}>
+              return <div key={t.id} className="quick-action-row"><button className="row active-task" onClick={() => s.openTask(t.id)}>
                 <AgentIcon name={s.name(holder)} id={s.agentIconId(holder)} />
                 <span className="row-main">
                   <ProjectTag name={project} />
                   <strong title={t.title}>{t.title}</strong>
-                  <small title={relay.headline}>{relay.headline}</small>
+                  <small title={relay.headline}>{['submitted','in_review'].includes(t.status)&&t.review_stage==='running'?s.name(holder)+' · ':''}{relay.headline}</small>
                 </span>
                 <span className="row-side"><Pill task={t} /><small>{relative(t.updated_at, s.tz)}更新</small></span>
-              </button>;
+              </button><TaskQuickActions task={t} trial={false}/></div>;
             })}
           </div>
         </Section>}
@@ -162,7 +163,7 @@ function TaskTurn({ t, compact }: { t: R; compact?: boolean }) {
   else if(['in_review','awaiting_closeout'].includes(t.status))actions=<button className="btn primary" disabled={s.busy} onClick={()=>void continueTask(s,t)}><Copy size={16}/>原会话继续收尾</button>;
   else if(t.status==='submitted')actions=<button className="btn primary" onClick={open}><Copy size={16}/>交给审查者</button>;
   else if(t.status==='acceptance_rejected')actions=<button className="btn primary" disabled={s.busy} onClick={()=>void copyRework(s,t)}><Copy size={16}/>复制返工要求</button>;
-  else if (['awaiting_confirmation'].includes(t.status)) actions = <button className="btn primary" onClick={open}><CircleCheckBig size={16} />去试用确认</button>;
+  else if (['awaiting_confirmation'].includes(t.status)) actions = <button className="btn primary" disabled={s.busy} onClick={()=>void openTrial(s,t)}><CircleCheckBig size={16} />去试用确认</button>;
   else actions = <button className="btn primary" onClick={open}><LifeBuoy size={16} />看看怎么处理</button>;
 
   return <article className={'turn clickable t-' + relay.tone + (compact ? ' compact' : '')} aria-label={t.title} onClick={e => { if (!(e.target as HTMLElement).closest('button')) open(); }}>
@@ -176,7 +177,7 @@ function TaskTurn({ t, compact }: { t: R; compact?: boolean }) {
     </div>
     <button className="turn-title" onClick={open}>{t.title}</button>
     <p className="turn-next">{relay.next}</p>
-    <div className="turn-actions">{actions}</div>
+    <div className="turn-actions">{actions}{!['ready','awaiting_dispatch'].includes(t.status)&&<TaskQuickActions task={t} trial={false}/>}</div>
   </article>;
 }
 

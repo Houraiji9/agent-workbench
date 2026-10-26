@@ -1,0 +1,19 @@
+.task-quick-actions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.task-quick-actions:empty { display: none; }
+.quick-action-row { display: flex; align-items: center; gap: 8px; min-width: 0; background: var(--surface); padding-right: 12px; }
+.quick-action-row > .row { flex: 1; min-width: 0; }
+.quick-action-row > .task-quick-actions { flex: none; }
+.quick-action-context { color: var(--ink-2); overflow-wrap: anywhere; }
+.trial-context { display: grid; gap: 4px; margin-bottom: 16px; }
+.trial-context strong { overflow-wrap: anywhere; }
+.trial-artifacts { display: grid; gap: 12px; margin-bottom: 20px; }
+.trial-artifact { border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-width: 0; }
+.trial-artifact > .link { font-weight: 600; overflow-wrap: anywhere; text-align: left; }
+.trial-section-title { font-size: 15px; margin: 0 0 10px; }
+.dialog:has(.trial-context) > .dialog-head, .dialog:has(.trial-context) > .dialog-foot { flex-shrink: 0; }
+.dialog:has(.trial-context) > .dialog-body { min-height: 0; }
+@media (max-width: 700px) {
+ .quick-action-row { flex-wrap: wrap; }
+ .quick-action-row > .row { flex-basis: 100%; }
+ .quick-action-row > .task-quick-actions { padding: 0 12px 10px; }
+}

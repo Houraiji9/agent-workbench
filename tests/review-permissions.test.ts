@@ -1,3 +1,4 @@
+import {decideReviewCollaboration} from '../src/core/review-workflow.ts';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -55,9 +56,9 @@ test('需修改后 HTTP 和真实 stdio 拒绝执行者/规划者换人或补审
     }
     assert.equal((await f.http({...f.input(),role:'user'})).status,400);assert.equal(f.snapshot(),before);
     // 手动重新安排必须经正常页面会话和 CSRF。
-    const replacement=await f.user(f.input());assert.equal(replacement.status,200,JSON.stringify(replacement.data));
+    const replacement=await f.user(f.input({new_review:true}));assert.equal(replacement.status,200,JSON.stringify(replacement.data));
     assert.equal(f.wb.get('tasks',f.tid).status,'submitted');
-    const old=f.wb.get('reviews',review.id);assert.equal(old.verdict,'changes_requested');assert.equal(old.report_markdown,review.report_markdown);assert.equal(old.revoked_by,'user');assert(old.revoked_at);
+    const old=f.wb.get('reviews',review.id);assert.equal(old.verdict,'changes_requested');assert.equal(old.report_markdown,review.report_markdown);assert.equal(old.revoked_at,undefined);
   }finally{await f.close()}
 });
 
@@ -113,6 +114,6 @@ for(const verdict of ['changes_requested','passed'] as const)test(`Grok ${verdic
     traces.set(original.session_id,sameSession);
     assert.equal((await f.http(original,f.runner,'submit_grok_review')).status,403);
     assert.equal(f.snapshot(),before);assert.equal(f.wb.get('reviews',first.data.id).revoked_at,undefined);
-    const userResult=await f.user(newer,'/api/reviews/grok');assert.equal(userResult.status,200,JSON.stringify(userResult.data));assert.equal(f.wb.get('tasks',f.tid).status,'awaiting_closeout');assert.equal(f.wb.get('reviews',first.data.id).verdict,verdict);
+    const userResult=await f.user(newer,'/api/reviews/grok');assert.equal(userResult.status,200,JSON.stringify(userResult.data));decideReviewCollaboration(f.wb,{run_id:f.rid,expected_revision:f.wb.get('tasks',f.tid).revision,decision:'continue',reason:'隔离测试用户核对全部审查记录并明确继续'},{role:'user'});assert.equal(f.wb.get('tasks',f.tid).status,'awaiting_closeout');assert.equal(f.wb.get('reviews',first.data.id).verdict,verdict);
   }finally{await f.close()}
 });

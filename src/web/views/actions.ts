@@ -2,6 +2,20 @@
 import { api } from '../api.js';
 import type { Store } from '../app/store.js';
 import type { R } from '../lib/flow.js';
+import {hasSameSessionContinuation} from '../../shared/workflow-view.js';
+
+/** 从最新详情打开试用；弹窗继续冻结 revision 与成果 hash，由后端校验。 */
+export async function openTrial(s:Store,t:R,reject=false){return s.act(async()=>{
+ const detail=await api('/tasks/'+t.id);
+ if(detail.task.status!=='awaiting_confirmation')throw new Error('任务状态已更新，请刷新后查看当前进展');
+ s.openDialog(reject?'reject':'accept',{detail});return detail;
+})}
+
+export async function copyOrderText(s:Store,text:string,message:string,t:R){
+ const copied=await s.copy(text,message);
+ if(!copied)s.openDialog('order-copy',{task:t,text});
+ return copied;
+}
 
 export async function startPlanning(s:Store,q:R){return s.act(async()=>{
  const next=await api('/requests/'+q.id+'/edit',{project_id:q.project_id,text:q.text,status:'awaiting_planning',kind:q.kind||'idea',version:q.version,workflow_kind:q.workflow_kind||'standard',desired_output:q.desired_output||'',success_criteria:q.success_criteria||'',review_mode:q.review_policy?.mode||'required',review_focus:q.review_policy?.focus||[],skip_review:q.review_policy?.mode==='not_requested',review_note:q.review_policy?.note||''});
@@ -20,8 +34,10 @@ export async function copyPlanning(s: Store, q: R) {
 /** 生成（或重新取回）执行单并复制入口。复制不会把任务算作“已发出”。 */
 export async function copyOrder(s: Store, t: R) {
   return s.act(async () => {
-    const r = await api('/tasks/' + t.id + '/export', { version: t.version });
-    await s.copy(r.entry, '执行单已复制，粘贴给执行者即可；接单回执会自动更新状态');
+    const {task:current}=await api('/tasks/'+t.id);
+    const r = await api('/tasks/' + t.id + '/export', { version: current.version });
+    const continuing=hasSameSessionContinuation(current)||!['ready','awaiting_dispatch'].includes(current.status);
+    await copyOrderText(s,r.entry,continuing?'当前执行单已复制；任务仍由原执行会话处理，无需重复转交':'执行单已复制；复制不会派发或接单，转交后的接单回执会更新状态',current);
     return r;
   });
 }
@@ -32,7 +48,7 @@ export async function markDispatched(s: Store, t: R) {
 
 export async function copyRework(s:Store,t:R){return s.act(async()=>{
  const f=t.acceptance_feedback.at(-1),r=await api('/tasks/'+t.id+'/rework',{revision:t.revision,feedback_id:f.id});
- await s.copy(`本次验收未通过，请按下面的问题返工：\n${f.note}\n\n${r.entry}`,'返工要求已复制，粘贴给原执行者即可');return r;
+ await copyOrderText(s,`本次验收未通过，请按下面的问题返工：\n${f.note}\n\n${r.entry}`,'返工要求已复制，粘贴给原执行者即可',t);return r;
 })}
 
 export async function copyReviewOrder(s:Store,detail:R){return s.act(async()=>{
@@ -50,7 +66,7 @@ export function reviewRequestText(t: R, run: R | undefined, artifacts: R[], name
   return `请以独立审查者身份审查下面这项交付，不要修改代码或替作者验收。\n\n任务：${t.title}\nTask ${t.id} / Run ${run?.id || t.current_run_id}\n执行者：${name(run?.agent_id || t.agent_id)}\n执行目录：${run?.directory || '见执行单'}\n交付结果：${run?.directory ? run.directory + (run.directory.includes('\\') ? '\\' : '/') + 'RESULT.md' : 'RESULT.md'}\n\n本次交付的文件：\n${files}\n\n检查要求：\n${(t.acceptance || []).map((a: string) => '- ' + a).join('\n')}\n\n请给出：结论（通过 / 需要修改）、发现的问题、你实际查看过的证据位置。`;
 }
 
-export async function copyCloseoutOrder(s:Store,t:R){return s.act(async()=>{const r=await api('/closeout-orders',{run_id:t.current_run_id,expected_revision:t.revision});await s.copy(r.entry,'收尾单已复制，粘贴回原执行者即可');return r})}
+export async function copyCloseoutOrder(s:Store,t:R){return s.act(async()=>{const r=await api('/closeout-orders',{run_id:t.current_run_id,expected_revision:t.revision});await copyOrderText(s,r.entry,'收尾单已复制，粘贴回原执行者即可',t);return r})}
 
 export async function dispatchTask(s:Store,t:R,review=false,freshSession=false){return s.act(async()=>{
  let current=t;
@@ -62,9 +78,9 @@ export async function continueTask(s:Store,t:R,sameSession=true){return s.act(as
  if(t.execution_route){
   const r=await api('/tasks/'+t.id+'/continue',{expected_revision:t.revision,request_id:crypto.randomUUID(),fresh_session:!sameSession});
   // 下一版安排换成没有自动路线的负责人时，只生成执行单，由用户交给执行者。
-  if(r?.automatic_delivery===false&&r.entry)await s.copy(r.entry,'新负责人没有自动调用路线：新执行单已复制，请交给执行者');
+  if(r?.automatic_delivery===false&&r.entry)await copyOrderText(s,r.entry,'新负责人没有自动调用路线：新执行单已复制，请交给执行者',t);
   else s.toast(sameSession?'已请求续接原会话':'已请求新会话接手');
   return r;
  }
- const r=await api('/tasks/'+t.id+'/continue',{revision:t.revision,same_session:sameSession});await s.copy(r.entry,sameSession?'续作简讯已复制，粘贴回原会话':'接手资料已复制；缺失历史可按需读取');return r;
+ const r=await api('/tasks/'+t.id+'/continue',{revision:t.revision,same_session:sameSession});await copyOrderText(s,r.entry,sameSession?'续作简讯已复制，粘贴回原会话':'接手资料已复制；缺失历史可按需读取',t);return r;
 })}

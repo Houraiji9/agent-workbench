@@ -1,0 +1,46 @@
+import path from 'node:path';
+import {test,expect} from '@playwright/test';
+import {makeTask,drawer,noHorizontalScroll} from './support.js';
+test('同任务添加审查者、调整模型、移除安排并保留历史',async({page})=>{
+ const m=await makeTask(page,{title:'测试：同任务多人审查安排',stage:'submitted'});
+ await page.goto('/#/today?task='+m.tid);
+ const panel=drawer(page).getByRole('region',{name:'独立审查协作'});
+ await panel.getByRole('button',{name:'添加审查者',exact:true}).click();
+ await panel.getByRole('combobox',{name:'审查者',exact:true}).selectOption('claude');
+ await panel.getByLabel('审查模型',{exact:true}).fill('synthetic-review-model');
+ await panel.getByLabel('调整原因或决定依据').fill('隔离测试：追加第二位审查者');
+ await panel.getByRole('button',{name:'保存安排',exact:true}).click();
+ await expect(panel.getByText('计划模型：synthetic-review-model',{exact:true})).toBeVisible();
+ let detail=await m.get('/tasks/'+m.tid);expect(detail.task.current_run_id).toBe(m.rid);expect(detail.review_summary.members.some((a:any)=>a.reviewer_id==='claude'&&a.requested_model==='synthetic-review-model')).toBe(true);
+ if(process.env.WORKBENCH_CAPTURE_SHOTS==='1')await panel.screenshot({path:path.join(process.env.WORKBENCH_EVIDENCE_DIR!,'reviewer-list-r3.png'),animations:'disabled'});
+ const row=panel.locator('article').filter({hasText:'计划模型：synthetic-review-model'});
+ await row.getByRole('button',{name:'调整此审查者'}).click();
+ await panel.getByLabel('审查模型',{exact:true}).fill('synthetic-review-model-2');
+ await panel.getByLabel('调整原因或决定依据').fill('隔离测试：同任务调整模型');
+ await panel.getByRole('button',{name:'保存安排',exact:true}).click();
+ await expect(panel.getByText('计划模型：synthetic-review-model-2',{exact:true})).toBeVisible();
+ await panel.locator('article').filter({hasText:'计划模型：synthetic-review-model-2'}).getByRole('button',{name:'调整此审查者'}).click();
+ await panel.getByLabel('调整原因或决定依据').fill('隔离测试：取消追加审查');
+ await panel.getByRole('button',{name:'移除此审查者',exact:true}).click();
+ detail=await m.get('/tasks/'+m.tid);expect(detail.task.current_run_id).toBe(m.rid);expect(detail.review_summary.members.filter((a:any)=>a.reviewer_id==='claude').every((a:any)=>a.status==='cancelled')).toBe(true);
+ await page.setViewportSize({width:390,height:844});expect(await noHorizontalScroll(page)).toBe(true);
+});
+
+test('执行已开始仍可修改同轮审查人和模型，无需新任务',async({page})=>{
+ const m=await makeTask(page,{title:'测试：执行中修改审查安排',stage:'running'});await page.goto('/#/today?task='+m.tid);
+ const panel=drawer(page).getByRole('region',{name:'独立审查协作'});
+ await panel.getByRole('button',{name:'修改本轮审查者与模型',exact:true}).click();
+ await panel.getByRole('combobox',{name:'审查者',exact:true}).selectOption('claude');
+ await panel.getByLabel('审查模型',{exact:true}).fill('synthetic-before-delivery');
+ await panel.getByLabel('调整原因或决定依据').fill('隔离测试：执行开始后调整审查者和模型');
+ await panel.getByRole('button',{name:'保存安排',exact:true}).click();
+ await expect(panel.getByText('计划模型：synthetic-before-delivery',{exact:true})).toBeVisible();
+ if(process.env.WORKBENCH_CAPTURE_SHOTS==='1')await panel.screenshot({path:path.join(process.env.WORKBENCH_EVIDENCE_DIR!,'running-arrangement-r3.png'),animations:'disabled'});
+ const d=await m.get('/tasks/'+m.tid);expect(d.task.current_run_id).toBe(m.rid);expect(d.task.status).toBe('running');expect(d.task.reviewer_id).toBe('claude');expect(d.runs.find((r:any)=>r.id===m.rid).review_arrangement.requested_model).toBe('synthetic-before-delivery');
+ await page.goto('/#/projects/'+m.project.id+'?tab=insights');
+ const flow=page.getByRole('region',{name:'真实流程与交接'});await expect(flow.locator('.pi-handoff')).toHaveCount(1);
+ await expect(flow.getByText('等待执行者交付',{exact:true})).toBeVisible();
+ if(process.env.WORKBENCH_CAPTURE_SHOTS==='1')await flow.screenshot({path:path.join(process.env.WORKBENCH_EVIDENCE_DIR!,'project-handoffs-r3.png'),animations:'disabled'});
+ await page.setViewportSize({width:390,height:844});expect(await noHorizontalScroll(page)).toBe(true);
+ if(process.env.WORKBENCH_CAPTURE_SHOTS==='1')await flow.screenshot({path:path.join(process.env.WORKBENCH_EVIDENCE_DIR!,'project-handoffs-narrow-r3.png'),animations:'disabled'});
+});

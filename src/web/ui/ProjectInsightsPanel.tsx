@@ -80,7 +80,7 @@ export function ProjectInsightsPanel({projectId}:{projectId:string}){
       </>}
     </Section>
     <Section title="真实流程与交接" aside={<div className="pi-flow-tools"><label><input type="checkbox" checked={history} onChange={e=>setHistory(e.target.checked)}/>显示已结束任务</label><label><input type="checkbox" checked={children} onChange={e=>setChildren(e.target.checked)}/>展开子代理与分支</label></div>}>
-      {data?<FlowCanvas graph={data.graph} childrenVisible={children} onTask={s.openTask} name={s.name}/>:!loading?<Empty title="暂时没有可显示的流程"/>:<p>正在读取流程…</p>}
+      {data?<><div className="pi-handoffs">{data.graph.handoffs?.map(card=><article key={card.task_id} className="pi-handoff"><div className="pi-handoff-head"><button className="link" onClick={()=>s.openTask(card.task_id)}>{card.title}</button><Pill tone="quiet">{statusText[card.display_status]||card.display_status}</Pill></div><dl><div><dt>现在由谁接手</dt><dd>{card.owner?s.name(card.owner):'尚未安排'} · {card.actual_model?card.actual_model+'（实际回报）':card.requested_model?card.requested_model+'（计划）':'模型未登记'}</dd></div><div><dt>已交付</dt><dd>{card.outputs.length?card.outputs.map(a=><a key={a.id} href={'/api/artifacts/'+encodeURIComponent(a.id)+'/content?download=1'} download>{a.label}</a>):'尚无本轮归档成果'}</dd></div><div><dt>{card.user_action?'需要你做':'下一步'}</dt><dd>{card.next_step}</dd></div></dl></article>)}</div><details className="pi-details"><summary>展开关系图与来源记录</summary><FlowCanvas graph={data.graph} childrenVisible={children} onTask={s.openTask} name={s.name}/></details></>:!loading?<Empty title="暂时没有可显示的流程"/>:<p>正在读取流程…</p>}
     </Section>
   </div>;
 }

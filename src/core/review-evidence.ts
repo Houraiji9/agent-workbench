@@ -1,3 +1,4 @@
+import {syncReviewCollaborationState} from './review-workflow.ts';
 import {stageCloseout,invalidateCloseout,reviewableStates,closeoutStates,verifyDelivery} from './closeout.ts';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -9,6 +10,7 @@ import type {Workbench} from './workbench.ts';
 import type {Row} from './schema.ts';
 import {assert,hash,id,now,readBounded,safePath,DomainError} from './security.ts';
 import {reviewSkipped} from './acceptance.ts';
+import {reviewProceedAuthority} from './latest-review.ts';
 import {reviewScope} from './review-scope.ts';
 import {assertMayArrangeReview,reviewActor,type ReviewCaller} from './review-permissions.ts';
 
@@ -73,8 +75,8 @@ export function getReviewContext(wb:Workbench,runId:string){
   verifyDelivery(wb,task,run);const artifacts=wb.all('artifacts').filter(a=>a.run_id===run.id&&a.current).sort((a,b)=>a.id.localeCompare(b.id));
   assert(artifacts.length>0,'没有可审查的归档产物');
   for(const a of artifacts){const file=safePath(a.archive_path,[path.join(wb.config.dataDir,'artifacts')]);assert(hash(readBounded(file,20*1024*1024))===a.sha256,'归档产物已变化，需重新交付',409)}
-  const binding={task_id:task.id,run_id:run.id,task_version:task.version,reviewer_id:task.reviewer_id,...(task.current_review_assignment_id?{review_assignment_id:task.current_review_assignment_id}:{}),artifacts:artifacts.map(a=>({id:a.id,sha256:a.sha256})),review_files:run.review_files||[]};
-  const digest=hash(JSON.stringify(binding));
+  const binding={task_id:task.id,run_id:run.id,task_version:task.version,...(run.scope_revision?{scope_revision:run.scope_revision}:{}),reviewer_id:task.reviewer_id,artifacts:artifacts.map(a=>({id:a.id,sha256:a.sha256})),review_files:run.review_files||[]};
+  const {reviewer_id:_reviewer,...deliveryBinding}=binding;const digest=hash(JSON.stringify(deliveryBinding));
   return {...binding,review_scope:reviewScope(task,run),title:task.title,revision:task.revision,review_digest:digest,cwd:run.cwd,run_directory:run.directory,
     artifacts:artifacts.map(a=>({id:a.id,label:a.label,sha256:a.sha256,archive_path:a.archive_path})),
     final_response:{task_id:task.id,run_id:run.id,review_digest:digest,verdict:'passed 或 changes_requested',findings:['实际发现的问题；没有则空数组'],limitations:['未验证的范围；没有则空数组']},
@@ -122,13 +124,14 @@ export async function submitGrokReview(wb:Workbench,input:unknown,caller:ReviewC
     const watermark=Math.max(0,...previous.flatMap(r=>[decisionTime(r.completed_at??r.created_at),...(r.revoked_at?[decisionTime(r.revoked_at)]:[])]));
     assert(decisionTime(verified.completed_at)>watermark,'这份 Grok 审查早于当前审查或撤回记录，请重新补审',409);
     const {conclusion,...provenance}=verified;
-    const review:Row={id:id('V'),run_id:v.run_id,task_id:current.task_id,reviewer_id:'grok-build',verdict:conclusion.verdict,
+    const assignment=wb.all('review_assignments').find(a=>a.run_id===v.run_id&&a.reviewer_id==='grok-build'&&['awaiting_dispatch','running'].includes(a.status));
+    const review:Row={id:id('V'),...(assignment?{review_id:assignment.id}:{}),run_id:v.run_id,task_id:current.task_id,reviewer_id:'grok-build',verdict:conclusion.verdict,
       findings:conclusion.findings.join('\n'),limitations:conclusion.limitations,evidence:`由 Grok 官方会话导出核验：${v.session_id}；请求 ${verified.request_id}；${verified.model}；end_turn。`,
       artifact_hashes:current.artifacts.map(a=>a.sha256).sort(),created_at:now(),source:'grok_session_import',
       evidence_level:'session_verified',independently_verified:true,verification_scope:'核验真实会话来源、正常完成、独立模型和交付绑定；审查内容的覆盖与限制见原结论，不等于用户验收。',
       ...provenance,review_digest:current.review_digest,raw_conclusion:conclusion,recorded_by:actor};
     wb.put('reviews',review,{run_id:v.run_id});
-    const task=wb.get('tasks',current.task_id);task.status='changes_requested';if(review.verdict==='passed')stageCloseout(wb,task,wb.get('runs',v.run_id));else invalidateCloseout(wb,wb.get('runs',v.run_id),'审查要求修改');task.review_stage='completed';if(task.current_review_assignment_id){const assignment=wb.get('review_assignments',task.current_review_assignment_id);assignment.status='completed';assignment.result_id=review.id;wb.put('review_assignments',assignment,{run_id:v.run_id})}task.revision++;task.updated_at=now();wb.put('tasks',task,{project_id:task.project_id});
+    const task=wb.get('tasks',current.task_id);if(assignment){assignment.status='completed';assignment.result_id=review.id;wb.put('review_assignments',assignment,{run_id:v.run_id});}syncReviewCollaborationState(wb,task,wb.get('runs',v.run_id),{allowLegacyResult:true});task.revision++;task.updated_at=now();wb.put('tasks',task,{project_id:task.project_id});
     wb.audit(actor,'import_grok_review',review.id,{run_id:v.run_id,session_id:v.session_id,review_digest:current.review_digest});return review;
   });
 }
@@ -152,7 +155,8 @@ export function revokeReview(wb:Workbench,reviewId:string,input:unknown){
     const latest=wb.db.prepare("SELECT id FROM reviews WHERE run_id=? AND json_extract(data,'$.revoked_at') IS NULL ORDER BY json_extract(data,'$.created_at') DESC,rowid DESC LIMIT 1").get(run.id);
     review.revoked_at=now();review.revoked_by='user';review.revocation_reason=v.reason;
     wb.put('reviews',review,{run_id:run.id});
-    if(latest?.id===review.id){invalidateCloseout(wb,run,'审查已撤回');task.status='submitted';task.review_stage='awaiting_dispatch';if(task.current_review_assignment_id){const assignment=wb.get('review_assignments',task.current_review_assignment_id);assignment.status='revoked';wb.put('review_assignments',assignment,{run_id:run.id})}}
+    const assignment=review.review_id?wb.maybe('review_assignments',review.review_id):wb.all('review_assignments').find(a=>a.run_id===run.id&&a.result_id===review.id);if(assignment){assignment.status='revoked';wb.put('review_assignments',assignment,{run_id:run.id});}
+    if(latest?.id===review.id||run.review_decision){run.review_decision=null;wb.put('runs',run,{task_id:task.id});invalidateCloseout(wb,run,'审查已撤回');}syncReviewCollaborationState(wb,task,run,{allowLegacyResult:latest?.id!==review.id});
     task.revision++;task.updated_at=now();wb.put('tasks',task,{project_id:task.project_id});
     wb.audit('user','revoke_review',review.id,{run_id:run.id,reason:v.reason});return review;
   });

@@ -9,6 +9,7 @@ import { SubscriptionEditDialog, SubscriptionDeleteDialog, SubscriptionConfirmDi
 import {AgentManageDialog,QuotaManageDialog,RemoveResourceDialog} from './dialogs/ManagementDialogs.js';
 import {RequestActionDialog,RequestHandoffDialog} from './dialogs/RequestDialog.js';
 import {RequestContentDialog} from '../ui/RequestPreview.js';
+import {OrderCopyDialog} from '../ui/TaskQuickActions.js';
 
 export function Dialogs() {
   const s = useStore();
@@ -18,6 +19,7 @@ export function Dialogs() {
   const close = s.closeDialog;
   const key = d.name + ':' + JSON.stringify(Object.keys(p));
   switch (d.name) {
+    case 'order-copy': return <OrderCopyDialog task={p.task} text={p.text} onClose={close}/>;
     case 'request-content': return <RequestContentDialog request={p.request} onClose={close}/>;
     case 'request-handoff': return <RequestHandoffDialog key={p.request.id} request={p.request} fallbackText={p.fallbackText} onClose={close}/>;
     case 'request-action': return <RequestActionDialog key={p.request.id+':'+p.action} request={p.request} action={p.action} onClose={close}/>;

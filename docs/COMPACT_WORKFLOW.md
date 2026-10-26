@@ -1,6 +1,6 @@
 # 简版执行与真实交付
 
-默认调度上下文为 brief，可用 project_id 限定项目。只有确需旧材料时请求 detail=full。完整历史仍在账本和不可变执行包中，不因缩短提示而删除。
+默认调度上下文为 brief，可用 project_id 限定项目。只有确需旧材料时请求 detail=full。完整历史仍在账本和不可变执行包中，不因缩短提示而删除。项目经验只沉淀可复用的决定、问题、失败尝试和交接点，不把运行日志作为必读项；先看索引再按任务选读。候选或过时条目保留来源但不当作现行事实，不把经验库全量注入执行上下文。
 
 多客户端发现、模型/供应商选择、自动派审与返工规则只进入规划者上下文，见 [规划手册](CODEX_PLANNER.md)。执行者和审查者分别只读本 Run / RA 的简版入口、当前范围、资料清单与固定回报方法，不承担客户端查找与调度配置。
 
@@ -13,17 +13,17 @@
 - `report_run_activity({run_id,event_id,event_type,data})`：程序填写 Task、身份、cwd、版本和序号；event_id 保持同一重试编号。作者不能回报 accepted，管理连接不能代交执行结果。
 - `wait_run_update({run_id,after_revision,timeout_ms})`：最多等待 30 秒的状态变化，超时如实返回 changed=false。这是当前连接内的短等待，不会唤醒已结束的 Agent 会话。
 - `complete_run_closeout({run_id,event_id,result,closeout_results})`：实际做完收尾后提交每项结果，程序合并接单和完成回执；缺项、审查失效或本机安装未验证仍然拦截，不代用户验收。
-- 无 MCP 时用本 Run 固定入口中的 Node/tsx 执行 `scripts/agent.ts <Run ID> context [known_hash]|read <请求JSON文件>|start|report <JSON文件>|register-delegation <JSON文件>|report-delegation <JSON文件>|review|wait <revision>|closeout <JSON文件>|deployment <manifest_sha256>`；`--help` 列出完整动作。运行前 WORKBENCH_ROOT 指向所用账本的安装根，不能误连另一份开发账本。
+- 无 MCP 时用本 Run 固定入口中的 Node/tsx 执行 `scripts/agent.ts <Run ID> context [known_hash]|read <请求JSON文件>|start|report <JSON文件>|register-delegation <JSON文件>|report-delegation <JSON文件>|review|wait <revision>|closeout <JSON文件>|deployment <manifest_sha256>`；`--help` 列出完整动作。执行身份管理使用 `scripts/agent.ts <Run ID> manage <tool> <JSON路径>`，审查身份管理使用 `scripts/review.ts <RA ID> manage <tool> <JSON路径>`；只调用本单授权的工具并带上用户原话、request_id 和当前 revision。运行前 WORKBENCH_ROOT 指向所用账本的安装根，不能误连另一份开发账本。
 
-主执行由用户启动；`start` 仅表示当前执行者读取上下文并接单，不会启动另一个主执行客户端。执行者可按当前 Run 的授权直接调用独立审查和子代理：派审用固定的 `review` 入口，子代理先用 `register-delegation` 登记获准，再由当前客户端调用，随后用 `report-delegation` 如实回报。登记不是启动，也不是独立审查；不要求执行者遍历所有 MCP/CLI 或重新寻找客户端。
+常规交接两次复制：需求资料交给大脑，正式执行单交给用户自己启动的外部主执行；大脑本人执行时省去第二次复制。新的外部主执行仍由用户启动；`start` 仅表示当前执行者读取上下文并接单，不会启动另一个主执行客户端。已经工作的执行者可按当前 Run 授权直接派审、等待、返修和收尾，不需用户逐次转发。执行者可按当前 Run 的授权直接调用独立审查和子代理：派审用固定的 `review` 入口，子代理先用 `register-delegation` 登记获准，再由当前客户端调用，随后用 `report-delegation` 如实回报。登记不是启动，也不是独立审查；不要求执行者遍历所有 MCP/CLI 或重新寻找客户端。
 
 两种委派 JSON 都省略 `run_id`，命令行的当前 Run 固定身份；跨 Run 输入会被拒绝，字段与权限仍由后端校验。登记未传 `request_id` 时按 Run 与内容生成稳定 UUID，重试相同内容沿用编号；要新建一项相同内容的委派须显式给新 UUID。回报沿用后端内容摘要幂等，不增加 `request_id`。真实会话编号或实际模型未知时省略相应字段，不从请求型号或当前主会话推造。字段见 [执行协议的委派入口](EXECUTION_PROTOCOL.md#子代理委派登记与回报)。
 
-审查者使用当前 RA 的 `get_review_assignment`、`ack_review_context`、`read_review_context_file`、`report_review_started`、`submit_review_result`，固定命令以 REVIEW.md 为准。只读当前合同、交付与变更证据，不接收作者完整会话作为独立审查依据。
+审查者使用当前 RA 的 `get_review_assignment`、`ack_review_context`、`read_review_context_file`、`report_review_started`、`submit_review_result`，固定命令以 REVIEW.md 为准。提交可提供 `verdict`、`findings`、`limitations`、`evidence` 与 `report_markdown`；服务端合并当前绑定模板。只读当前合同、交付与变更证据，不接收作者完整会话作为独立审查依据。
 
 新执行包的 RUN.md 是简版，完整合同存于 FULL-RUN.md；旧报告只在 REWORK.json 保存一次。历史执行包不重写。计划的 context_contract 明确必读文件/行范围、补充材料及理由、项目内输出目录与内容大小上限。读取内容受授权路径限制，资料不足应说明缺口，不能扫描无关目录补齐。
 
-已配置 execution_route 的任务，“同会话继续”通过工作台调用已登记客户端，优先恢复实际会话，必要时建立新的正式返修 Run。缺少会话编号、客户端不支持恢复或调用失败时保留原因，不伪称续接成功。旧任务未配置路线时仍准备可复制简讯，不把复制当作发送或接单。
+当前执行会话调用 continue_run 时只推进本人的任务记录，必要时建立新的正式返修 Run，不启动另一个执行进程。受管客户端由工作台识别本次进程；手工会话沿正式续接记录继续，原入口仍可用。用户另行启动已登记客户端时才按实际会话能力恢复。当前执行 Agent 在本会话内处理审查、返修和收尾，不要求用户复制转交；需要新的外部主执行或更换负责人时由用户启动。缺少会话编号、客户端不支持恢复或调用失败时保留原因，不伪称续接成功。
 
 一个原生会话可以通过真实回执或显式关联连接多个 Task/Run。各绑定分别保存项目、任务和执行编号；AgentsView 提供会话来源，不根据聊天顺序猜测任务因果。
 

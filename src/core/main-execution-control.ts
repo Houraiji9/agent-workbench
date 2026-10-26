@@ -5,7 +5,7 @@ import {mainExecutionControlInput} from './agent-route-schema.ts';
 import {supersededLaunch} from './manual-takeover.ts';
 
 /** Supplied by the authenticated page/MCP route or the internal scheduler, never tool arguments. */
-export type MainExecutionCaller={role:'user'|'runner'|'planner'|'manager'|'system';source:'page'|'mcp'|'automation'};
+export type MainExecutionCaller={role:'user'|'runner'|'planner'|'manager'|'system';source:'page'|'mcp'|'automation';run_id?:string;job_id?:string};
 export type MainExecutionIntent='initial'|'rework'|'closeout';
 export const isPageUser=(caller:MainExecutionCaller|undefined)=>caller?.role==='user'&&caller.source==='page';
 

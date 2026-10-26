@@ -3,18 +3,23 @@ type Row=Record<string,any>;
 export type ActionGroup='answer'|'decision'|'trial'|'arrange'|'working'|'waiting'|'done';
 export const actionGroups:Record<ActionGroup,string>={answer:'待回答',decision:'异常需决定',trial:'待试用',arrange:'待安排',working:'正在处理',waiting:'等待前序',done:'已结束'};
 /** Display the reviewer's actual receipt without rewriting the task lifecycle. */
-export const taskDisplayStatus=(t:Row):string=>t.status==='submitted'&&t.review_stage==='running'?'review_running':t.status;
+export const hasSameSessionContinuation=(t:Row):boolean=>!!t.same_session_continuation?.run_id&&t.same_session_continuation.run_id===t.current_run_id&&t.same_session_continuation.agent_id===t.agent_id&&['ready','awaiting_dispatch','dispatched','changes_requested','awaiting_closeout'].includes(t.status);
+export const taskDisplayStatus=(t:Row):string=>hasSameSessionContinuation(t)&&taskAction(t).owner==='agent'&&t.status!=='awaiting_closeout'?'continuation_pending':['submitted','in_review'].includes(t.status)&&t.review_stage==='awaiting_decision'?'review_decision':['submitted','in_review'].includes(t.status)&&t.review_stage==='running'?'review_running':t.status;
 export function taskAction(t:Row):{group:ActionGroup;owner:'user'|'agent'|'reviewer'|'none';label:string}{
   if(['accepted','cancelled','rework_linked'].includes(t.status))return {group:'done',owner:'none',label:'已结束'};
   if(waitingForDependencies(t))return {group:'waiting',owner:'none',label:'等待前序'};
   if(t.pending_user_decision&&Date.parse(t.pending_user_decision.expires_at)>Date.now())return {group:'decision',owner:'user',label:'确认事项'};
   if(['waiting_input','closeout_waiting_input'].includes(t.status))return t.question_answered?{group:'arrange',owner:'user',label:'答复已保存，继续原会话'}:{group:'answer',owner:'user',label:'去回答'};
-  if(t.automation&&!t.automation.superseded&&['failed','interrupted'].includes(t.automation.status))return {group:'decision',owner:'user',label:'处理客户端调用阻碍'};
+  if(t.automation&&(!t.automation.superseded||t.automation.recovery_required||t.automation.process_may_be_running===true)&&['failed','interrupted'].includes(t.automation.status))return {group:'decision',owner:'user',label:'处理客户端调用阻碍'};
   if(t.automation&&['queued','launching','running'].includes(t.automation.status))return {group:'working',owner:t.automation.role==='review'?'reviewer':'agent',label:t.automation.role==='review'?(t.review_stage==='running'?'独立审查中':'正在调用审查者'):'客户端正在处理'};
   if(['blocked','failed','closeout_blocked'].includes(t.status))return {group:'decision',owner:'user',label:'处理阻碍'};
   if(t.status==='awaiting_confirmation')return t.delivery_target==='runtime'&&!t.deployment?.verified?{group:'working',owner:'agent',label:'等待本机更新'}:{group:'trial',owner:'user',label:'去试用'};
+  if(['submitted','in_review'].includes(t.status)&&t.review_stage==='awaiting_decision')return {group:'decision',owner:'user',label:'审查报告已齐，待负责人决定'};
+  if(t.status==='in_review'&&t.review_stage==='running')return {group:'working',owner:'reviewer',label:'独立审查中'};
   if(t.status==='submitted'&&t.reviewer_id===null&&t.review_policy?.mode==='not_requested')return {group:'arrange',owner:'user',label:'继续收尾'};
+  if(t.status==='submitted'&&(t.active_reviewers||[]).some((m:Row)=>m.status==='awaiting_dispatch')){const review=reviewHandoffCopy(t);return {group:review.holder==='you'?'arrange':'working',owner:review.holder==='you'?'user':'agent',label:review.headline};}
   if(t.status==='submitted')return t.review_stage==='running'?{group:'working',owner:'reviewer',label:'独立审查中'}:t.review_delivery==='agent'?{group:'working',owner:'agent',label:'安排审查中'}:{group:'arrange',owner:'user',label:'交给审查者'};
+  if(hasSameSessionContinuation(t))return {group:'working',owner:'agent',label:t.status==='awaiting_closeout'?'原执行者继续收尾':'原执行者继续返修，等待接单'};
   if(['in_review','awaiting_closeout'].includes(t.status))return t.closeout_delivery==='agent'?{group:'working',owner:'agent',label:'执行者继续收尾'}:{group:'arrange',owner:'user',label:'继续原会话'};
   if(t.status==='changes_requested'&&t.automation_policy?.auto_rework)return {group:'working',owner:'agent',label:'原执行者继续返修'};
   if(['ready','awaiting_dispatch','changes_requested','acceptance_rejected'].includes(t.status))return {group:'arrange',owner:'user',label:['changes_requested','acceptance_rejected'].includes(t.status)?'继续返修':'交给执行者'};
@@ -46,3 +51,13 @@ export function layoutRelationships(nodes:GraphNode[],edges:GraphEdge[]){
   const levels=new Map<number,number>();const placed=nodes.map(n=>{const rank=ranks.get(n.id)||0,index=levels.get(rank)||0;levels.set(rank,index+1);return {...n,x:24+rank*310,y:24+index*110};});
   return {nodes:placed,width:Math.max(600,...placed.map(n=>n.x+270)),height:Math.max(250,...placed.map(n=>n.y+95)),cycle_nodes:nodes.filter(n=>!visited.has(n.id)).map(n=>n.id)};
 }
+
+/** Read only recorded review work; pending orders and returned reports are separate facts. */
+export function reviewHandoffCopy(t:Row,summary?:Row){
+ const members=summary?.members||t.active_reviewers||[],pending=members.filter((m:Row)=>m.status==='awaiting_dispatch'),running=members.filter((m:Row)=>m.status==='running');
+ const reported=summary?.counts?.completed??t.review_report_counts?.completed??0;
+ if(running.length||t.review_stage==='running')return {headline:reported?'部分审查已回报，其余仍在审查':'独立审查正在进行',next:'等待尚未完成的审查者回传报告，再由负责人决定下一步',holder:'reviewer',arranged:true};
+ if(pending.length){const manual=pending.some((m:Row)=>m.delivery_mode==='manual');return {headline:reported?'部分审查已回报，其余已安排待接单':'独立审查已安排，等待接单',next:manual?'请将已准备的审查单交给尚未接单的审查者':'等待客户端调用已安排的审查者，接单后更新进度',holder:manual?'you':'agent',arranged:true};}
+ return {headline:'成果已交付，尚未安排独立审查',next:'请安排独立审查者，再交接审查单',holder:'you',arranged:false};
+}
+export function leadContinuedReview(t:Row){return !!(t.review_closeout_decision_id||t.closeout?.review_decision_id||t.review_decision?.decision==='continue');}

@@ -4,6 +4,7 @@ import {parseAgentOutput, createAgentOutputParser} from '../src/core/agent-outpu
 
 const line = (value: unknown) => JSON.stringify(value);
 const report = '{"type":"review-result","review_id":"RA-test","verdict":"passed"}';
+test('Cursor observed terminal camelCase usage is retained without inventing an actual model',()=>{const final=parseAgentOutput('cursor',line({type:'result',subtype:'success',is_error:false,session_id:'synthetic-cursor-session',result:report,usage:{inputTokens:120,outputTokens:30,cacheReadTokens:450,cacheWriteTokens:0}}));assert.deepEqual(final.usage,{scope:'reported_total',inputTokens:120,outputTokens:30,cacheReadTokens:450,cacheWriteTokens:0});assert.equal(final.model,undefined);});
 
 test('DSH 实录结构：sessionId、逐步 usage、final.text 分开提取', () => {
   assert.deepEqual(parseAgentOutput('dsh', line({type: 'session', sessionId: 'session-abc-123', cwd: '/private/project'})), {recognized: true, terminal: false, eventType: 'session', sessionId: 'session-abc-123'});

@@ -13,18 +13,23 @@ import {projectEditSchema,replySchema} from './user-input.ts';
 import {subscriptionCreateSchema,subscriptionChangesSchema} from './subscriptions.ts';
 import {reworkOrder} from './acceptance-feedback.ts';
 import {addAuthorizedRoot,authorizeProject} from './roots.ts';
-import {reviewOrderInput,exportReviewOrder,reviewFeedbackOrder} from './review-workflow.ts';
+import {reviewOrderInput,exportReviewOrder,reviewFeedbackOrder,reviewMemberInput,reviewDecisionInput,reviewArrangementInput,updateReviewMember,decideReviewCollaboration,setReviewArrangement} from './review-workflow.ts';
+import {revokeReview} from './review-evidence.ts';
+import {taskAmendmentInput,amendTask} from './task-amendment.ts';
+import {scopeManagementInput,type ManagementCaller} from './session-management.ts';
+import {projectMemoryInput,projectMemories} from './project-memory.ts';
 import {assertMayArrangeReview} from './review-permissions.ts';
 import {prepareDecision,decisionReceipt} from './user-decisions.ts';
 import {createBackup} from '../../scripts/backup.ts';
 import {artifactFile,openArtifactFolder,type revealFile} from './artifact-folders.ts';
-import {arrangementProposalInput,proposeTaskArrangement} from './task-arrangement.ts';
+import {arrangementProposalInput,proposeTaskArrangement,arrangementInput,changeTaskArrangement} from './task-arrangement.ts';
 
 const text=z.string().trim().min(1).max(20000),key=text.max(200),version=z.number().int().positive();
 const action=<T extends z.ZodRawShape>(name:string,fields:T)=>z.object({action:z.literal(name),...fields}).strict();
-const envelope=(change:z.ZodTypeAny)=>z.object({request_id:z.string().uuid(),user_instruction:text.min(2).describe('本会话用户原话，记录操作来由。关键决定须用户在页面确认，此文本不是授权凭据。'),change}).strict();
+const envelope=(change:z.ZodTypeAny)=>z.object({request_id:z.string().uuid(),user_instruction:text.min(2).describe('本会话用户的明确要求；保存原话和实际办理者，不冒充用户或他人的报告。'),change}).strict();
 export type ManagementServices={integrations:Integrations;readReviewTrace:TraceReader;revealArtifact:typeof revealFile;openProject:(projectId:string)=>unknown};
-type Context={wb:Workbench;services:ManagementServices};
+type Context={wb:Workbench;services:ManagementServices;caller?:ManagementCaller;user_instruction?:string};
+const reviewCaller=(ctx:Context)=>({role:ctx.caller?.role==='runner'?'runner' as const:ctx.caller?.role==='reviewer'?'reviewer' as const:'planner' as const,id:ctx.caller?.id||'manager',user_instruction:ctx.user_instruction,source:'conversation'});
 type Tool={description:string;schema:z.AnyZodObject;execute:(ctx:Context,v:any)=>any;asynchronous?:boolean|((v:any)=>boolean)};
 
 /** Explicit business operations, reusing the same validation and state machine as the desktop UI. */
@@ -34,11 +39,12 @@ export const managementTools:Record<string,Tool>={
   ])),execute:({wb},v)=>v.action==='delete'?deleteRequest(wb,v.request_id,{version:v.version}):saveRequest(wb,v.action==='create'?null:v.request_id,v.data)},
   manage_projects:{description:'登记或新建项目、授权准确项目目录、修改资料、关联路径、归档和恢复项目。',schema:envelope(z.discriminatedUnion('action',[
     action('create',{name:text.max(199),path:text.max(1000),goal:text.max(5000).optional(),create:z.boolean().default(false),authorize:z.boolean().default(false)}),
-    action('update',{project_id:key,data:projectEditSchema}),action('add_path',{project_id:key,path:text.max(1000),version,authorize:z.boolean().default(false)}),
+    action('update',{project_id:key,data:projectEditSchema}),action('add_path',{project_id:key,path:text.max(1000),version,authorize:z.boolean().default(false)}),action('link_scope',{project_id:key,reason:text.min(5).max(2000)}),
     action('archive',{project_id:key,version,archived:z.boolean()})
   ])),asynchronous:v=>['create','add_path'].includes(v.action),execute:({wb},v)=>{
     if(v.action==='create'){const {action:_,authorize,...data}=v;return authorize?authorizeProject(wb.config,data,p=>wb.registerProject({...data,path:p,create:false})).value:wb.registerProject(data)}
     if(v.action==='update')return wb.editProject(v.project_id,v.data);
+    if(v.action==='link_scope')return wb.get('projects',v.project_id);
     if(v.action==='archive')return archiveProject(wb,v.project_id,{version:v.version,archived:v.archived});
     // Check the optimistic version before any authorization file changes.
     assert(wb.get('projects',v.project_id).version===v.version,'项目资料已变化，请重新读取版本',409);
@@ -72,27 +78,29 @@ export const managementTools:Record<string,Tool>={
     action('reply',{task_id:key,data:replySchema}),action('accept',{task_id:key,run_id:key,revision:version}),
     action('reject',{task_id:key,revision:version,run_id:key,note:text.max(10000),artifact_hashes:z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(1),followup_task_id:key.optional()}),
     action('rework',{task_id:key,revision:version,feedback_id:key}),
-    action('propose_arrangement',{task_id:key,data:arrangementProposalInput})
+    action('propose_arrangement',{task_id:key,data:arrangementProposalInput}),action('set_arrangement',{task_id:key,data:arrangementInput}),action('amend',{data:taskAmendmentInput})
   ])),asynchronous:v=>v.action==='rework',execute:({wb},v)=>{
     if(v.action==='reply')return wb.saveReply(v.task_id,v.data);
+    if(v.action==='amend')return amendTask(wb,v.data);
     if(v.action==='propose_arrangement')return proposeTaskArrangement(wb,v.task_id,v.data);
+    if(v.action==='set_arrangement')return changeTaskArrangement(wb,v.task_id,v.data);
     if(v.action==='accept'||v.action==='reject')return prepareDecision(wb,v.action,v);
     if(v.action==='rework')return reworkOrder(wb,v.task_id,{revision:v.revision,feedback_id:v.feedback_id});
     return wb.manualAction(v.task_id,v.action,v.revision);
   }},
-  manage_reviews:{description:'安排首次独立审查、准备已有结论后的改派/撤回确认卡片、生成返工交接。报告由独立审查者本人回传；改派和撤回须用户在首页确认。',schema:envelope(z.discriminatedUnion('action',[
+  manage_reviews:{description:'按用户要求增减或更换审查成员和模型；已开工也在同任务生效。分别保留报告，由负责人记录继续、返修或补审决定。',schema:envelope(z.discriminatedUnion('action',[
     action('assign',{data:reviewOrderInput}),action('revoke',{review_id:key,run_id:key,revision:version,reason:text.min(5).max(2000)}),
+    action('update_member',{data:reviewMemberInput}),action('decide',{data:reviewDecisionInput}),action('set_arrangement',{data:reviewArrangementInput}),
     action('return_to_executor',{run_id:key,revision:version})
-  ])),asynchronous:v=>v.action==='return_to_executor'||v.action==='assign',execute:({wb},v)=>{
-    if(v.action==='assign'){
-      try{assertMayArrangeReview(wb,v.data.run_id,{role:'planner',id:'manager'})}
-      catch(e){if(e instanceof DomainError&&e.status===403)return prepareDecision(wb,'assign',v);throw e}
-      return exportReviewOrder(wb,v.data,{role:'planner',id:'manager'});
-    }
-    if(v.action==='revoke')return prepareDecision(wb,'revoke',v);
+  ])),asynchronous:v=>['return_to_executor','assign','update_member'].includes(v.action),execute:(ctx,v)=>{const {wb}=ctx,caller=reviewCaller(ctx);
+    if(v.action==='assign')return exportReviewOrder(wb,v.data,caller);
+    if(v.action==='update_member')return updateReviewMember(wb,v.data,caller);
+    if(v.action==='set_arrangement')return setReviewArrangement(wb,v.data,caller);
+    if(v.action==='decide')return decideReviewCollaboration(wb,v.data,caller);
+    if(v.action==='revoke')return revokeReview(wb,v.review_id,{run_id:v.run_id,revision:v.revision,reason:v.reason});
     return reviewFeedbackOrder(wb,v.run_id,v.revision);
   }},
-  manage_memories:{description:'保存项目决定、已知问题、失败经验或交接记忆；可确认用户提供的事实，supersedes 用于替代旧记忆，保留来源。',schema:envelope(z.object({project_id:key,kind:z.enum(['decision','known_issue','failed_attempt','handoff']),content:text,status:z.enum(['candidate','confirmed']),source_id:key,supersedes:key.optional(),scope:text.max(100).default('project')}).strict()),execute:({wb},v)=>wb.memory(v)},
+  manage_memories:{description:'按用户指示保存项目经验；记录实际Agent及指示来源，不将Agent代登记写成用户亲自确认。supersedes 保留替代关系。',schema:envelope(z.object({project_id:key,kind:z.enum(['decision','known_issue','failed_attempt','handoff']),content:text,status:z.enum(['candidate','confirmed']),source_id:key,supersedes:key.optional(),scope:text.max(100).default('project')}).strict()),execute:({wb,caller},v)=>wb.memory(v,caller?.id||'manager')},
   link_execution_session:{description:'按用户要求把已采集的真实会话关联到指定执行记录。',schema:envelope(z.object({session_id:key,run_id:key}).strict()),execute:({wb},v)=>wb.linkSession(v.session_id,v.run_id)},
   refresh_integration:{description:'刷新 Token Monitor 或 AgentsView；返回实际连接结果。',schema:envelope(z.object({integration_id:z.enum(['tokenMonitor','agentsView']),cursor:z.string().max(1000).default('')}).strict()),asynchronous:true,execute:async({wb,services},v)=>{await services.integrations.refresh(v.integration_id,v.cursor);const {snapshot,...status}=wb.get('integrations',v.integration_id);return status}},
   manage_settings:{description:'授权用户指定的准确项目文件夹，或配置本机数据源地址及密钥引用。不会修改全局 Agent 配置。',schema:envelope(z.discriminatedUnion('action',[
@@ -128,12 +136,14 @@ export function managementContext(wb:Workbench,input:unknown){
     out.connection_settings=Object.fromEntries(Object.entries(wb.config.integrations).map(([id,active])=>{const c=saved[id]||active;return [id,{base_url:c.baseUrl,active_base_url:active.baseUrl,secret_env:c.secretEnv||null,secret_file:c.secretFile||null,managed:!!c.managed,restart_required:JSON.stringify(c)!==JSON.stringify(active)}]}));
   }
   if(v.project_id){wb.get('projects',v.project_id);for(const k of ['requests','tasks','memories','user_decisions'])if(out[k])out[k]=out[k].filter((r:Row)=>r.project_id===v.project_id);if(out.projects)out.projects=out.projects.filter((p:Row)=>p.id===v.project_id)}
+  if(out.memories){const all=out.memories;out.memories=all.filter((m:Row)=>m.status!=='superseded').slice(-12).reverse().map((m:Row)=>({id:m.id,project_id:m.project_id,kind:m.kind,status:m.status,source_id:m.source_id,content_preview:m.content.slice(0,160)}));out.memory_index={total:all.length,read_tool:'get_project_memories',note:'短索引不是必读全文；按项目与编号补读相关经验。'};}
   if(v.task_id){const detail=wb.taskDetail(v.task_id);assert(!v.project_id||detail.task.project_id===v.project_id,'任务不属于所选项目',409);out.task_detail=detail}
   return out;
 }
 export const managementResultInput=z.object({request_id:z.string().uuid()}).strict();
 export const artifactReadInput=z.object({artifact_id:key}).strict();
 export const managementReadTools={
+  get_project_memories:{description:'分页查询项目经验短索引，按编号读取相关全文；已读content_hash用于增量，不要求每轮全读。',schema:projectMemoryInput},
   get_management_context:{description:'读取可管理项目、需求、团队、额度、订阅、任务和当前版本；修改前先读取。',schema:managementContextInput},
   get_management_result:{description:'按操作编号查询是否已保存、失败或中断；重试前核对，避免重复操作。',schema:managementResultInput},
   get_task_detail:{description:'读取任务、执行、问题回答、产物与审查完整记录。',schema:z.object({task_id:key}).strict()},
@@ -145,6 +155,7 @@ export const managementReadTools={
 export async function readManagement(wb:Workbench,services:ManagementServices,name:string,input:unknown){
   const definition=managementReadTools[name as keyof typeof managementReadTools];assert(definition,'读取工具不存在',404);const v=definition.schema.parse(input) as Row;
   if(name==='get_management_context')return managementContext(wb,v);
+  if(name==='get_project_memories')return projectMemories(wb,v);
   if(name==='get_management_result'){const call=wb.get('management_calls',v.request_id);return call.decision_id?{...call,...decisionReceipt(wb,wb.get('user_decisions',call.decision_id))}:call}
   if(name==='get_task_detail')return wb.taskDetail(v.task_id);
   if(name==='get_planning_entry')return wb.planningEntry(v.request_id);
@@ -155,20 +166,26 @@ export async function readManagement(wb:Workbench,services:ManagementServices,na
 export function readManagedArtifact(wb:Workbench,input:unknown){const v=artifactReadInput.parse(input),a=wb.get('artifacts',v.artifact_id),bytes=readBounded(artifactFile(wb,a.id,'archive'),20*1024*1024);assert(hash(bytes)===a.sha256,'成果内容校验失败',409);const isText=/^\.(md|txt|json|csv|log|diff|patch|html|htm)$/.test(a.extension);return {artifact:a,encoding:isText?'utf8':'base64',content:bytes.toString(isText?'utf8':'base64')}}
 
 /** Sync writes and their receipt commit together; interrupted async calls stay visibly pending. */
-export async function manage(wb:Workbench,services:ManagementServices,name:string,input:unknown){
+export async function manage(wb:Workbench,services:ManagementServices,name:string,input:unknown,caller:ManagementCaller={role:'manager',id:'manager'}){
   assert(name!=='import_execution_receipt','执行回报请使用本 Run 的独立连接；远程回执由用户在页面导入',403);
   assert(name!=='import_grok_review_for_user'&&!(name==='manage_reviews'&&['record','import_result'].includes((input as Row)?.change?.action)),'管理连接不能代写或导入审查结论，请由独立审查者回传',403);
-  const tool=managementTools[name];assert(tool,'管理工具不存在',404);const v=tool.schema.parse(input),digest=hash(JSON.stringify({tool:name,input:v}));
+  const tool=managementTools[name];assert(tool,'管理工具不存在',404);const v=tool.schema.parse(scopeManagementInput(wb,name,input as Row,caller)),digest=hash(JSON.stringify({tool:name,input:v}));
   const old=wb.maybe('management_calls',v.request_id);
   if(old){assert(old.policy_version===2||!['manage_reviews','manage_tasks'].includes(name),'旧权限版本的操作回执仅供历史查看，请读取当前状态并使用新操作编号',409);assert(old.digest===digest,'同一操作编号对应不同内容，请使用新的 request_id',409);if(old.decision_id)return decisionReceipt(wb,wb.get('user_decisions',old.decision_id));assert(old.status==='completed',old.status==='failed'?'上次操作失败，请查看错误后使用新操作编号重试':'上次操作仍在处理或曾中断，请先核对结果',409);return old.result}
-  const context={request_id:v.request_id,tool:name,user_instruction:v.user_instruction};
-  const record:Row={id:v.request_id,digest,...context,status:'pending',policy_version:2,created_at:now()};
-  const finish=(value:any)=>{const waiting=value?.status==='awaiting_user_confirmation',result=waiting?value:{request_id:v.request_id,status:'completed',result:value??null};wb.put('management_calls',{...record,status:result.status,completed_at:waiting?null:now(),decision_id:waiting?value.result.decision_id:undefined,result});wb.audit('manager',name,v.request_id,{status:result.status});return result};
+  const context={request_id:v.request_id,tool:name,user_instruction:v.user_instruction,actor:caller.id};
+  const record:Row={id:v.request_id,digest,...context,caller,status:'pending',policy_version:2,created_at:now()};
+  const finish=(value:any)=>{
+    if(caller.role!=='manager'&&name==='manage_projects'&&['create','link_scope'].includes(v.change.action)){
+      const run=wb.get('runs',caller.run_id!),projectId=value.id;
+      const grant={project_id:projectId,actor:caller.id,user_instruction:v.user_instruction,request_id:v.request_id,reason:v.change.reason||'用户在当前会话登记新项目',created_at:now()};
+      run.management_project_grants=[...(run.management_project_grants||[]),grant];wb.put('runs',run,{task_id:run.task_id});wb.audit(caller.id,'link_management_project',projectId,grant);
+    }
+    const waiting=value?.status==='awaiting_user_confirmation',result=waiting?value:{request_id:v.request_id,status:'completed',result:value??null};wb.put('management_calls',{...record,status:result.status,completed_at:waiting?null:now(),decision_id:waiting?value.result.decision_id:undefined,result});wb.audit('manager',name,v.request_id,{status:result.status});return result};
   const external=typeof tool.asynchronous==='function'?tool.asynchronous(v.change):tool.asynchronous;
-  if(!external)return wb.managementContext.run(context,()=>wb.transaction(()=>finish(tool.execute({wb,services},v.change))));
+  if(!external)return wb.managementContext.run(context,()=>wb.transaction(()=>finish(tool.execute({wb,services,caller,user_instruction:v.user_instruction},v.change))));
   wb.transaction(()=>wb.put('management_calls',record));
   return wb.managementContext.run(context,async()=>{
-    try{const result=await tool.execute({wb,services},v.change);return wb.transaction(()=>finish(result))}
+    try{const result=await tool.execute({wb,services,caller,user_instruction:v.user_instruction},v.change);return wb.transaction(()=>finish(result))}
     catch(e){wb.transaction(()=>{wb.put('management_calls',{...record,status:'failed',ended_at:now(),error:e instanceof DomainError?e.message:'操作未完成，请核对本机服务和记录'});wb.audit('manager',name,v.request_id,{status:'failed'})});throw e}
   });
 }

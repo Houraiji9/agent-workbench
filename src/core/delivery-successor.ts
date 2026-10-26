@@ -4,7 +4,7 @@ import type {Row} from './schema.ts';
 import {hash,readBounded,safePath} from './security.ts';
 import {runTask} from './workflow-policy.ts';
 import {resolveDeliveryProfile,assertDeploymentReceipt,type DeliveryProfile} from './delivery-profile.ts';
-import {latestReview} from './latest-review.ts';
+import {reviewProceedAuthority} from './latest-review.ts';
 
 const samePath=(a:string,b:string)=>path.resolve(a).toLowerCase()===path.resolve(b).toLowerCase();
 const sorted=(values:string[])=>JSON.stringify([...values].sort());
@@ -38,19 +38,19 @@ function successors(wb:Workbench,t:Row,r:Row){
         if(!task||task.project_id!==t.project_id||!['submitted','accepted'].includes(next.status)||!samePath(next.cwd,r.cwd))return [];
         const profile=frozenProfile(wb,task,next);
         if(!sameDeployment(original,profile)||(task.current_run_id!==next.id&&profile.deployment.verification!=='portable_manifest'))return [];
-        const review=latestReview(wb,next.id);
-        if(!review||review.verdict!=='passed'||!review.reviewer_id||review.reviewer_id===next.agent_id||review.reviewer_id===r.agent_id||!Number.isFinite(Date.parse(review.created_at))||Date.parse(review.created_at)<Date.parse(next.created_at))return [];
+        const authority=reviewProceedAuthority(wb,next.id),review=authority.review;
+        if(!review||!authority.can_proceed||!review.reviewer_id||review.reviewer_id===next.agent_id||review.reviewer_id===r.agent_id||!Number.isFinite(Date.parse(review.created_at))||Date.parse(review.created_at)<Date.parse(next.created_at))return [];
         const artifacts=wb.all('artifacts').filter(a=>a.run_id===next.id&&a.current);
         if(!artifacts.length||sorted(artifacts.map(a=>a.sha256))!==sorted(review.artifact_hashes||[]))return [];
         for(const a of artifacts)if(hash(readBounded(safePath(a.archive_path,[path.join(wb.config.dataDir,'artifacts')]),20*1024*1024))!==a.sha256)return [];
         const identity={task_id:task.id,run_id:next.id,review_id:review.id};
         if(profile.deployment.verification==='executor_reported'){
-          const receipt=assertDeploymentReceipt({run_id:next.id,current_run_id:task.current_run_id,agent_id:next.agent_id,profile,version:next.delivery_version,artifact_hashes:[...new Set(artifacts.map(a=>a.sha256))],review_id:review.id,review_skipped:false},next.deployment_evidence);
+          const receipt=assertDeploymentReceipt({run_id:next.id,current_run_id:task.current_run_id,agent_id:next.agent_id,profile,version:next.delivery_version,artifact_hashes:[...new Set(artifacts.map(a=>a.sha256))],review_id:review.id,...(authority.decision?{review_decision_id:authority.decision.id}:{}),review_skipped:false},next.deployment_evidence);
           if(Date.parse(receipt.reported_at)<Date.parse(review.created_at)||Date.parse(receipt.reported_at)>Date.now())return [];
           return [{run:next,evidence:{...identity,verification:'executor_reported',reported_at:receipt.reported_at,version:receipt.version,profile_sha256:receipt.profile_sha256,artifact_hashes:receipt.artifact_hashes,verification_note:receipt.verification_note} as SuccessorEvidence}];
         }
         const deployment=next.deployment,root=r.deployment?.runtime_root||original.deployment.target;
-        if(!deployment?.verified||deployment.review_id!==review.id||!samePath(deployment.runtime_root,root)||!samePath(deployment.runtime_root,profile.deployment.target)||!Number.isFinite(Date.parse(deployment.verified_at))||Date.parse(deployment.verified_at)<Date.parse(review.created_at)||Date.parse(deployment.verified_at)>Date.now()||!artifacts.some(a=>a.sha256===deployment.manifest_sha256))return [];
+        if(!deployment?.verified||deployment.review_id!==review.id||(deployment.review_decision_id||null)!==(authority.decision?.id||null)||!samePath(deployment.runtime_root,root)||!samePath(deployment.runtime_root,profile.deployment.target)||!Number.isFinite(Date.parse(deployment.verified_at))||Date.parse(deployment.verified_at)<Date.parse(review.created_at)||Date.parse(deployment.verified_at)>Date.now()||!artifacts.some(a=>a.sha256===deployment.manifest_sha256))return [];
         const runtime=safePath(root,wb.roots(wb.get('projects',t.project_id)));
         if(hash(readBounded(path.join(runtime,'update-manifest.json'),8*1024*1024))!==deployment.manifest_sha256)return [];
         return [{run:next,evidence:{...identity,verification:'portable_manifest',manifest_sha256:deployment.manifest_sha256,verified_at:deployment.verified_at} as SuccessorEvidence}];

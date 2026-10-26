@@ -1,3 +1,4 @@
+import {userReviewSelection} from './priority-policy.ts';
 import {z} from 'zod';
 import type {Workbench} from './workbench.ts';
 import type {Row} from './schema.ts';
@@ -49,12 +50,18 @@ export function freezeExecutionContract(task:Row,agentId:string,model:string|nul
 /** A run's choice never follows later project defaults or a mutable Task. */
 export function runTask(task:Row,run:Row):Row{
   const c=run.execution_contract?structuredClone(run.execution_contract):null;
-  if(!c)return task;
+  if(!c)return reviewArrangementTask(task,run);
   const additions=Object.fromEntries(['importance','model_selection','delivery_profile','delivery_target','runtime_root']
     .filter(key=>Object.hasOwn(c,key)).map(key=>[key,structuredClone(c[key])]));
-  return {...task,agent_id:c.agent_id,requested_model:c.requested_model,reviewer_id:c.reviewer_id,
+  return reviewArrangementTask({...task,agent_id:c.agent_id,requested_model:c.requested_model,reviewer_id:c.reviewer_id,
     execution_policy:c.execution_policy,execution_route:c.execution_route||undefined,review_route:c.review_route||undefined,
-    automation_policy:c.automation_policy||undefined,review_policy:c.review_policy,...additions};
+    automation_policy:c.automation_policy||undefined,review_policy:c.review_policy,...additions},run);
+}
+function reviewArrangementTask(task:Row,run:Row):Row{
+  const a=run.review_arrangement;if(!a)return task;
+  return {...task,reviewer_id:a.reviewer_id,review_route:a.route||undefined,
+    model_selection:userReviewSelection(task.model_selection,{reviewer_id:a.reviewer_id,requested_model:a.requested_model,reason:a.reason}),
+    review_arrangement:a};
 }
 function checkPriority(task:Row){
   try{validatePriorityPlan(task,task.importance||'normal',task.review_policy)}catch(error){

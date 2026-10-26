@@ -10,7 +10,7 @@ import {reviewSkipped} from './acceptance.ts';
 import {runTask} from './workflow-policy.ts';
 import {resolveDeliveryProfile,deliveryProfileDigest} from './delivery-profile.ts';
 import {reviewedSourceSuccessor,type SuccessorEvidence} from './delivery-successor.ts';
-import {latestReview} from './latest-review.ts';
+import {latestReview,reviewProceedAuthority} from './latest-review.ts';
 export {latestReview} from './latest-review.ts';
 
 export const closeoutStates=['awaiting_closeout','closing','closeout_waiting_input','closeout_blocked'];
@@ -20,15 +20,16 @@ export const closeoutOrderInput=closeoutInput.extend({expected_revision:z.number
 function artifacts(wb:Workbench,rid:string){return wb.all('artifacts').filter(a=>a.run_id===rid&&a.current).sort((a,b)=>a.id.localeCompare(b.id))}
 function binding(wb:Workbench,t:Row,r:Row){
   const task=runTask(t,r);
-  const review=latestReview(wb,r.id),files=artifacts(wb,r.id);
+  const authority=reviewProceedAuthority(wb,r.id),review=authority.review,files=artifacts(wb,r.id);
   assert(files.length>0,'缺少当前交付');
-  assert(reviewSkipped(task)||review?.verdict==='passed','须先完成独立 Review',409);
-  const hashes=files.map(a=>a.sha256).sort();
-  if(!reviewSkipped(task))assert(JSON.stringify([...review!.artifact_hashes].sort())===JSON.stringify(hashes),'审查产物版本不匹配',409);
+  assert(reviewSkipped(task)||authority.can_proceed,'须先完成独立 Review',409);
+  const hashes=files.map(a=>a.sha256).sort(),boundReview=authority.decision&&Object.hasOwn(authority.decision,'binding_review_id')?authority.decision.binding_review_id:authority.decision&&r.closeout?.review_decision_id===authority.decision.id?r.closeout.review_id:review?.id||null;
+  if(!reviewSkipped(task)&&!authority.decision)assert(JSON.stringify([...review!.artifact_hashes].sort())===JSON.stringify(hashes),'审查产物版本不匹配',409);
   // Keep the original legacy serialization byte-for-byte; existing closeouts remain valid.
-  const payload:Row={run:r.id,review:reviewSkipped(task)?null:review!.id,files:files.map(a=>[a.id,a.sha256]),review_files:r.review_files||[]};
+  const payload:Row={run:r.id,review:reviewSkipped(task)?null:boundReview,files:files.map(a=>[a.id,a.sha256]),review_files:r.review_files||[]};
+  if(authority.decision)payload.review_decision_id=authority.decision.id;
   if(task.delivery_profile||r.delivery_version!==undefined){payload.delivery_profile_sha256=deliveryProfileDigest(resolveDeliveryProfile(task,wb.get('projects',t.project_id)));payload.delivery_version=r.delivery_version??null;}
-  return {review_id:reviewSkipped(task)?null:review!.id,artifact_hashes:hashes,digest:hash(JSON.stringify(payload))};
+  return {review_decision_id:authority.decision?.id||null,review_id:reviewSkipped(task)?null:boundReview,artifact_hashes:hashes,digest:hash(JSON.stringify(payload))};
 }
 /** Called inside the caller's transaction. A new review always gets a new closeout identity. */
 export function stageCloseout(wb:Workbench,t:Row,r:Row){
@@ -57,7 +58,7 @@ export function getCloseoutContext(wb:Workbench,rid:string){
   const r=wb.get('runs',rid),t=wb.get('tasks',r.task_id);
   assert(t.current_run_id===rid&&[...closeoutStates,'awaiting_confirmation'].includes(t.status),'本次执行当前不在收尾阶段',409);
   const b=binding(wb,t,r);assert(r.closeout&&r.closeout.digest===b.digest,'收尾单已失效，请重新安排',409);
-  return {task_id:t.id,run_id:rid,task_version:t.version,revision:t.revision,agent_id:r.agent_id,cwd:r.cwd,next_seq:r.seq+1,task_status:t.status,closeout:r.closeout,review:latestReview(wb,rid)||null,review_files:r.review_files||[],result:r.result,original_request:t.original_request,goal:t.goal,scope:t.scope,allowed_paths:t.allowed_paths,forbidden_actions:t.forbidden_actions};
+  return {task_id:t.id,run_id:rid,task_version:t.version,revision:t.revision,agent_id:r.agent_id,cwd:r.cwd,next_seq:r.seq+1,task_status:t.status,closeout:r.closeout,review:latestReview(wb,rid)||null,review_decision:reviewProceedAuthority(wb,rid).decision,review_files:r.review_files||[],result:r.result,original_request:t.original_request,goal:t.goal,scope:t.scope,allowed_paths:t.allowed_paths,forbidden_actions:t.forbidden_actions};
 }
 export function assertCloseoutComplete(wb:Workbench,t:Row,r:Row){
   const b=binding(wb,t,r);
@@ -73,10 +74,10 @@ export function writeCloseoutOrder(wb:Workbench,rid:string){
   const order=path.join(dir,'CLOSEOUT.md');
   const cmd=`& ${quote(process.execPath)} --import ${quote(import.meta.resolve('tsx'))} ${quote(path.join(ROOT,'scripts/closeout.ts'))} ${rid}`;
   const example={schema_version:1,event_id:'EV-请生成新的UUID',task_id:t.id,run_id:rid,task_version:t.version,seq:c.next_seq,event_type:'closeout_completed',occurred_at:now(),data:{identity:r.agent_id,cwd:r.cwd,closeout_id:c.closeout.id,message:'实际收尾结果',result:'请写明实际处理内容、检查证据与使用方式（至少20字）',closeout_results:c.closeout.items.map((i:Row)=>({item_id:i.id,outcome:'done',evidence:'请填写实际结果或核对依据'}))}};
-  const body=`# 执行收尾：${t.title}\n\nTask：${t.id}\nRun：${rid}\n收尾单：${c.closeout.id}\n执行者：${wb.get('agents',r.agent_id).name}\n项目：${wb.get('projects',t.project_id).name}\n工作目录：${r.cwd}\n\n## 原始需求与本轮范围\n${t.original_request}\n\n${t.goal}\n${t.scope}\n\n## 剩余事项\n${c.closeout.items.map((i:Row)=>'- [ ] '+i.id+' '+i.text).join('\n')}\n\n逐项核对原需求与交付报告中的未完成项。只执行已授权的收尾；需要用户决策用 closeout_waiting_input，受阻用 closeout_blocked。发布、费用、清理等仍按原任务授权，不从本单扩大权限。\n\n## 当前交付及审查\n原执行单：${r.order_path}\n交付报告：${path.join(r.directory,'RESULT.md')}\n${c.review?'审查 '+c.review.id+'：'+c.review.verdict+'。完整报告按需从任务审查记录或 get_closeout_context(detail=full) 读取。':'本次用户未安排独立审查。'}\n\n## 修改范围\n${t.allowed_paths.join('\n')}\n禁止：${t.forbidden_actions.join('；')}\n数据、凭据和旧执行记录通过工作台接口访问。保持受审成果；需修改时回报 blocked，并新开 Run 重新交付和审查。\n\n## 接单与回传（PowerShell）\n1. 读取最新状态与序号：\n${cmd} context\n2. 接单（收尾单编号必须一致）：\n${cmd} started ${c.closeout.id}\n3. 完成后按 result.example.json 写回执。填写实际检查结果，seq 使用 context 返回的 next_seq，event_id 用新 UUID，occurred_at 用当前时间。每项 outcome 为 done 或 not_applicable（写明原因）。有未完成项请回报 blocked 或 waiting_input，保持未完成。\n4. 提交回执：\n${cmd} submit ${quote(path.join(dir,'result.json'))}\n确认返回 disposition=applied，若 pending/rejected，处理原因后再说明进展。\n\n也可用该 Run 的 scoped MCP：get_closeout_context(run_id)、report_run_event。所有收尾事件需 data.closeout_id=${c.closeout.id}。支持 closeout_started/progress/waiting_input/blocked/completed；seq 与之前执行连续。接单、进展、受阻和完成各自回报。远程 Agent 返回同样 JSON，用户在任务内导入回执。\n\n收尾报告独立保存；原交付与审查保持原样。完成收尾后再交给用户试用验收。\n`;
+  const body=`# 执行收尾：${t.title}\n\nTask：${t.id}\nRun：${rid}\n收尾单：${c.closeout.id}\n执行者：${wb.get('agents',r.agent_id).name}\n项目：${wb.get('projects',t.project_id).name}\n工作目录：${r.cwd}\n\n## 原始需求与本轮范围\n${t.original_request}\n\n${t.goal}\n${t.scope}\n\n## 剩余事项\n${c.closeout.items.map((i:Row)=>'- [ ] '+i.id+' '+i.text).join('\n')}\n\n逐项核对原需求与交付报告中的未完成项。只执行已授权的收尾；需要用户决策用 closeout_waiting_input，受阻用 closeout_blocked。发布、费用、清理等仍按原任务授权，不从本单扩大权限。\n\n## 当前交付及审查\n原执行单：${r.order_path}\n交付报告：${path.join(r.directory,'RESULT.md')}\n${c.review_decision?'负责人决定 '+c.review_decision.id+'：'+c.review_decision.decision+'；'+c.review_decision.reason+'。审查报告各自保留原结论。':c.review?'审查 '+c.review.id+'：'+c.review.verdict+'。完整报告按需从任务审查记录或 get_closeout_context(detail=full) 读取。':'本次用户未安排独立审查。'}\n\n## 修改范围\n${t.allowed_paths.join('\n')}\n禁止：${t.forbidden_actions.join('；')}\n数据、凭据和旧执行记录通过工作台接口访问。保持受审成果；需修改时回报 blocked，并新开 Run 重新交付和审查。\n\n## 接单与回传（PowerShell）\n1. 读取最新状态与序号：\n${cmd} context\n2. 接单（收尾单编号必须一致）：\n${cmd} started ${c.closeout.id}\n3. 完成后按 result.example.json 写回执。填写实际检查结果，seq 使用 context 返回的 next_seq，event_id 用新 UUID，occurred_at 用当前时间。每项 outcome 为 done 或 not_applicable（写明原因）。有未完成项请回报 blocked 或 waiting_input，保持未完成。\n4. 提交回执：\n${cmd} submit ${quote(path.join(dir,'result.json'))}\n确认返回 disposition=applied，若 pending/rejected，处理原因后再说明进展。\n\n也可用该 Run 的 scoped MCP：get_closeout_context(run_id)、report_run_event。所有收尾事件需 data.closeout_id=${c.closeout.id}。支持 closeout_started/progress/waiting_input/blocked/completed；seq 与之前执行连续。接单、进展、受阻和完成各自回报。远程 Agent 返回同样 JSON，用户在任务内导入回执。\n\n收尾报告独立保存；原交付与审查保持原样。完成收尾后再交给用户试用验收。\n`;
   // Immutable entry for each closeout; live context supplies up-to-date sequence numbers.
   if(!fs.existsSync(order)){atomicWrite(order,body);atomicWrite(path.join(dir,'result.example.json'),JSON.stringify(example,null,2))}
-  return {closeout_id:c.closeout.id,run_id:rid,order_path:order,entry:`审查${c.review?'已通过':'未安排'}，请执行者继续完成收尾。\n请完整读取并执行：${order}\nTask ${t.id} / Run ${rid} / 收尾单 ${c.closeout.id}。先报告 closeout_started 接单，完成逐项收尾后再交用户验收。`};
+  return {closeout_id:c.closeout.id,run_id:rid,order_path:order,entry:`审查${c.review_decision?'已由负责人明确决定继续':c.review?'已通过':'未安排'}，请执行者继续完成收尾。\n请完整读取并执行：${order}\nTask ${t.id} / Run ${rid} / 收尾单 ${c.closeout.id}。先报告 closeout_started 接单，完成逐项收尾后再交用户验收。`};
 }
 export function exportCloseoutOrder(wb:Workbench,input:unknown){const v=closeoutOrderInput.parse(input),r=wb.get('runs',v.run_id),t=wb.get('tasks',r.task_id);assert(t.revision===v.expected_revision,'任务已变化，请刷新',409);assert(!wb.get('projects',t.project_id).dispatch_paused,'项目已收纳暂缓，请恢复后再安排收尾',409);return writeCloseoutOrder(wb,r.id)}
 /** Shares the existing signed event stream, transaction and replay protection. Run remains submitted. */
@@ -107,7 +108,7 @@ export function applyCloseoutEvent(wb:Workbench,e:RunEvent,t:Row,r:Row,created:s
 export function migrateCloseout(wb:Workbench){
   for(const t of wb.all('tasks').filter(t=>['in_review','awaiting_confirmation'].includes(t.status)&&t.current_run_id)){
     const r=wb.get('runs',t.current_run_id);if(r.status!=='submitted'||r.closeout)continue;
-    if(!reviewSkipped(t)&&latestReview(wb,r.id)?.verdict!=='passed')t.status='submitted';
+    if(!reviewSkipped(t)&&!reviewProceedAuthority(wb,r.id).can_proceed)t.status='submitted';
     else stageCloseout(wb,t,r);
     t.revision++;t.updated_at=now();wb.put('tasks',t,{project_id:t.project_id});wb.audit('migration','require_executor_closeout',t.id);
   }

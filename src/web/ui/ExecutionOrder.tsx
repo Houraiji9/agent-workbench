@@ -5,6 +5,8 @@ import type {R} from '../lib/flow.js';
 import {byExecutionOrder, waitingForDependencies} from '../../shared/execution-order.js';
 import {Pill} from './kit.js';
 import {copyOrder} from '../views/actions.js';
+import {taskDisplayStatus} from '../../shared/workflow-view.js';
+import {TaskQuickActions} from './TaskQuickActions.js';
 
 export function OrderStep({task}: {task:R}) {
   return task.execution ? <span className="order-step">{task.execution.step ? `第 ${task.execution.step} 步` : '顺序待核对'}</span> : null;
@@ -12,7 +14,7 @@ export function OrderStep({task}: {task:R}) {
 
 export function OrderStatus({task}: {task:R}) {
   return waitingForDependencies(task) ? <Pill tone="quiet">等待前序</Pill>
-    : ['ready','awaiting_dispatch'].includes(task.status) ? <Pill tone="you">可执行</Pill> : <Pill task={task}/>;
+    : ['ready','awaiting_dispatch'].includes(task.status)&&taskDisplayStatus(task)!=='continuation_pending' ? <Pill tone="you">可执行</Pill> : <Pill task={task}/>;
 }
 
 export function ExecutionList({tasks, queue=false}: {tasks:R[];queue?:boolean}) {
@@ -22,7 +24,7 @@ export function ExecutionList({tasks, queue=false}: {tasks:R[];queue?:boolean}) 
     : byExecutionOrder);
   return <div className="order-list">{list.map(t=>{
     const waiting=waitingForDependencies(t), next=t.execution?.dependencies.filter((d:R)=>!d.satisfied)||[];
-    const ready=['ready','awaiting_dispatch'].includes(t.status)&&!waiting;
+    const ready=['ready','awaiting_dispatch'].includes(t.status)&&!waiting&&taskDisplayStatus(t)!=='continuation_pending';
     return <article className={'order-row'+(waiting?' is-waiting':'')} key={t.id} aria-label={t.title}>
       <div className="order-position">{queue&&t.execution?.queue_position?<span className="order-step">建议第 {t.execution.queue_position} 单</span>:<OrderStep task={t}/>}</div>
       <div className="order-body">
@@ -31,6 +33,7 @@ export function ExecutionList({tasks, queue=false}: {tasks:R[];queue?:boolean}) 
         {waiting&&<div className="order-dependencies">先完成{next.map((d:R)=><button className="link" key={d.id} onClick={()=>s.openTask(d.effective_id)}>{d.effective_title}</button>)}{!next.length&&<span>顺序核对</span>}</div>}
       </div>
       {!queue&&ready&&<button className="btn small" disabled={s.busy} onClick={()=>void copyOrder(s,t)}><Copy size={14}/>复制执行单</button>}
+      {!ready&&<TaskQuickActions task={t}/>}
     </article>;
   })}</div>;
 }

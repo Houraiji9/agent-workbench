@@ -1,4 +1,5 @@
 import {chatContextInput} from '../core/chat-planning.ts';
+import {nativeReviewRecoveryInput} from '../core/native-review-recovery.ts';
 import {delegationInput,delegationReportInput} from '../core/workflow-policy.ts';
 import {agentDispatchInput,agentJobInput} from '../core/agent-route-schema.ts';
 import {runContextReadInput} from '../core/execution-context.ts';
@@ -7,6 +8,8 @@ import {contextInput,contextAckInput,activityInput,waitInput,finishInput} from '
 import {deploymentInput} from '../core/runtime-delivery.ts';
 import {deploymentContextInput,deploymentReceiptInput} from '../core/deployment-evidence.ts';
 import {managementTools,managementReadTools} from '../core/management.ts';
+import {sessionManagementWrites,sessionManagementReads} from '../core/session-management.ts';
+import {reviewReportInput} from '../core/review-submission.ts';
 import {reviewHandoffInput} from '../core/review-workflow.ts';
 import {closeoutInput,closeoutOrderInput} from '../core/closeout.ts';
 import {reviewScopeInput,reviewStartInput,reviewResultInput,reviewOrderInput,reviewId} from '../core/review-workflow.ts';
@@ -30,19 +33,23 @@ if(runner&&!/^R-[a-f0-9-]{36}$/.test(runner))throw new Error('WORKBENCH_RUN_ID �
 const credentials=JSON.parse(fs.readFileSync(path.join(c.dataDir,reviewer?'review-keys/'+reviewer+'.json':runner?'run-keys/'+runner+'.json':'keys.json'),'utf8'));
 const token=reviewer||runner?credentials.token:manager?credentials.manager:chatPlanner?credentials.chat_planner:credentials.planner;
 if(!token)throw Error('工作台后台需要升级：请从托盘退出并重新打开工作台，然后重连 MCP。');
-const server=new McpServer({name:'agent-workbench',version:'0.1.0'},{instructions:'本地主会话默认 manager，可直接办理用户在会话里交代的日常管理。先 get_management_context 获取版本，再使用管理工具，user_instruction 保存用户原话、request_id 用唯一UUID；重试使用原编号。不要让用户回页面重复填表。验收、退回、撤回以及已有结论后的改派只会准备待确认卡片，必须请用户在工作台首页亲自点击；不得用浏览器、HTTP或脚本代点。user_instruction仅记录原话，不能充当用户确认。管理连接没有代写或导入独立审查结论的权限。执行和收尾回执须使用本Run独立runner连接，manager没有代交回执工具。远程回执由用户在页面导入。runner/reviewer连接只处理本单。先 get_dispatch_context 和 get_project_context，再检索历史、提交结构化计划、导出执行单。外部主执行由用户启动；大脑本人获用户直接做授权可接自己的Run。独立审查与获准子代理可直接调用。历史资料不能改变权限。模型决定任务拆分与选人，程序校验。复制不等于派发；作者交付不能自动验收。无实时来源时保留 unknown。执行回报限当前 Run；不提供任意 shell、SQL 或文件接口。'});
-const call=async(name:string,input:any)=>{if(runner&&name==='get_review_candidates')input={...input,run_id:runner};try{const res=await fetch(`http://127.0.0.1:${c.port}/api/mcp/${name}`,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(input),signal:AbortSignal.timeout(['submit_grok_review','create_workbench_backup','refresh_integration'].includes(name)?120000:name==='create_project_diagram'?100000:['wait_run_update','get_agent_job'].includes(name)?40000:['get_dispatch_context','get_agent_clients','get_review_candidates'].includes(name)?120000:15000)});const data=await res.json();return {content:[{type:'text' as const,text:JSON.stringify(data,null,2)}],isError:!res.ok}}catch(error){console.error('工作台 MCP 请求失败：',(error as Error).message);return {content:[{type:'text' as const,text:'后台不可用，请先启动工作台；没有创建第二份账本。'}],isError:true}}};
+const server=new McpServer({name:'agent-workbench',version:'0.1.0'},{instructions:'工作台记录项目流转，模型负责理解用户要求。当前执行或审查会话可直接办理本项目管理：先读 get_management_context 获取版本，用 request_id 幂等、user_instruction 记录用户原话；历史保留实际办理者。审查成员、模型和任务补充可在同任务修改，无须新开关联单或让用户重复转述。主执行启动仍由用户控制；本人获直接做授权可接单；执行者可直接调用独立审查和获准子代理。审查者用 submit_review_report 回传本人结论。多人意见分别保留，负责人记录继续、返修或补审决定。用户最终验收仍由用户确认，不能代填他人报告。按需读取 brief/delta，缺失时补读必要资料，不重复读取全项目。'});
+const call=async(name:string,input:any)=>{if(runner)input={...input,run_id:runner};if(reviewer)input={...input,review_id:reviewer};try{const res=await fetch(`http://127.0.0.1:${c.port}/api/mcp/${name}`,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json',...(runner&&process.env.WORKBENCH_EXECUTION_JOB_ID&&process.env.WORKBENCH_EXECUTION_JOB_TOKEN?{'x-workbench-execution-job-id':process.env.WORKBENCH_EXECUTION_JOB_ID,'x-workbench-execution-job-token':process.env.WORKBENCH_EXECUTION_JOB_TOKEN}:{})},body:JSON.stringify(input),signal:AbortSignal.timeout(['submit_grok_review','create_workbench_backup','refresh_integration'].includes(name)?120000:name==='create_project_diagram'?100000:['wait_run_update','get_agent_job'].includes(name)?40000:['get_dispatch_context','get_agent_clients','get_review_candidates'].includes(name)?120000:15000)});const data=await res.json();return {content:[{type:'text' as const,text:JSON.stringify(data,null,2)}],isError:!res.ok}}catch(error){console.error('工作台 MCP 请求失败：',(error as Error).message);return {content:[{type:'text' as const,text:'后台不可用，请先启动工作台；没有创建第二份账本。'}],isError:true}}};
 function register(name:string,description:string,schema:z.ZodRawShape){server.tool(name,description,schema,async input=>call(name,input))}
+if(!manager&&!runner&&!reviewer&&!chatPlanner){const tool=managementReadTools.get_project_memories;register('get_project_memories',tool.description,tool.schema.shape)}
 if(manager){for(const [name,tool] of Object.entries({...managementTools,...managementReadTools}))register(name,tool.description,tool.schema.shape)}
+if(runner||reviewer){for(const [name,tool] of Object.entries({...managementTools,...managementReadTools}))if([...sessionManagementWrites,...sessionManagementReads].includes(name))register(name,tool.description,tool.schema.shape)}
 if(chatPlanner){register('get_chat_planning_context','读取一条需求的脱敏精简规划包，不调用模型和执行者',chatContextInput.shape);register('submit_task_plan','提交真实聊天模型编写的计划，只登记不执行',planSchema.shape)}else if(reviewer){
 register('get_review_assignment','读取本审查单精简或同会话增量上下文；缺失时重建brief，不重复全量读取。',reviewDeltaInput.shape);
 register('ack_review_context','确认本次审查上下文版本，不代表模型已理解全部源码',reviewContextAckInput.shape);
 register('read_review_context_file','在本审查合同内按范围和预算读取文件',reviewContextReadInput.shape);
 register('report_review_started','独立审查者接单，限当前审查单',reviewStartInput.shape);
 register('submit_review_result','附完整报告并更新审查状态，返回给执行者的说明；不代用户验收',reviewResultInput.shape);
+register('submit_review_report','直接提交本人结论和报告；任务、执行和交付版本由本审查单自动绑定',reviewReportInput.shape);
 }else{
+register('recover_native_review','从工作台已保存的独立调用补登记原报告；只收调用编号，不接收作者填写的结论或文件',nativeReviewRecoveryInput.shape);
 register('dispatch_review','按已规划路由直接调用独立审查；不需要用户转发，不代写审查结论',agentDispatchInput.shape);
-register('continue_run','继续无外部路线的本人手工返修；外部主执行续作由用户控制，保留旧交付',agentDispatchInput.shape);
+register('continue_run','当前执行会话直接续接返修或收尾，不启动另一执行者；保留旧交付，管理者启动规则不变',agentDispatchInput.shape);
 register('get_agent_job','等待或查询本执行的客户端调用状态；终态不等于审查通过',agentJobInput.shape);
 register('read_run_context_file','在本执行阅读合同内按片段和预算读取资料',runContextReadInput.shape);
 register('get_run_context','读取当前Run的简版/增量上下文；只有缺失时读取full。',contextInput.shape);

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { relayOf, isYourTurn, isTheirTurn, byUrgency, folderSuggestions, statusText, reviewSkippedTask } from '../src/web/lib/flow.ts';
 import { relative, daysUntil, dayCountText, money, subscriptionPrice, bigNumber } from '../src/web/lib/format.ts';
 import { parseHash, routeHash } from '../src/web/app/store.tsx';
-import { taskAction } from '../src/shared/workflow-view.ts';
+import { taskAction, taskDisplayStatus } from '../src/shared/workflow-view.ts';
 
 const name = (id: string) => ({ codex: 'Codex', zcode: 'Zcode', 'grok-build': 'Grok Build', claude: 'Claude' } as Record<string, string>)[id] || id;
 const task = (status: string, extra: Record<string, unknown> = {}) => ({ id: 'T-x', status, agent_id: 'zcode', reviewer_id: 'grok-build', review_policy: { mode: 'required' }, ...extra });
@@ -122,4 +122,37 @@ test('页面地址：刷新后仍回到同一页面、页签和任务', () => {
   assert.deepEqual(parseHash(routeHash({ page: 'resources', tab: 'plans' })), { page: 'resources', id: undefined, tab: 'plans', task: undefined });
   assert.equal(parseHash('#/unknown').page, 'today');
   assert.equal(parseHash('').page, 'today');
+});
+
+test('多人审查等待同伴与负责人决定具有不同持棒人',()=>{
+ const active=task('in_review',{review_stage:'running'}),waiting=task('submitted',{review_stage:'awaiting_decision'});
+ assert.equal(taskAction(active).owner,'reviewer');assert.equal(relayOf(active,name).holder,'reviewer');assert.match(relayOf(active,name).headline,/审查/);
+ assert.equal(taskAction(waiting).group,'decision');assert.equal(taskAction(waiting).owner,'user');assert.equal(relayOf(waiting,name).holder,'you');assert.match(taskAction(waiting).label,/负责人决定/);
+});
+
+test('审查主说明区分未安排、待接单与部分回报，其余待接单',()=>{
+ const pending=[{reviewer_id:'claude',status:'awaiting_dispatch',delivery_mode:'manual'}];
+ const none=relayOf(task('submitted'),name),arranged=relayOf(task('submitted',{active_reviewers:pending,review_stage:'awaiting_dispatch'}),name),partial=relayOf(task('submitted',{active_reviewers:pending,review_report_counts:{completed:1}}),name);
+ assert.match(none.headline,/尚未安排/);assert.match(arranged.headline,/已安排/);assert.match(arranged.next,/已准备的审查单/);assert.match(partial.headline,/部分审查已回报.*待接单/);assert.equal(taskAction(task('submitted',{active_reviewers:pending,review_report_counts:{completed:1}})).owner,'user');
+});
+test('负责人继续与真实单人通过的收尾说明不能混同',()=>{
+ for(const context of [{review_decision:{decision:'continue'}},{review_closeout_decision_id:'RD'},{closeout:{review_decision_id:'RD'}}]){const relay=relayOf(task('awaiting_closeout',{...context,closeout_delivery:'agent'}),name);assert.match(relay.headline,/负责人决定继续/);assert.doesNotMatch(relay.headline,/审查已通过/);assert.doesNotMatch(relay.next,/收到审查结果/);}
+ assert.match(relayOf(task('awaiting_closeout'),name).headline,/审查已通过/);
+});
+
+test('同会话续单保留未接单事实，当前执行者持棒且旧标记不扩大到新负责人',()=>{
+ const marker={run_id:'R-current',source_run_id:'R-old',agent_id:'zcode'};
+ const awaiting=task('awaiting_dispatch',{current_run_id:'R-current',same_session_continuation:marker});assert.equal(taskAction(awaiting).owner,'agent');assert.match(taskAction(awaiting).label,/等待接单/);assert.equal(awaiting.status,'awaiting_dispatch');
+ assert.equal(taskAction({...awaiting,current_run_id:'R-other'}).owner,'user');assert.equal(taskAction({...awaiting,agent_id:'codex'}).owner,'user');
+ assert.equal(taskAction({...awaiting,automation:{status:'failed',role:'execution',run_id:'R-current'}}).group,'decision');
+ assert.equal(taskAction({...awaiting,status:'awaiting_confirmation',automation:{status:'completed',role:'execution'}}).owner,'user');
+ assert.equal(taskAction({...awaiting,status:'awaiting_closeout'}).owner,'agent');
+});
+
+test('手工同会话续接的分类、状态标签、接力说明一致，初次交接和阻碍不被掩盖',()=>{
+ const t=task('awaiting_dispatch',{execution_route:null,automation:null,current_run_id:'R-new',same_session_continuation:{run_id:'R-new',agent_id:'zcode'}});
+ const relay=relayOf(t,name);assert.equal(relay.holder,'agent');assert.equal(relay.headline,'原会话继续返修，等待接单');assert.match(relay.next,/无需再次转发/);assert.equal(relay.legs[2].who,'Zcode');assert.equal(relay.legs[2].label,'原会话续接');assert.equal(taskDisplayStatus(t),'continuation_pending');assert.equal(isYourTurn(t),false);assert.equal(t.status,'awaiting_dispatch');
+ for(const legacy of [{...t,same_session_continuation:null},{...t,current_run_id:'R-other'},{...t,agent_id:'codex'}]){assert.equal(relayOf(legacy,name).holder,'you');assert.match(relayOf(legacy,name).next,/粘贴/);assert.equal(taskDisplayStatus(legacy),'awaiting_dispatch');}
+ for(const extra of [{automation:{status:'failed',role:'execution'}},{pending_user_decision:{expires_at:new Date(Date.now()+60000).toISOString(),action:'accept',title:'用户决定'}},{status:'waiting_input'},{status:'awaiting_confirmation'}]){const changed={...t,...extra};assert.equal(relayOf(changed,name).holder,'you');assert.notEqual(taskDisplayStatus(changed),'continuation_pending');}
+ const closeout=relayOf({...t,status:'awaiting_closeout'},name);assert.equal(closeout.holder,'agent');assert.match(closeout.headline,/原会话继续收尾/);assert.doesNotMatch(closeout.next,/复制/);
 });

@@ -7,7 +7,7 @@ import { fixture, taskInput, event, finishCloseout } from './agent-routing-fixtu
 import { AgentOrchestrator, type Launcher } from '../src/core/agent-orchestration.ts';
 import {setMainExecutionControl,mainExecutionControlSummary} from '../src/core/main-execution-control.ts';
 import type { AgentInvocationOptions, ClientKind, ClientRecord } from '../src/core/agent-clients.ts';
-import { reviewAssignmentContext, startReview, submitReviewResult } from '../src/core/review-workflow.ts';
+import { reviewAssignmentContext, startReview, submitReviewResult,exportReviewOrder,updateReviewMember,decideReviewCollaboration } from '../src/core/review-workflow.ts';
 
 // Every launcher and discovery dependency is synthetic. These tests never launch a client or model.
 type F = ReturnType<typeof fixture>;
@@ -78,6 +78,69 @@ function dshFinal(launch: Launch, sessionId: string, result: Row) {
   launch.onLine(JSON.stringify({ type: 'status', phase: 'step_end', usage: { inputTokens: 120, outputTokens: 45, totalTokens: 165 } }));
   launch.onLine(JSON.stringify({ type: 'final', text: JSON.stringify(result) }));
 }
+
+test('Cursor successful terminal narration preserves the unique genuine report and rejects ambiguous reports',async()=>{
+ for(const scenario of ['passed','changes_requested','ambiguous']){const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);try{
+  f.wb.put('agents',{...f.wb.get('agents','cursor'),preset_id:'cursor',archived:false});
+  const t=planned(f,{reviewer_id:'cursor',review_route:{client:'cursor',model:'synthetic-cursor'}});deliver(f,t.tid,t.rid);
+  const j=o.dispatchReview(input(f,t.tid));await until(()=>fake.launches.length===1,'隔离Cursor调用应启动');
+  const report=nativeReviewResult(f,j.review_id!,{verdict:scenario==='changes_requested'?'changes_requested':'passed',findings:scenario==='changes_requested'?['隔离测试实际缺陷']:[]});
+  const body='先核对本轮固定入口。'+JSON.stringify(report)+(scenario==='ambiguous'?'\n'+JSON.stringify({...report,verdict:'changes_requested'}):'');
+  fake.launches[0].onLine(JSON.stringify({type:'result',subtype:'success',is_error:false,session_id:'synthetic-cursor-'+scenario,result:body,usage:{inputTokens:120,outputTokens:30,cacheReadTokens:450}}));fake.releases[0]();const ended=await terminal(f,j.job_id);
+  if(scenario==='ambiguous'){assert.equal(ended.status,'failed');assert.equal(f.wb.all('reviews').length,0);}else{assert.equal(ended.status,'completed',ended.reason);const saved=f.wb.all('reviews')[0];assert.equal(saved.verdict,scenario);assert.equal(saved.source,'native_client_output');assert.equal(saved.report_markdown,report.report_markdown);assert.equal(saved.client_job_id,j.job_id);assert.equal(ended.usage.inputTokens,120);assert.equal(f.wb.get('tasks',t.tid).status,scenario==='passed'?'awaiting_closeout':'changes_requested');}
+ }finally{await o.close();f.wb.close();}}
+});
+
+test('successful native result records already completed work even if launch eligibility changes afterwards',async()=>{
+ const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
+ try{const t=planned(f,dshReviewRoute(f));deliver(f,t.tid,t.rid);const job=o.dispatchReview(input(f,t.tid));await until(()=>fake.launches.length===1,'合成审查已真正启动');
+  const body=nativeReviewResult(f,job.review_id!);const eligible=f.wb.eligible.bind(f.wb);
+  f.wb.eligible=(id:string)=>{if(id==='deepseek')throw Error('合成：调用完成后无法再启动');return eligible(id);};
+  dshFinal(fake.launches[0],'synthetic-already-finished',body);fake.releases[0]();const done=await terminal(f,job.job_id);
+  assert.equal(done.status,'completed',done.reason);assert.equal(done.exit_code,0);assert.equal(f.wb.get('review_assignments',job.review_id!).started_at,undefined);
+  assert.equal(f.wb.all('reviews')[0].source,'native_client_output');
+ }finally{await o.close();f.wb.close();}
+});
+
+test('closeout client prompt distinguishes explicit continue from a real passed review',async()=>{
+ for(const scenario of ['zero_reports','disagreement','passed']){const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
+  try{const t=planned(f);deliver(f,t.tid,t.rid);
+   if(scenario!=='zero_reports'){const a=exportReviewOrder(f.wb,{run_id:t.rid,reviewer_id:'grok-build',expected_revision:f.wb.get('tasks',t.tid).revision,reason:'验证收尾启动提示与实际依据一致'},{role:'user'});finishReview(f,a.review_id,scenario==='passed'?'passed':'changes_requested');}
+   if(scenario!=='passed')decideReviewCollaboration(f.wb,{run_id:t.rid,expected_revision:f.wb.get('tasks',t.tid).revision,decision:'continue',reason:'测试负责人明确决定继续，保留尚未完成和反对意见'},{role:'user'});
+   const task=f.wb.get('tasks',t.tid),run=f.wb.get('runs',t.rid),prompt=(o as any).prompt({role:'execution',phase:'closeout',session_mode:'new'},task,run,path.join(f.root,'output'));
+   if(scenario==='passed')assert.match(prompt,/审查已通过，只完成本Run实际收尾/);else{assert.match(prompt,/负责人已决定继续，审查意见各自保留原结论/);assert.doesNotMatch(prompt,/审查已通过/);}
+  }finally{await o.close();f.wb.close();}
+ }
+});
+
+test('authenticated late report recovers a stopped parse failure for authorized closeout without rewriting failure',async()=>{
+ const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients),seen:string[]=[];
+ try{const t=planned(f,{...executionRoute(f),automation_policy:{auto_review:false,auto_rework:false,continue_after_review:true,max_rework_rounds:2}});deliver(f,t.tid,t.rid);
+  setMainExecutionControl(f.wb,t.tid,{expected_revision:f.wb.get('tasks',t.tid).revision,main_execution_control:'automatic'},pageUser);
+  const a=exportReviewOrder(f.wb,{run_id:t.rid,reviewer_id:'grok-build',expected_revision:f.wb.get('tasks',t.tid).revision,reason:'隔离补交恢复流程验证'},{role:'runner',id:'synthetic'});
+  const failed={id:'AJ-'+crypto.randomUUID(),task_id:t.tid,run_id:t.rid,review_id:a.review_id,role:'review',phase:'review',route:{client:'grok',model:'synthetic-review'},status:'failed',reason:'原始解析失败',process_may_be_running:false,process_end_evidence:'owned_child_exit',ended_at:new Date().toISOString(),exit_code:0,created_at:new Date().toISOString()};f.wb.put('agent_jobs',failed,{run_id:t.rid});
+  submitReviewResult(f.wb,nativeReviewResult(f,a.review_id),'reviewer:'+a.review_id);
+  Object.assign(o as any,{dispatchRun:()=>{seen.push('closeout');return {};}});await(o as any).tick();assert.deepEqual(seen,['closeout']);
+  const stored=f.wb.get('agent_jobs',failed.id);assert.equal(stored.status,'failed');assert.equal(stored.reason,failed.reason);assert.equal(stored.exit_code,0);assert.equal(stored.recovery.review_assignment_id,a.review_id);
+  const view=await o.getJob({run_id:t.rid,job_id:failed.id,timeout_ms:0});assert.equal(view.recovery.review_id,stored.recovery.review_id);assert.equal(view.process_may_be_running,false);assert.equal(view.status,'failed');
+  const result=f.wb.all('reviews')[0];f.wb.put('reviews',{...result,revoked_at:new Date().toISOString()},{run_id:t.rid});seen.length=0;await(o as any).tick();assert.deepEqual(seen,[]);
+ }finally{await o.close();f.wb.close();}
+});
+
+test('多人审查可分别派给成员并同时运行，默认成员变更不取消其他在审成员',async()=>{
+ const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
+ try{
+   const t=planned(f,dshReviewRoute(f));deliver(f,t.tid,t.rid);o.start();
+   const first=o.dispatchReview(input(f,t.tid,t.rid));await until(()=>fake.launches.length===1,'首位审查启动');
+   const second=exportReviewOrder(f.wb,{run_id:t.rid,reviewer_id:'claude',requested_model:'synthetic-peer-model',expected_revision:f.wb.get('tasks',t.tid).revision,reason:'用户增加另一位独立审查者'},{role:'user'});
+   const job=o.dispatchReview({...input(f,t.tid,t.rid),review_id:second.review_id});await until(()=>{const current=f.wb.get('agent_jobs',job.job_id);assert.notEqual(current.status,'failed',current.reason);return fake.launches.length===2;},'另一审查可独立启动');
+   assert.notEqual(first.job_id,job.job_id);assert.equal(fake.builds[1].model,'synthetic-peer-model');assert.equal(f.wb.get('agent_jobs',first.job_id).status,'running');
+   startReview(f.wb,{review_id:second.review_id,identity:'claude'});
+   finishReview(f,first.review_id!);fake.releases[0]();assert.equal((await terminal(f,first.job_id)).status,'completed');assert.equal(f.wb.get('tasks',t.tid).status,'in_review');
+   finishReview(f,second.review_id,'changes_requested');fake.releases[1]();assert.equal((await terminal(f,job.job_id)).status,'completed');
+   assert.equal(f.wb.get('tasks',t.tid).review_stage,'awaiting_decision');assert.equal(f.wb.all('reviews').length,2);assert.equal(f.wb.get('tasks',t.tid).current_run_id,t.rid);
+ }finally{await o.close();f.wb.close();}
+});
 
 test('派审同请求幂等、同编号异内容拒绝；版本冲突和跨Run读取不会新增调用', async () => {
   const f = fixture(), fake = fakeClients(), o = new AgentOrchestrator(f.wb, fake.launcher, fake.clients);
@@ -558,7 +621,7 @@ test('R3 审查：RA改派或撤回会停止owned旧调用，迟到最终输出�
       startReview(f.wb, {review_id: job.review_id!, identity: 'deepseek', session_id: 'r3-old-review'});
       const lateReport = nativeReviewResult(f, job.review_id!); let replacement: string | undefined;
       if (change === 'reassigned') {
-        replacement = r3ExportReviewOrder(f.wb, {run_id: t.rid, reviewer_id: 'claude', expected_revision: f.wb.get('tasks', t.tid).revision, reason: 'R3合成正式改派，旧运行必须停止', new_review: true}, {role: 'user'}).review_id;
+        const changed=updateReviewMember(f.wb, {run_id: t.rid,review_id:job.review_id,action:'replace', reviewer_id: 'claude', expected_revision: f.wb.get('tasks', t.tid).revision, reason: 'R3合成正式改派，旧运行必须停止'}, {role: 'user'});assert('review_id' in changed);replacement=changed.review_id;
       } else {
         f.wb.transaction(() => {const a = f.wb.get('review_assignments', job.review_id!);a.status = 'revoked';f.wb.put('review_assignments', a, {run_id: t.rid});});
       }
@@ -566,7 +629,7 @@ test('R3 审查：RA改派或撤回会停止owned旧调用，迟到最终输出�
       await until(() => f.wb.get('agent_jobs', job.job_id).process_may_be_running === false, change + ': 模拟旧审查应退出');
       dshFinal(fake.launches[0], 'r3-old-review', lateReport); fake.releases[0](); await new Promise(resolve => setTimeout(resolve, 30));
       assert.equal(f.wb.get('agent_jobs', job.job_id).status, 'interrupted'); assert.equal(f.wb.all('reviews').length, 0);
-      assert.equal(f.wb.get('review_assignments', job.review_id!).status, change === 'reassigned' ? 'superseded' : 'revoked');
+      assert.equal(f.wb.get('review_assignments', job.review_id!).status, change === 'reassigned' ? 'cancelled' : 'revoked');
       if (replacement) {assert.equal(f.wb.get('tasks', t.tid).current_review_assignment_id, replacement); assert.equal(f.wb.get('review_assignments', replacement).status, 'awaiting_dispatch');}
       const audits = recoveryAudits(f, job.job_id, 'cancel_agent_job'); assert.equal(audits.length, 1); assert.equal(audits[0].actor, 'system'); assert.equal(fake.launches.length, 1);
     } finally {await o.close();f.wb.close();}
@@ -835,4 +898,88 @@ test('没有外部路线的本人仍可经runner建立返修续单，独立审�
     assert.equal(result.automatic_delivery,false);assert.notEqual(result.run_id,t.rid);assert.equal(fake.launches.length,1);
     assert.equal(f.wb.get('runs',result.run_id).agent_id,'codex');assert.equal(f.wb.get('tasks',t.tid).execution_route,undefined);
   }finally{await o.close();f.wb.close();}
+});
+test('fresh review retry replaces only failed running RA without user text while preserving peer report',async()=>{
+ const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
+ try{const t=planned(f);deliver(f,t.tid,t.rid);const first=o.dispatchReview(input(f,t.tid));await until(()=>fake.launches.length===1,'初次独立审查启动');
+ grokSession(fake.launches[0],'retry-old-independent-session');startReview(f.wb,{review_id:first.review_id!,identity:'grok-build',session_id:'retry-old-independent-session'});
+ const peer=exportReviewOrder(f.wb,{run_id:t.rid,reviewer_id:'claude',requested_model:'synthetic-peer-review',expected_revision:f.wb.get('tasks',t.tid).revision,reason:'用户并行增加真实独立审查成员'},{role:'user'});finishReview(f,peer.review_id,'changes_requested');
+ fake.releases[0]({exitCode:1,signal:null,error:'隔离测试的审查进程已确认结束'});const ended=await terminal(f,first.job_id);assert.equal(ended.status,'failed');assert.equal(ended.process_may_be_running,false);
+ const retry=o.dispatchReview({...input(f,t.tid),review_id:first.review_id!,fresh_session:true});await until(()=>fake.launches.length===2,'没有额外用户文字也能恢复已确认结束的失败调用');
+ assert.notEqual(retry.review_id,first.review_id);assert.equal(f.wb.get('review_assignments',first.review_id!).status,'cancelled');assert.equal(f.wb.get('review_assignments',peer.review_id).status,'completed');assert.equal(f.wb.all('reviews').length,1);assert.equal(f.wb.all('reviews')[0].review_id,peer.review_id);assert.equal(f.wb.get('review_assignments',retry.review_id!).reviewer_id,'grok-build');assert.equal(fake.builds[1].sessionId,undefined);assert.equal(f.wb.get('agent_jobs',first.job_id).session_id,'retry-old-independent-session');
+ grokSession(fake.launches[1],'retry-new-independent-session');finishReview(f,retry.review_id!,'passed','retry-new-independent-session');fake.releases[1]();assert.equal((await terminal(f,retry.job_id)).status,'completed');assert.equal(f.wb.get('review_assignments',first.review_id!).session_id,'retry-old-independent-session');assert.equal(f.wb.get('review_assignments',retry.review_id!).session_id,'retry-new-independent-session');
+ }finally{await o.close();f.wb.close();}
+});
+
+test('runner same-session route rework is local, idempotent, scoped and outside automatic retry budget',async()=>{
+ const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
+ try{const t=planned(f,{...executionRoute(f),automation_policy:{auto_review:false,auto_rework:false,continue_after_review:false,max_rework_rounds:1}});deliver(f,t.tid,t.rid);
+ const ra=exportReviewOrder(f.wb,{run_id:t.rid,reviewer_id:'grok-build',expected_revision:f.wb.get('tasks',t.tid).revision,reason:'隔离测试真实状态路径',delivery_mode:'agent'},{role:'runner',id:'test'});finishReview(f,ra.review_id,'changes_requested');
+ f.wb.put('tasks',{...f.wb.get('tasks',t.tid),automatic_rework_count:99},{project_id:'P-workbench'});
+ const request=input(f,t.tid),caller={role:'runner',source:'mcp',run_id:t.rid} as const;
+ assert.throws(()=>o.continueRun(request,{...caller,run_id:'R-'+crypto.randomUUID()}),/跨Run/);
+ const result=o.continueRun(request,caller);assert.equal(result.continuation.mode,'same_session');assert.equal(result.automatic_delivery,false);assert.notEqual(result.run_id,t.rid);const {taskAction}=await import('../src/shared/workflow-view.ts');assert.equal(f.wb.get('runs',result.run_id).has_started,false);assert.equal(f.wb.get('tasks',t.tid).status,'awaiting_dispatch');assert.equal(taskAction(f.wb.get('tasks',t.tid)).owner,'agent');assert.equal(result.context.next_action.owner,'agent');assert.equal(f.wb.get('tasks',t.tid).automatic_rework_count,99);assert.equal(f.wb.all('agent_jobs').length,0);
+ assert.deepEqual(o.continueRun(request,caller),result);
+ const {resolveRunnerRun}=await import('../src/core/run-continuation-scope.ts');assert.equal(resolveRunnerRun(f.wb,t.rid),result.run_id);
+ f.wb.put('tasks',{...f.wb.get('tasks',t.tid),pending_arrangement:{agent_id:'codex'}},{project_id:'P-workbench'});
+ assert.throws(()=>resolveRunnerRun(f.wb,t.rid),/改派/);assert.throws(()=>o.continueRun(request,caller),/改派/);
+ }finally{await o.close();f.wb.close();}
+});
+
+test('runner closeout returns current context without dispatching an execution route',async()=>{
+ const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
+ try{const t=planned(f,executionRoute(f));deliver(f,t.tid,t.rid);const ra=exportReviewOrder(f.wb,{run_id:t.rid,reviewer_id:'grok-build',expected_revision:f.wb.get('tasks',t.tid).revision,reason:'隔离测试收尾路径',delivery_mode:'agent'},{role:'runner',id:'test'});finishReview(f,ra.review_id);
+ const request=input(f,t.tid),caller={role:'runner',source:'mcp',run_id:t.rid} as const;
+ const result=o.continueRun(request,caller);assert.equal(result.run_id,t.rid);assert.equal(result.closeout_context.run_id,t.rid);assert.equal(f.wb.all('agent_jobs').length,0);assert.deepEqual(o.continueRun(request,caller),result);
+ }finally{await o.close();f.wb.close();}
+});
+
+test('same-session continuation blocks active execution and forged scope chains',async()=>{
+ const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
+ try{const t=planned(f,executionRoute(f));deliver(f,t.tid,t.rid);const ra=exportReviewOrder(f.wb,{run_id:t.rid,reviewer_id:'grok-build',expected_revision:f.wb.get('tasks',t.tid).revision,reason:'隔离测试续接保护',delivery_mode:'agent'},{role:'runner',id:'test'});finishReview(f,ra.review_id,'changes_requested');
+ const jid='AJ-'+crypto.randomUUID();f.wb.put('agent_jobs',{id:jid,task_id:t.tid,run_id:t.rid,role:'execution',status:'running',revision:1},{run_id:t.rid});
+ assert.throws(()=>o.continueRun(input(f,t.tid),{role:'runner',source:'mcp',run_id:t.rid}),/并发接续/);assert.equal(f.wb.all('runs').length,1);
+ f.wb.put('agent_jobs',{...f.wb.get('agent_jobs',jid),status:'completed',process_may_be_running:false},{run_id:t.rid});
+ const result=o.continueRun(input(f,t.tid),{role:'runner',source:'mcp',run_id:t.rid});const {resolveRunnerRun}=await import('../src/core/run-continuation-scope.ts');assert.equal(resolveRunnerRun(f.wb,t.rid),result.run_id);
+ const source=f.wb.get('runs',t.rid);source.continuations[0].result.continuation.source_run_id=result.run_id;f.wb.put('runs',source,{task_id:t.tid});assert.throws(()=>resolveRunnerRun(f.wb,t.rid),/唯一/);
+ }finally{await o.close();f.wb.close();}
+});
+
+test('managed execution capability continues the owned process, keeps origin and completes from latest Run',async()=>{
+ const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
+ try{const t=planned(f,executionRoute(f));const job=o.dispatchRun(input(f,t.tid),pageUser);await until(()=>fake.launches.length===1,'受管执行已启动');
+ const launch=fake.launches[0],env=launch.env!,{authenticateExecutionJob}=await import('../src/core/execution-job-capability.ts');
+ assert.equal(env.WORKBENCH_EXECUTION_JOB_ID,job.job_id);assert.equal(env.WORKBENCH_EXECUTION_JOB_TOKEN.length,64);assert(!JSON.stringify(f.wb.get('agent_jobs',job.job_id)).includes(env.WORKBENCH_EXECUTION_JOB_TOKEN));
+ assert.equal(authenticateExecutionJob(f.wb,t.rid,undefined,undefined),undefined);assert.throws(()=>authenticateExecutionJob(f.wb,t.rid,job.job_id,'0'.repeat(64)),/能力凭据/);
+ deliver(f,t.tid,t.rid);const ra=exportReviewOrder(f.wb,{run_id:t.rid,reviewer_id:'grok-build',expected_revision:f.wb.get('tasks',t.tid).revision,reason:'受管进程返修能力测试',delivery_mode:'agent'},{role:'runner',id:'test'});finishReview(f,ra.review_id,'changes_requested');
+ const request=input(f,t.tid);assert.throws(()=>o.continueRun(request,{role:'runner',source:'mcp',run_id:t.rid}),/并发接续/);
+ const own=authenticateExecutionJob(f.wb,t.rid,env.WORKBENCH_EXECUTION_JOB_ID,env.WORKBENCH_EXECUTION_JOB_TOKEN)!;
+ const foreign='AJ-'+crypto.randomUUID();f.wb.put('agent_jobs',{id:foreign,run_id:t.rid,task_id:t.tid,role:'execution',status:'queued',revision:1},{run_id:t.rid});assert.throws(()=>o.continueRun(request,{role:'runner',source:'mcp',run_id:t.rid,job_id:own}),/并发接续/);f.wb.put('agent_jobs',{...f.wb.get('agent_jobs',foreign),status:'completed'},{run_id:t.rid});
+ const next=o.continueRun(request,{role:'runner',source:'mcp',run_id:t.rid,job_id:own});assert.notEqual(next.run_id,t.rid);const stored=f.wb.get('agent_jobs',own);assert.equal(stored.run_id,t.rid);assert.equal(stored.continuation_runs[0].target_run_id,next.run_id);
+ assert.equal(authenticateExecutionJob(f.wb,t.rid,own,env.WORKBENCH_EXECUTION_JOB_TOKEN),own);await(o as any).tick();assert.equal(launch.signal.aborted,false);
+ // Exiting with only the old Run submitted must fail: final completion follows the new Run.
+ fake.releases[0]();const ended=await terminal(f,own);assert.equal(ended.status,'failed');assert.equal(f.wb.get('tasks',t.tid).automation.job_id,own);assert.equal(f.wb.get('tasks',t.tid).automation.status,'failed');assert.equal(f.wb.get('tasks',t.tid).automation.run_id,next.run_id);const {taskAction}=await import('../src/shared/workflow-view.ts');assert.equal(taskAction(f.wb.get('tasks',t.tid)).group,'decision');assert.equal(f.wb.get('runs',next.run_id).has_started,false);
+ }finally{await o.close();f.wb.close();}
+});
+
+test('managed execution final result belongs to continued current Run',async()=>{
+ const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
+ try{const t=planned(f,executionRoute(f)),job=o.dispatchRun(input(f,t.tid),pageUser);await until(()=>fake.launches.length===1,'受管执行启动');deliver(f,t.tid,t.rid);const ra=exportReviewOrder(f.wb,{run_id:t.rid,reviewer_id:'grok-build',expected_revision:f.wb.get('tasks',t.tid).revision,reason:'受管最终回执测试',delivery_mode:'agent'},{role:'runner',id:'test'});finishReview(f,ra.review_id,'changes_requested');
+ const {authenticateExecutionJob}=await import('../src/core/execution-job-capability.ts'),env=fake.launches[0].env!,own=authenticateExecutionJob(f.wb,t.rid,job.job_id,env.WORKBENCH_EXECUTION_JOB_TOKEN)!;const next=o.continueRun(input(f,t.tid),{role:'runner',source:'mcp',run_id:t.rid,job_id:own});deliver(f,t.tid,next.run_id);await(o as any).tick();assert.equal(fake.launches[0].signal.aborted,false);fake.releases[0]();assert.equal((await terminal(f,own)).status,'completed');assert.equal(f.wb.get('agent_jobs',own).run_id,t.rid);assert.equal(f.wb.get('runs',next.run_id).status,'submitted');assert.equal(f.wb.get('tasks',t.tid).automation.status,'completed');assert.equal(f.wb.get('tasks',t.tid).automation.run_id,next.run_id);assert.equal(f.wb.get('tasks',t.tid).automation.source_run_id,t.rid);assert.throws(()=>authenticateExecutionJob(f.wb,t.rid,job.job_id,env.WORKBENCH_EXECUTION_JOB_TOKEN),/失效/);
+ }finally{await o.close();f.wb.close();}
+});
+
+test('submitted owned managed process can await automatic independent review without exiting or spawning another main',async()=>{
+ const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
+ try{const t=planned(f,{...executionRoute(f),automation_policy:{auto_review:true,auto_rework:true,continue_after_review:true,max_rework_rounds:2}}),job=o.dispatchRun(input(f,t.tid),pageUser);await until(()=>fake.launches.length===1,'受管执行启动');deliver(f,t.tid,t.rid);
+ await(o as any).tick();await until(()=>fake.launches.length===2,'执行本人等待时独立审查可自动启动');assert.equal(f.wb.all('agent_jobs').filter(j=>j.role==='execution').length,1);assert.equal(fake.launches[0].signal.aborted,false);await(o as any).tick();assert.equal(fake.launches.length,2);
+ const review=f.wb.all('agent_jobs').find(j=>j.role==='review')!;finishReview(f,review.review_id,'changes_requested');fake.releases[1]();await terminal(f,review.id);await(o as any).tick();assert.equal(f.wb.all('runs').length,1);assert.equal(f.wb.all('agent_jobs').filter(j=>j.role==='execution').length,1);assert.equal(f.wb.get('agent_jobs',job.job_id).status,'running');fake.releases[0]();await terminal(f,job.job_id);
+ }finally{await o.close();f.wb.close();}
+});
+
+test('managed original process finishes reviewed continued Run closeout without a second main process',async()=>{
+ const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
+ try{const t=planned(f,executionRoute(f)),job=o.dispatchRun(input(f,t.tid),pageUser);await until(()=>fake.launches.length===1,'受管执行启动');deliver(f,t.tid,t.rid);const review=()=>exportReviewOrder(f.wb,{run_id:f.wb.get('tasks',t.tid).current_run_id,reviewer_id:'grok-build',expected_revision:f.wb.get('tasks',t.tid).revision,reason:'受管本人连续收尾测试',delivery_mode:'agent'},{role:'runner',id:'test'});finishReview(f,review().review_id,'changes_requested');
+ const {authenticateExecutionJob}=await import('../src/core/execution-job-capability.ts'),env=fake.launches[0].env!,own=authenticateExecutionJob(f.wb,t.rid,job.job_id,env.WORKBENCH_EXECUTION_JOB_TOKEN)!;const next=o.continueRun(input(f,t.tid),{role:'runner',source:'mcp',run_id:t.rid,job_id:own});deliver(f,t.tid,next.run_id);finishReview(f,review().review_id);const closing=o.continueRun(input(f,t.tid),{role:'runner',source:'mcp',run_id:next.run_id,job_id:own});assert.equal(closing.closeout_context.run_id,next.run_id);finishCloseout(f.wb,t.tid);await(o as any).tick();assert.equal(fake.launches[0].signal.aborted,false);assert.equal(fake.launches.length,1);fake.releases[0]();assert.equal((await terminal(f,own)).status,'completed');assert.equal(f.wb.get('tasks',t.tid).status,'awaiting_confirmation');
+ }finally{await o.close();f.wb.close();}
 });

@@ -10,9 +10,9 @@
 
 同项目连续合法更新可在收尾/验收记录后继版本依据：仅接受时间后继、独立审查通过且具有有效部署证据的版本，包括用户已经验收的后继版本。便携版本以当前安装清单和全部受管文件为依据；该版本所属任务后来返工，不会仅因 current_run_id 改变就抹去仍有效的已审部署事实。旧 Run 仍须保留提交状态、有效独审、匹配的归档产物及部署回执，源码当前哈希也必须有受审记录覆盖。后继版本的审查者须同时独立于当前 Run 和后继 Run 的执行者。收尾、部署与后继证据统一按创建时间及数据库插入顺序选择最新审查；时间相同时以后插入记录为准，最新记录撤回或不通过都不能回退到更早的通过结论。通用部署没有本机安装清单作为依据，仍要求当前 Run，并核对相同目标、冻结档案、版本、产物与审查绑定，继续标为执行者报告，不等于服务端验证线上运行。未知漂移仍拒绝。旧 Review、部署回执与历史执行包不改写，后继证据不等于旧任务已被用户验收或退回意见已经解决。
 
-计划可记录 execution_route、review_route、automation_policy 与 context_contract。工作台按路线创建调用记录，通过本机发现的客户端执行；调用身份不代替 Run / RA 的独立凭据。任务详情 automation 显示 queued / launching / running / completed / failed / interrupted、执行或审查角色、客户端、实际会话编号及失败原因。completed 只表示客户端进程结束，不能据此写 submitted、passed 或 accepted；这些状态仍由各自有效回执推进。
+计划可记录 execution_route、review_route、automation_policy 与 context_contract。审查池支持多个并行或分阶段 RA；成员可在执行、审查及收尾任一阶段新增、移除或替换。`manage_reviews.set_arrangement` 设置当前 Run 的 reviewer/model/route；`manage_reviews.update_member` 的 `action=remove|replace` 更新成员；`manage_reviews.decide` 由指定 lead 针对当前 Run 记录 `continue`、`rework` 或 `add_review` 及理由。报告彼此独立，意见不一致时 lead 明确裁决并记录分歧，不要求全员通过。调用记录显示实际客户端、会话、模型和失败原因；进程完成不等于交付或审查通过。
 
-外部主执行由用户在页面启动；MCP 的 dispatch_run 不授予 Agent 启动权。dispatch_review 可由执行者直接调用；continue_run 可为没有外部调用路线的本人任务建立手工返修单，外部主执行返修仍由用户启动。get_agent_job 查询记录。同会话续接只能使用真实记录的会话编号；无编号或无法恢复必须如实说明。自动审查按计划处理；自动返修和收尾另需用户在页面开启启动许可，新旧任务均默认由用户启动，不重写冻结执行包或历史报告。context_contract 限定本轮必读与按理由补读的文件/行范围、项目内输出目录和内容大小；资料规则不能扩大 allowed_paths。
+新的外部主执行由用户在页面或客户端启动；当前已工作的执行 Agent 可在自身 Run 权限内直接管理审查安排、成员与获准子代理，并处理派审、等待、返修和收尾，不需要用户逐次转交。纯 reviewer/model 调整无需新建仅供关联的 Task，保持同一 Run，包括已交付成果的 reviewer 替换。执行安排通过 `manage_tasks` action `set_arrangement` 提交 `task_id`、`data.arrangement` 和 revision，可选 `agent_id` / `execution_policy`，沿现有同 Task 生命周期应用且不热启动新的外部主执行。范围修订通过 `manage_tasks` 的 `action="amend"` 追加：传 `task_id`、`run_id`、`expected_revision`、`reason` 与 `changes`（可含 `goal`、`scope`、`acceptance`、`tests`、`required_files`）。运行中的范围修订即时应用；若已交付内容受影响，通过 `continue` 在同一 Task 新建 Run 并保留历史。执行者可调用独立审查并由审查者提交报告；作者不得提交 review 结论。同会话续接只能使用真实记录的会话编号；无编号或无法恢复必须如实说明。自动审查按计划处理；自动启动新的主执行/返修和收尾另需用户在页面开启相应许可，新旧任务默认不自动启动外部主执行，不重写冻结执行包或历史报告。context_contract 限定本轮必读与按理由补读的文件/行范围、项目内输出目录和内容大小；资料规则不能扩大 allowed_paths。
 
 Harness 正常会话缓存按客户端机制保存；主动产物、报告、脚本、截图与临时文件只写项目授权范围。客户端拒绝、权限不足或安全限制不得绕过。清理不再手动删除：确认不再使用的本轮临时内容移入项目根“待清理”目录，记录原路径、新路径和原因，由用户删除。移动前核验范围、链接和占用；验证证据、有效成果、正式记录及仍被占用的文件保留原处，移动受阻时说明原因。
 
@@ -35,9 +35,9 @@ Token 预算仅为软提醒，不保证对客户端内部消耗硬性封顶。�
 
 ## 审查结论后的权限（2026-10-23 返工）
 
-`export_review_order` 使用后台认证的角色，不接受请求体指定角色。runner/planner 仅在当前 Run 为 submitted、review_stage 与当前审查单均非 completed、且没有未撤回的审查时可安排或改派。已有 changes_requested、passed 或进入收尾/待验收阶段后返回 403，并保留原审查、任务和收尾记录。用户页面通过会话和 CSRF 仍可明确重新安排，撤回原因与原报告保留。
+`export_review_order` 使用后台认证的角色，不接受请求体指定角色。审查池成员可在任一阶段调整并保留原报告和决定。变更 reviewer 或模型不会自行改变 Task/Run 结论；需复审时创建新 RA 并绑定当前内容。
 
-`submit_grok_review` 同样限制 Agent 导入新的结论；同一当前 Grok 会话/请求、相同绑定与内容可幂等重试。新会话或新请求在异步核验后的事务内检查权限。需要修改时使用新 Run 返工；用户选择不审查的任务交付后直接进入执行者收尾，页面提示“交付后继续完成剩余事项”。
+审查结论按独立 RA 与实际来源保存；同一报告重试应幂等。内容修改后旧结论保留为历史，lead 决定是否追加审查或进入返工。
 
 Task ID、Run ID 使用带前缀 UUID，不以路径为身份。Task.version 是计划版本，revision 是页面并发版本。每次重试独立 Run；原 Run 与产物长期保留。数据库是正式账本，文件只是输入与导出。
 
@@ -150,7 +150,7 @@ RESULT 内容必须覆盖：完成内容、变更文件、测试命令及实际�
 
 重复事件 ID + 相同内容幂等；内容冲突拒绝；乱序等待；非法转换留档并消费 seq。先查询 get_closeout_context 的 next_seq 再回报。复制收尾单、保存用户回答、读取上下文均不自动开始工作。收尾记录及报告随备份恢复，原始源码仍由项目路径管理。
 
-一般审查由规划者 dispatch_review 或已启用的 auto_review 调用独立客户端；审查者本人 started 才标记审查中。export_review_order 保留 delivery_mode=manual|agent 作为旧协议兼容；仅生成文件入口不等于调用。旧调用失败可使用 report_review_handoff，以 revision 校验并撤销该 RA 权限，交回规划者处理，不能默认转为用户转发待办。Reviewer 只能提交审查，执行者只能提交自己的收尾，用户才能验收。
+一般审查可由当前执行者直接发起，或由已启用的 auto_review 调用独立客户端；审查者本人 started 才标记审查中。RA 绑定入口可用 `scripts/review.ts <RA ID> manage <tool> <JSON路径>` 调用本单授权的管理工具；审查结果可用 `verdict`、`findings`、`limitations`、`evidence`、`report_markdown` 简短提交，由服务端合并当前 RA 模板。多名审查者分别回报，lead 明确写下最终决定及异议处理依据。export_review_order 保留 delivery_mode=manual|agent 作为旧协议兼容；仅生成文件入口不等于调用。旧调用失败可使用 report_review_handoff，以 revision 校验并撤销该 RA 权限，交由有权限的执行/审查会话按当前记录续办或由规划者处理；不要求用户重复确认或转发。Reviewer 只能提交审查，执行者只能提交自己的收尾，用户才能验收。
 
 ## 会话直接管理（2026-10-23）
 
@@ -162,4 +162,12 @@ RESULT 内容必须覆盖：完成内容、变更文件、测试命令及实际�
 
 用户可在页面任务详情的“执行安排”里修改执行者、主模型和子代理（`POST /api/tasks/:id/arrangement`，仅页面会话与 CSRF；Agent 凭据不能调用）。按阶段生效：未生成执行单直接采用；已生成但未接单（`awaiting_dispatch`/`dispatched` 且未 started）时旧 Run 标为 cancelled 并留档，按新安排生成新 Run，旧 Run 的回执被拒绝；执行中、审查中或待收尾时保存为 `task.pending_arrangement`，下一次生成 Run（返修、重试、停止后重新开始）时采用并清除；失败、取消或需要修改时直接生成下一版。
 
-用户选择会写入新的 `model_selection`：被改动的主/子模型标 `decided_by: "user"`，`user_decision` 记录原规划主模型；新增候选的能力评估为 `unknown`，不冒称最佳能力，可用性只表示模型目录当前列出。规划者提交的计划不能声明 `decided_by` 或 `user_decision`。每个 Run 的 `execution_contract` 仍在创建时冻结，历史 Run 不改写；新 Run 的 `arrangement` 字段记录来源与上一版设置。审查者、任务范围、允许路径、审查与验收规则不随之改变；改派到其他客户端时不沿用原自动执行路线，改为手动交给执行者。执行者看到执行单写明“用户选择，覆盖规划建议”时，按该模型执行，不得自行改回、升档或降档。
+每个 Run 的 `execution_contract` 在创建时冻结，历史包不改写。对当前 Task/Run 的范围修订作为追加变更记录保存，不覆盖旧合同。修订明确具体变更与原因，并只授权本次所需路径；任何实际内容变化均须重新验证受影响交付，并取得覆盖新内容的审查证据。旧 Review 保留为历史，不能把旧 passed 显示为新内容通过。纯 reviewer/model 调整保留当前 Task/Run，不生成假性范围修订。执行者看到执行单写明“用户选择，覆盖规划建议”时，按该模型执行，不得自行改回、升档或降档。
+
+## 审查完成后的登记恢复
+
+工作台自动接收独立客户端成功终态中的完整报告；允许客户端在唯一报告前附带过程文字，仍校验对应任务、执行、审查单、交付摘要和会话。多份候选、损坏正文、失败退出和身份冲突不会自动记为通过。
+
+审查者已经完成但没有登记 started 时，可以通过本 RA 的 submit_review_report 或 scripts/review.ts submit 直接补交完整原报告，不重新启动模型、不再次检查启动额度。CLI 接受原始 Cursor 成功结果 JSON 文件及其中的过程前言；提交来源仍记为本人回传，文件格式不被当成独立身份认证。
+
+已由工作台启动且正常结束、仅登记失败的调用，执行者可调用 recover_native_review({run_id,job_id}) 或 scripts/agent.ts <Run> recover-review <Job>。程序只读取该调用已保存的原生输出，不接受作者提供的结论或任意文件；旧失败保留并追加原报告来源、指纹与恢复关联。对应当前报告登记后，旧失败不再遮挡正常流转。升级工作台自身时，尚在运行的旧后台没有此接口，先确认没有受管调用在运行并正常退出原后台，再从已受审源码运行 scripts/recover-native-review.ts <Run> <Job>，使用现有 WORKBENCH_ROOT 配置，只完成上述同一登记恢复，不启动第二个服务。恢复完成后重新打开工作台；仍在运行时独占账本检查会拒绝，不能绕过。

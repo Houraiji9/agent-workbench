@@ -130,7 +130,7 @@ test('portable and no-deployment compact instructions retain their own flow',()=
 });
 test('review context rejects reassigned reviewer and known model mismatch before proceeding',()=>{
   const {wb,tables}=fake();tables.review_assignments[0].reviewer_id='another-reviewer';
-  assert.throws(()=>reviewAssignmentContext(wb,reviewId),/冻结选择/);
+  assert.throws(()=>reviewAssignmentContext(wb,reviewId),/审查模型选择与独立审查者不一致/);
   tables.review_assignments[0].reviewer_id='reviewer';tables.review_assignments[0].actual_model='economy';
-  assert.throws(()=>reviewAssignmentContext(wb,reviewId),/停止审查并重新规划/);
+  assert.throws(()=>reviewAssignmentContext(wb,reviewId),/审查实际模型与当前安排不符/);
 });

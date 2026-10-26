@@ -1,3 +1,4 @@
+import {taskMemoryContext} from './project-memory.ts';
 import {z} from 'zod';
 import type {Workbench} from './workbench.ts';
 import type {Row} from './schema.ts';
@@ -5,7 +6,7 @@ import {assert,hash,now} from './security.ts';
 import {contextFileReadInput,fileContextSnapshot,readContractFile,taskFileScope} from './file-context.ts';
 import {reviewScope} from './review-scope.ts';
 import {runTask} from './workflow-policy.ts';
-import {priorityInstructions,validatePriorityPlan} from './priority-policy.ts';
+import {priorityInstructions,validatePriorityPlan,userReviewSelection} from './priority-policy.ts';
 import {resolveDeliveryProfile} from './delivery-profile.ts';
 
 const assignmentId=z.string().regex(/^RA-[a-f0-9-]{36}$/);
@@ -31,15 +32,14 @@ export function bindReviewContextSession(wb:Workbench,reviewId:string,jobId:stri
 function binding(wb:Workbench,id:string,base:Row){
   const a=wb.get('review_assignments',id),r=wb.get('runs',a.run_id),t=wb.get('tasks',r.task_id);
   assert(base.review_id===id&&base.task_id===t.id&&base.run_id===r.id&&base.review_digest===a.review_digest,'审查上下文版本不匹配',409);
-  assert(t.current_run_id===r.id&&t.current_review_assignment_id===a.id&&!['superseded','revoked'].includes(a.status),'审查单已失效，请使用最新审查单',409);
-  const frozen=runTask(t,r);validatePriorityPlan(frozen,frozen.importance||'normal',frozen.review_policy);
-  if(frozen.model_selection?.review)assert(a.reviewer_id===frozen.model_selection.review.agent_id,'审查者偏离本轮冻结模型选择；请重新规划',409);
+  assert(t.current_run_id===r.id&&!['superseded','revoked','cancelled'].includes(a.status),'审查单已失效，请使用最新审查单',409);
+  const frozen=runTask(t,r);if(frozen.model_selection&&a.requested_model)frozen.model_selection=userReviewSelection(frozen.model_selection,{reviewer_id:a.reviewer_id,requested_model:a.requested_model,reason:a.reason,decided_by:a.model_decided_by||((a.created_by==='user'||a.user_instruction)?'user':'planner')});frozen.reviewer_id=a.reviewer_id;frozen.review_route=undefined;validatePriorityPlan(frozen,frozen.importance||'normal',frozen.review_policy);
   return {a,r,t:frozen};
 }
 function current(wb:Workbench,id:string,base:Row){
   const {a,r,t}=binding(wb,id,base),scope=reviewScope(t,r);
-  const context={task_id:t.id,run_id:r.id,review_id:a.id,reviewer_id:a.reviewer_id,task_version:t.version,review_digest:base.review_digest,title:t.title,goal:t.goal,scope:t.scope,review_scope:scope,acceptance:scope.acceptance,tests:scope.tests,cwd:r.cwd,
-    importance:t.importance||'normal',model_selection:t.model_selection||null,requested_model:t.model_selection?.review?.model||t.review_route?.model||null,
+  const context={project_memory:taskMemoryContext(wb,t),task_id:t.id,run_id:r.id,review_id:a.id,reviewer_id:a.reviewer_id,task_version:t.version,review_digest:base.review_digest,title:t.title,goal:t.goal,scope:t.scope,review_scope:scope,acceptance:scope.acceptance,tests:scope.tests,cwd:r.cwd,
+    importance:t.importance||'normal',model_selection:t.model_selection||null,requested_model:a.requested_model||null,
     delivery_profile:resolveDeliveryProfile(t),delivery_target:t.delivery_target||'source',runtime_root:t.runtime_root??null,
     artifacts:(base.artifacts||[]).map((x:Row)=>({id:x.id,label:x.label,sha256:x.sha256,archive_path:x.archive_path})),review_files:base.review_files||[],
     previous_findings:(r.retry_context?.reviews||[]).filter((x:Row)=>!x.revoked_at&&x.verdict==='changes_requested').map((x:Row)=>({id:x.id,verdict:x.verdict,findings:x.findings,limitations:x.limitations||[]})),
@@ -67,13 +67,13 @@ export function reviewContext(wb:Workbench,value:unknown,base:Row,dispatchJobId?
   const delta=v.mode==='delta'&&!!old;
   const changes=delta?Object.fromEntries(Object.entries(context).filter(([key,val])=>JSON.stringify(old.context[key])!==JSON.stringify(val))):context;
   const response:Row={review_id:a.id,task_id:t.id,run_id:r.id,review_digest:context.review_digest,mode:v.mode==='full'?'full':delta?'delta':'brief',context_hash:fingerprint,reset_required:v.mode==='delta'&&!old,continuation_pending:continuationPending,
-    assignment:{id:a.id,task_id:t.id,run_id:r.id,reviewer_id:a.reviewer_id,status:a.status,review_digest:a.review_digest,session_id:a.session_id||null,actual_model:a.actual_model||null,model_status:a.actual_model?'reported':'unknown',delivery_mode:a.delivery_mode||'manual',result_id:a.result_id||null},report_template:base.report_template,
+    assignment:{id:a.id,task_id:t.id,run_id:r.id,reviewer_id:a.reviewer_id,status:a.status,review_digest:a.review_digest,session_id:a.session_id||null,actual_model:a.actual_model||null,model_status:a.actual_model?'reported':'unknown',delivery_mode:a.delivery_mode||'manual',result_id:a.result_id||null},report_template:base.compact_report_template||base.report_template,
     context:v.mode==='full'?{...context,original_request:t.original_request,report_template:base.report_template}:changes,
     authority:{task_id:t.id,run_id:r.id,review_id:a.id,reviewer_id:a.reviewer_id,cwd:r.cwd,read_contract:t.context_contract||null,source_write_allowed:false,output_dir:t.context_contract?.output_dir||null,forbidden_actions:t.forbidden_actions,additional_cost_limit:0},
     file_changes:context.file_context.files.filter((file:Row)=>!old?.context?.file_context?.files?.some((prior:Row)=>prior.key===file.key&&JSON.stringify(prior)===JSON.stringify(file))),
     reading:{context_delivery:'delivered',acknowledgement:!continuationPending&&a.context_ack?.hash===fingerprint&&a.context_ack?.session_id===sid?'acknowledged':'not_acknowledged',files_delivered:(a.context_reads||[]).filter((x:Row)=>x.task_id===t.id&&(x.budget_key?x.budget_key===context.file_context.budget_key&&context.file_context.files.some((file:Row)=>file.key===x.contract_entry_key&&file.file_sha256===x.file_sha256):x.scope_hash===context.file_context.scope_hash)),model_reading:'unknown'},
     references:{full:{tool:'get_review_assignment',arguments:{review_id:a.id,mode:'full'}},artifacts:'归档仍通过本次交付的具体引用读取；文件读取工具不开放账本目录'},
-    instructions:'首次审查独立建立上下文；只在同任务、同审查者和已登记同一会话内请求增量。摘要、回执和相同模型均不证明已读源码；补读须满足合同条件。\n'+priorityInstructions(t,t.importance||'normal','review')};
+    instructions:'本人完成真实检查后可用 submit_review_report 提交简短报告，连接绑定审查单和交付版本；完整旧格式仍可用。当前项目管理操作使用已有管理工具并写明用户要求，无需重读规划手册。\n首次审查独立建立上下文；只在同任务、同审查者和已登记同一会话内请求增量。摘要、回执和相同模型均不证明已读源码；补读须满足合同条件。\n'+priorityInstructions(t,t.importance||'normal','review')};
   const characters=JSON.stringify(response).length;response.usage={characters,token_count:null,token_source:'未获得模型实际用量'};
   const storedSession=continuationPending?null:sid;
   a.context_cache=[...(a.context_cache||[]).filter((x:Row)=>x.hash!==fingerprint||x.session_id!==storedSession),{hash:fingerprint,task_id:t.id,reviewer_id:a.reviewer_id,session_id:storedSession,expected_session_id:continuationPending?sid:null,dispatch_job_id:dispatchJobId||null,context}].slice(-4);

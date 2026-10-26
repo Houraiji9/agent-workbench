@@ -28,7 +28,7 @@ export type ModelSelection=z.infer<typeof modelSelectionSchema>;
 /** Stored form: only the user page (userModelSelection) adds decided_by=user; planner plans keep the strict schema above. */
 const storedChoiceSchema=choiceSchema.extend({decided_by:z.enum(['planner','user']).optional()}).strict();
 export const storedModelSelectionSchema=modelSelectionSchema.extend({
-  main:storedChoiceSchema,children:z.array(storedChoiceSchema).max(12),
+  main:storedChoiceSchema,review:storedChoiceSchema.nullable(),children:z.array(storedChoiceSchema).max(12),
   user_decision:z.object({source:z.literal('user_page'),decided_at:z.string().min(1).max(40),task_revision:z.number().int().positive(),
     previous_main:z.object({agent_id:identifier,model:identifier}).nullable(),previous_children:z.array(identifier).max(12),
     previous_assessments:z.array(candidateSchema).max(13).optional()}).strict().optional(),
@@ -119,9 +119,9 @@ export function validatePriorityPlan(task:Task,importance:Importance='normal',re
   for(const choice of [selection.main,...(selection.review?[selection.review]:[]),...selection.children]) {
     const candidate=candidates.find(item=>identity(item)===identity(choice));
     requirePolicy(candidate,'每个所选模型都必须有对应的能力比较与可用性依据');
-    requirePolicy(candidate.availability==='available','所选模型资源不可用或尚未确认；停止并重新规划，禁止隐式降级');
-    // The user's own choice is final; it is not graded against the planner's capability declaration.
+    // Explicit user selection records intent, without claiming verified availability or capability.
     if('decided_by' in choice&&choice.decided_by==='user')continue;
+    requirePolicy(candidate.availability==='available','所选模型资源不可用或尚未确认；停止并重新规划，禁止隐式降级');
     requirePolicy(candidate.capability_assessment==='best_capability'||selection.strategy==='adequate_economical'&&candidate.capability_assessment==='adequate','所选模型能力评估必须符合明确的选择策略；资源不足不能改用较低能力档');
   }
 }
@@ -143,4 +143,14 @@ export function priorityInstructions(task:Task,importance:Importance='normal',ro
     '只能使用冻结合约明确选择的模型。模型、资源或客户端不可用时停止并回报具体阻碍，重新规划；禁止隐式回退、自动降级或换用默认模型。',
     '每个子代理与审查者都必须遵守同一重要程度及对应模型选择；原生客户端内的模型实际使用情况须如实报告。');
   return lines.join('\n');
+}
+
+/** Authorized review arrangement overlays preserve original planner evaluations and unknown live access. */
+export function userReviewSelection(previous:unknown,input:{reviewer_id:string;requested_model:string|null;reason:string;decided_by?:'user'|'planner'}){
+ if(previous==null)return null;
+ const base=storedModelSelectionSchema.parse(previous);requirePolicy(!!input.requested_model,'调整已有审查模型选择时请明确指定模型');
+ const review={agent_id:input.reviewer_id,model:input.requested_model!,reason:((input.decided_by==='planner'?'审查安排：':'用户授权审查安排：')+input.reason).slice(0,2000),decided_by:input.decided_by||'user' as const};
+ const considered=[...base.evaluation.considered];
+ if(!considered.some(c=>c.agent_id===review.agent_id&&c.model===review.model))considered.push({agent_id:review.agent_id,model:review.model,capability_assessment:'unknown',capability_reason:'用户明确选择审查模型；工作台没有能力排名证据',availability:'unknown',availability_reason:'用户授权选择；实际账号可用性与实际模型由独立审查接单记录核验'});
+ return {...base,review,evaluation:{...base.evaluation,considered}};
 }

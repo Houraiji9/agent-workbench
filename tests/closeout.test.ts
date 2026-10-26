@@ -1,3 +1,4 @@
+import {decideReviewCollaboration} from '../src/core/review-workflow.ts';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -63,7 +64,7 @@ test('补审/改派后旧收尾失效；新的通过必须新收尾，迟到旧�
     assert.equal(f.send('closeout_started',{closeout_id:old}).disposition,'rejected');
     startReview(wb,{review_id:order.review_id,identity:'claude'});
     const result={...getReviewContext(wb,f.rid).final_response,review_id:order.review_id,verdict:'passed',findings:[],limitations:[],evidence:['隔离测试检查'],report_markdown:'这是隔离测试 Claude 审查报告，用来验证回传流转，不是生产独立审查。'};
-    const submitted=submitReviewResult(wb,result,'reviewer:'+order.review_id);assert.match(submitted.return_to_executor,/CLOSEOUT.md/);
+    const submitted=submitReviewResult(wb,result,'reviewer:'+order.review_id);decideReviewCollaboration(wb,{run_id:f.rid,expected_revision:wb.get('tasks',f.tid).revision,decision:'continue',reason:'隔离测试负责人核对两份报告后继续收尾'},{role:'user'});
     assert.notEqual(getCloseoutContext(wb,f.rid).closeout.id,old);assert.equal(wb.get('tasks',f.tid).status,'awaiting_closeout');
     assert.equal(f.send('closeout_started',{closeout_id:old}).disposition,'rejected');
     finishCloseout(wb,f.tid);submitReviewResult(wb,result,'reviewer:'+order.review_id);assert.equal(wb.get('tasks',f.tid).status,'awaiting_confirmation');

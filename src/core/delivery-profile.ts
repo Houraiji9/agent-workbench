@@ -90,6 +90,7 @@ export const deploymentReceiptInput=z.object({
   version:identifier,
   artifact_hashes:z.array(sha256).min(1).max(500),
   review_id:identifier.nullable(),
+  review_decision_id:identifier.optional(),
   reported_by:identifier,
   reported_at:z.string().datetime({offset:true}),
   deployment_evidence:z.string().trim().min(1).max(20000),
@@ -107,6 +108,7 @@ export type DeploymentReceiptContext={
   version:string;
   artifact_hashes:string[];
   review_id:string|null;
+  review_decision_id?:string;
   review_skipped:boolean;
 };
 
@@ -124,7 +126,8 @@ function validateReceipt(context:DeploymentReceiptContext,input:unknown){
   if(receipt.reported_by!==identifier.parse(context.agent_id))fail('部署回执执行者与当前 Run 不匹配');
   if(receipt.profile_sha256!==deliveryProfileDigest(profile))fail('部署目标或完整任务档案已改变');
   if(receipt.version!==identifier.parse(context.version))fail('部署回执版本与当前受审版本不匹配');
-  if(context.review_skipped?context.review_id!==null:!context.review_id)fail('当前审查绑定无效；仅显式跳过审查允许空审查编号');
+  if(context.review_skipped?context.review_id!==null:!context.review_id&&!context.review_decision_id)fail('当前审查绑定无效；仅显式跳过审查允许空审查编号');
+  if(receipt.review_decision_id!==context.review_decision_id)fail('部署回执与当前审查决定不匹配');
   if(receipt.review_id!==context.review_id)fail('部署回执与当前审查不匹配');
   const expected=canonicalHashes(context.artifact_hashes,'当前受审'),actual=canonicalHashes(receipt.artifact_hashes,'回执');
   if(JSON.stringify(expected)!==JSON.stringify(actual))fail('部署回执须绑定全部当前受审产物');

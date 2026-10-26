@@ -1,5 +1,5 @@
 // 基础组件：对话框、抽屉、接力线、状态标签、头像、页签与空状态。
-import React, { useEffect, useId, useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { X, Check } from 'lucide-react';
 import { type R, type Relay, type Tone, statusText, toneOfStatus, taskDisplayStatus } from '../lib/flow.js';
 
@@ -32,16 +32,15 @@ function useFocusTrap(open: boolean, onClose: () => void) {
   return ref;
 }
 
-export function Dialog({ title, sub, onClose, children, wide, footer, label }: {
+export function Dialog({ title, sub, onClose, children, wide, footer }: {
   title: string; sub?: React.ReactNode; onClose: () => void; children: React.ReactNode; wide?: boolean; footer?: React.ReactNode; label?: string;
 }) {
   const ref = useFocusTrap(true, onClose);
-  const id = useId();
   return <div className="scrim" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
-    <div ref={ref} tabIndex={-1} className={'dialog' + (wide ? ' wide' : '')} role="dialog" aria-modal="true" aria-labelledby={id} aria-label={label}>
+    <div ref={ref} tabIndex={-1} className={'dialog' + (wide ? ' wide' : '')} role="dialog" aria-modal="true" aria-label={title}>
       <header className="dialog-head">
         <div>
-          <h2 id={id}>{title}</h2>
+          <h2>{title}</h2>
           {sub && <p className="dialog-sub">{sub}</p>}
         </div>
         <button className="icon-btn" aria-label="关闭" onClick={onClose}><X size={20} /></button>

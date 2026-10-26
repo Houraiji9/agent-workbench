@@ -1,3 +1,4 @@
+import {taskDisplayStatus,taskAction,hasSameSessionContinuation} from './workflow-view.ts';
 import {planningOriginLabel} from './planning-origin.ts';
 type Row=Record<string,any>;
 export type TimelineInput={project_id:string;tasks:Row[];requests?:Row[];plans?:Row[];runs?:Row[];reviews?:Row[];review_assignments?:Row[];jobs?:Row[];sessions?:Row[];artifacts?:Row[];events?:Row[];delegations?:Row[];include_history?:boolean};
@@ -36,11 +37,27 @@ export function projectTimelineGraph(input:TimelineInput){
   for(const t of tasks){if(t.request_id&&!plans.some(p=>list(p.task_ids).includes(t.id)))edge('request',t.request_id,'task',t.id,'request_task','需求关联');for(const dependency of list(t.dependencies))edge('task',dependency,'task',t.id,'dependency','前置任务');if(t.rework_task_id)edge('task',t.id,'task',t.rework_task_id,'rework','后续返工');if(t.acceptance_record?.confirmed_at)edge('run',t.acceptance_record.run_id,'acceptance',t.id+'/'+t.acceptance_record.run_id,'user_acceptance','用户实际确认');}
   for(const r of runs){edge('task',r.task_id,'run',r.id,'execution','执行');if(r.retry_context?.previous_run_id)edge('run',r.retry_context.previous_run_id,'run',r.id,'retry','续接返修');if(r.closeout?.id){edge('run',r.id,'closeout',r.closeout.id,'closeout','执行者收尾');for(const hash of list(r.closeout.artifact_hashes))for(const a of artifacts.filter(a=>a.run_id===r.id&&a.sha256===hash))edge('artifact',a.id,'closeout',r.closeout.id,'closeout_artifact','收尾绑定产物');}}
   for(const a of assignments)edge('run',a.run_id,'review_assignment',a.id,'review_assignment','安排独立审查');
-  for(const r of reviews){edge('run',r.run_id,'review',r.id,'review','审查回执');for(const hash of list(r.artifact_hashes))for(const a of artifacts.filter(a=>a.run_id===r.run_id&&a.sha256===hash))edge('artifact',a.id,'review',r.id,'review_artifact','审查绑定版本');}
+  for(const r of reviews){if(r.review_id)edge('review_assignment',r.review_id,'review',r.id,'review','审查回执');else edge('run',r.run_id,'review',r.id,'review','历史审查回执');for(const hash of list(r.artifact_hashes))for(const a of artifacts.filter(a=>a.run_id===r.run_id&&a.sha256===hash))edge('artifact',a.id,'review',r.id,'review_artifact','审查绑定版本');}
   for(const a of artifacts)edge('run',a.run_id,'artifact',a.id,'artifact','归档产物');
   for(const d of delegations){edge('run',d.run_id,'delegation',d.id,'delegation','执行者报告的委派');if(d.parent_id)edge('delegation',d.parent_id,'delegation',d.id,'parent_child','报告的父子委派');if(d.session_id)edge('delegation',d.id,'session',d.session_id,'delegation_session','报告的会话编号');}
   for(const j of jobs){if(j.run_id)edge('run',j.run_id,'job',j.id,'job','客户端调用');else if(j.task_id)edge('task',j.task_id,'job',j.id,'job','客户端调用');if(j.review_assignment_id)edge('review_assignment',j.review_assignment_id,'job',j.id,'review_job','审查客户端');if(j.closeout_id)edge('closeout',j.closeout_id,'job',j.id,'closeout_job','收尾客户端');if(j.parent_job_id)edge('job',j.parent_job_id,'job',j.id,'parent_child','父子调用');if(j.session_id||j.workbench_session_id)edge('job',j.id,'session',j.workbench_session_id||j.session_id,'job_session','调用会话');}
   for(const s of sessions){for(const rid of new Set([s.run_id,...list(s.run_ids)].filter(Boolean)))edge('session',s.id,'run',rid,'session_run','会话关联');for(const b of s.bindings||[]){if(b.project_id&&b.project_id!==input.project_id)continue;if(b.run_id)edge('session',s.id,'run',b.run_id,'session_run','会话关联');else if(b.task_id)edge('session',s.id,'task',b.task_id,'session_task','会话关联');}if(s.parent_session_id)edge('session',s.parent_session_id,'session',s.id,'parent_child','父子会话');}
   for(const e of relevantEvents){const cid=e.data?.closeout_id||e.closeout_id;if(cid)edge('closeout',cid,'closeout_event',e.id,'closeout_receipt','收尾回执');else edge('run',e.run_id,'closeout_event',e.id,'closeout_receipt','收尾回执');}
-  return {project_id:input.project_id,view:'timeline',nodes,edges,unresolved,hidden_tasks:allTasks.length-tasks.length,source:'workbench_records',snapshot:false,note:'只展示显式编号关系；审查撤销、历史执行和未解析关系保留原状态。'};
+  const handoffs=tasks.map(task=>{
+    const run=runs.find(r=>r.id===task.current_run_id);
+    const output=artifacts.filter(a=>a.run_id===run?.id&&a.current!==false).map(a=>({id:a.id,label:String(a.label||a.id)}));
+    const status=String(task.status||'unknown');
+    const reviewPhase=['submitted','in_review'].includes(status);
+    const activeReviews=assignments.filter(a=>a.run_id===run?.id&&!['cancelled','superseded','revoked'].includes(a.status));
+    const reviewOwner=activeReviews.find(a=>a.status==='running')||activeReviews.find(a=>a.status==='awaiting_dispatch');
+    const reviewNext=reviewOwner?.status==='running'?'等待审查者完成并回传审查报告':reviewOwner?.status==='awaiting_dispatch'?(reviewOwner.delivery_mode==='manual'?'请将已准备的审查单交给审查者':'等待客户端调用审查者'):null;
+    const manualReviewAction=reviewPhase&&reviewOwner?.status==='awaiting_dispatch'&&reviewOwner.delivery_mode==='manual';
+    const action=taskAction({...task,active_reviewers:activeReviews,review_stage:task.review_stage||reviewOwner?.status});
+    const continuing=hasSameSessionContinuation(task);
+    const continuationNext=action.owner==='agent'?(status==='awaiting_closeout'?'原会话继续收尾，无需再次转发':'原会话继续返修，等待接单，无需再次转发'):action.label;
+    const owner=reviewPhase?reviewOwner?.reviewer_id||task.reviewer_id:(run?.agent_id||task.agent_id);
+    const next:Record<string,string>={ready:'启动执行',awaiting_dispatch:'发送执行单，等待接单',dispatched:'等待执行者接单',running:'等待执行者交付',waiting_input:'回答执行者的问题',blocked:'解除阻碍后继续',failed:'核对失败原因并安排续作',submitted:'安排独立审查',in_review:'等待审查报告',changes_requested:'执行者根据审查意见修改',awaiting_closeout:'由原执行者收尾',closing:'等待执行者收尾',closeout_waiting_input:'回答收尾问题',closeout_blocked:'解除收尾阻碍',awaiting_confirmation:'请你体验成果并确认验收',accepted:'用户已验收',cancelled:'任务已取消'};
+    return {task_id:task.id,title:String(task.title||task.id),status,display_status:taskDisplayStatus(task),owner:owner||null,requested_model:reviewPhase?reviewOwner?.requested_model||task.review_route?.model||null:run?.requested_model||task.requested_model||null,actual_model:reviewPhase?reviewOwner?.actual_model||null:run?.actual_model||null,outputs:output,next_step:continuing?continuationNext:task.review_stage==='awaiting_decision'?'审查报告已齐，请负责人记录决定':reviewPhase&&reviewNext?reviewNext:next[status]||'查看任务中的当前安排',user_action:manualReviewAction||action.owner==='user'};
+  });
+  return {handoffs,project_id:input.project_id,view:'timeline',nodes,edges,unresolved,hidden_tasks:allTasks.length-tasks.length,source:'workbench_records',snapshot:false,note:'只展示显式编号关系；审查撤销、历史执行和未解析关系保留原状态。'};
 }

@@ -7,6 +7,7 @@ import { type R, statusText } from '../lib/flow.js';
 import { relative } from '../lib/format.js';
 import { Pill, Empty, Section, Notice } from '../ui/kit.js';
 import { agentLabel } from './dialogs/ResourceDialogs.js';
+import {TaskQuickActions} from '../ui/TaskQuickActions.js';
 
 const statusOptions = ['ready', 'awaiting_dispatch', 'dispatched', 'running', 'waiting_input', 'blocked', 'changes_requested', 'acceptance_rejected', 'rework_linked', 'submitted', 'awaiting_confirmation', 'in_review','awaiting_closeout','closing','closeout_waiting_input','closeout_blocked', 'accepted', 'failed', 'cancelled'];
 
@@ -98,11 +99,11 @@ export function Records() {
         <span className="notice-actions"><button className="btn small" onClick={() => { setItems(null); setReload(n => n + 1); }}>重新查找</button></span>
       </Notice> : shown.length ? <>
         <p className="muted small result-count">找到 {total} 条{total > shown.length ? '（先显示最近 100 条，可以加条件缩小范围）' : ''}</p>
-        <div className="row-list">{shown.slice(0, visible).map(r => <button key={r.kind + r.id} className="row" onClick={() => r.kind === 'task' ? s.openTask(r.id) : s.openDialog('session', { session: r })}>
+        <div className="row-list">{shown.slice(0, visible).map(r => <div key={r.kind + r.id} className="quick-action-row"><button className="row" onClick={() => r.kind === 'task' ? s.openTask(r.id) : s.openDialog('session', { session: r })}>
           <span className={'kind-tag k-' + r.kind}>{r.kind === 'task' ? '任务' : '会话'}</span>
           <span className="row-main"><strong>{r.title}</strong><small>{agentLabel(s.name, r.agent)} · {r.project_id ? s.pname(r.project_id) : r.source_project ? r.source_project + '（未登记）' : '未关联项目'} · {relative(r.updated_at || r.created_at, s.tz)}</small></span>
           <span className="row-side">{r.kind === 'task' ? <Pill task={s.data.tasks.find((t:R)=>t.id===r.id)||r} /> : <Pill tone="quiet">{r.association === 'pending_confirmation' ? '仅摘要' : '已关联'}</Pill>}</span>
-        </button>)}</div>
+        </button>{r.kind==='task'&&<TaskQuickActions task={s.data.tasks.find((t:R)=>t.id===r.id)||r} initial/>}</div>)}</div>
         {shown.length > visible && <button className="btn ghost more-btn" onClick={() => setVisible(v => v + 30)}>再显示 {Math.min(30, shown.length - visible)} 条</button>}
       </> : <Empty icon={<FileSearch size={28} />} title="没有找到匹配的记录">{active ? '换个关键词或去掉一些条件试试。' : '任务和收录的会话会出现在这里。'}</Empty>}
     </section>

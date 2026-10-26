@@ -5,7 +5,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {fixture,setup,event,taskInput} from './agent-routing-fixture.ts';
 import {createApp} from '../src/server/app.ts';
-import {exportReviewOrder} from '../src/core/review-workflow.ts';
+import {exportReviewOrder,updateReviewMember} from '../src/core/review-workflow.ts';
 import type {Workbench} from '../src/core/workbench.ts';
 import type {Row} from '../src/core/schema.ts';
 import type {Launcher} from '../src/core/agent-orchestration.ts';
@@ -36,13 +36,15 @@ test('runner只能派审/查询本Run，不能读取全机客户端、派执行�
     assert.equal((await call('dispatch_run',dispatch)).statusCode,403);
     assert.equal((await f.app.inject({url:'/api/agent-clients',headers:{host,authorization:'Bearer '+token}})).statusCode,401);
     const context=await call('get_run_context',{run_id:a.rid});assert.equal(context.statusCode,200);assert.equal(context.json().task_revision,f.wb.get('tasks',a.tid).revision);assert(!Object.hasOwn(context.json(),'client_capabilities'));
-    for(const tool of ['get_run_context','read_run_context_file','dispatch_review','continue_run']){
+    for(const tool of ['get_run_context','read_run_context_file','dispatch_review','continue_run','recover_native_review']){
       const result=await call(tool,{...dispatch,run_id:b.rid,path:'allowed.txt'});assert([401,403].includes(result.statusCode),tool+' must reject another Run');
     }
     const jobs=[a,b].map(s=>({id:'AJ-'+crypto.randomUUID(),task_id:s.tid,run_id:s.rid,role:'execution',phase:'execution',route:{client:'dsh',provider:'fixture',model:'fixture'},status:'completed',revision:1,session_mode:'new'}));
     for(const job of jobs)f.wb.put('agent_jobs',job,{run_id:job.run_id});
     assert.equal((await call('get_agent_job',{run_id:a.rid,job_id:jobs[0].id,timeout_ms:0})).statusCode,200);
     assert.equal((await call('get_agent_job',{run_id:a.rid,job_id:jobs[1].id,timeout_ms:0})).statusCode,403);
+    assert.equal((await call('recover_native_review',{run_id:a.rid,job_id:jobs[1].id})).statusCode,403);
+    assert.equal((await call('recover_native_review',{run_id:a.rid,job_id:jobs[0].id})).statusCode,403);
     const noRoute=await call('dispatch_review',dispatch);assert.equal(noRoute.statusCode,409);assert.equal(f.wb.all('agent_jobs').length,2);
     const spoof=await call('report_run_activity',{run_id:a.rid,event_id:'identity-spoof',event_type:'started',data:{identity:'zcode',message:'伪造本人身份'}});assert.equal(spoof.statusCode,400);assert.equal(f.wb.get('runs',a.rid).has_started,false);
   }finally{await f.app.close()}
@@ -82,7 +84,7 @@ test('reviewer仅能使用当前RA合同，不能冒充身份、访问其他RA�
     const read=await call('read_review_context_file',{review_id:first.review_id,path:'allowed.txt',range:{start_line:2,end_line:2}});assert.equal(read.statusCode,200);assert.equal(read.json().content,'合同内正文\n');
     for(const body of [{path:'allowed.txt'},{path:'outside.txt'},{path:'.env'},{path:path.join(f.config.dataDir,'keys.json')}])assert.equal((await call('read_review_context_file',{review_id:first.review_id,...body})).statusCode,403);
     for(const key of [runner,f.wb.keys.planner,f.wb.keys.manager])assert.equal((await call('read_review_context_file',{review_id:first.review_id,run_id:a.rid,path:'allowed.txt'},key)).statusCode,403);
-    const replacement=exportReviewOrder(f.wb,{run_id:a.rid,reviewer_id:'claude',expected_revision:f.wb.get('tasks',a.tid).revision,reason:'隔离测试撤销旧审查权限'},{role:'user'});assert.notEqual(replacement.review_id,first.review_id);
+    const replacement=updateReviewMember(f.wb,{run_id:a.rid,review_id:first.review_id,action:'replace',reviewer_id:'claude',expected_revision:f.wb.get('tasks',a.tid).revision,reason:'隔离测试撤销旧审查权限'},{role:'user'});assert('review_id' in replacement);assert.notEqual(replacement.review_id,first.review_id);
     assert.equal((await call('read_review_context_file',{review_id:first.review_id,path:'allowed.txt',range:{start_line:2,end_line:2}})).statusCode,409);
   }finally{await f.app.close()}
 });
@@ -319,7 +321,8 @@ test('主执行许可仅页面可设：CSRF、版本、审计与规划参数不�
       assert.equal((await f.app.inject({method:'POST',url,headers:{...page,authorization:'Bearer '+token},payload})).statusCode,403);
       const dispatch={run_id:s.rid,request_id:crypto.randomUUID(),expected_revision:initial.revision};
       assert.equal((await f.app.inject({method:'POST',url:'/api/mcp/dispatch_run',headers:{host:page.host,authorization:'Bearer '+token},payload:dispatch})).statusCode,403);
-      assert.equal((await f.app.inject({method:'POST',url:'/api/mcp/continue_run',headers:{host:page.host,authorization:'Bearer '+token},payload:dispatch})).statusCode,403);
+      // Runner can request same-session continuation, but this initial Run has no rework to continue.
+      assert.equal((await f.app.inject({method:'POST',url:'/api/mcp/continue_run',headers:{host:page.host,authorization:'Bearer '+token},payload:dispatch})).statusCode,token===keys(f.config.dataDir,'run',s.rid)?409:403);
     }
     assert.equal(f.wb.get('tasks',s.tid).revision,initial.revision);assert.equal(f.wb.all('agent_jobs').length,0);
     const q=f.wb.request({project_id:'P-workbench',text:'合成规划不能授权启动'});
@@ -332,4 +335,46 @@ test('主执行许可仅页面可设：CSRF、版本、审计与规划参数不�
     for(const token of [keys(f.config.dataDir,'run',s.rid),f.wb.keys.planner,f.wb.keys.manager])assert.equal((await f.app.inject({method:'POST',url:'/api/mcp/dispatch_run',headers:{host:page.host,authorization:'Bearer '+token},payload:{run_id:s.rid,request_id:crypto.randomUUID(),expected_revision:initial.revision+1}})).statusCode,403);
     assert.equal(f.wb.all('agent_jobs').length,0);
   }finally{await f.app.close();}
+});
+
+test('HTTP original runner key follows only its formal same-session rework Run',async()=>{
+ const f=await apiFixture();try{
+ const s=setup(f.wb,f.root),other=setup(f.wb,f.root);contract(f.wb,f.root,s);const ra=deliver(f.wb,f.root,s);
+ const {reviewAssignmentContext,startReview,submitReviewResult}=await import('../src/core/review-workflow.ts');const ctx=reviewAssignmentContext(f.wb,ra.review_id);startReview(f.wb,{review_id:ra.review_id,identity:ctx.assignment.reviewer_id});submitReviewResult(f.wb,{review_id:ra.review_id,task_id:s.tid,run_id:s.rid,review_digest:ctx.review_digest,verdict:'changes_requested',findings:['合成接口测试需要返修'],limitations:['不调用真实模型'],evidence:['当前交付绑定'],report_markdown:'# 合成返修报告：仅验证同会话作用域链，不调用真实模型或审查'},'reviewer:'+ra.review_id);
+ const token=keys(f.config.dataDir,'run',s.rid),host='127.0.0.1:'+f.config.port;
+ const call=(tool:string,body:Row={})=>f.app.inject({method:'POST',url:'/api/mcp/'+tool,headers:{host,authorization:'Bearer '+token},payload:{run_id:s.rid,...body}});
+ const firstRequest={request_id:crypto.randomUUID(),expected_revision:f.wb.get('tasks',s.tid).revision};const continued=await call('continue_run',firstRequest);assert.equal(continued.statusCode,200,continued.body);const next=continued.json().run_id;assert.notEqual(next,s.rid);
+ const response=await call('get_run_context',{mode:'brief'});assert.equal(response.statusCode,200,response.body);const context=response.json();assert.equal(context.authority.run_id,next);assert.equal(context.state.run_status,'awaiting_dispatch');assert.equal(context.next_action.owner,'agent');assert.notEqual(context.next_action.label,'交给执行者');
+ assert([401,403].includes((await call('get_run_context',{run_id:other.rid})).statusCode));
+ const ack=await call('ack_run_context',{context_hash:context.context_hash});assert.equal(ack.statusCode,200,ack.body);
+ const started=await call('report_run_activity',{event_id:'continued-start-'+crypto.randomUUID(),event_type:'started',data:{message:'同会话返修接单'}});assert.equal(started.statusCode,200,started.body);assert.equal(f.wb.get('runs',next).has_started,true);assert.equal(f.wb.get('runs',s.rid).status,'submitted');
+ const repeated=await call('continue_run',firstRequest);assert.equal(repeated.statusCode,200,repeated.body);assert.deepEqual(repeated.json(),continued.json());
+ const submitted=await call('report_run_activity',{event_id:'continued-submitted-'+crypto.randomUUID(),event_type:'submitted',data:{result:'同会话第二轮真实接口状态测试交付，不调用模型或生产客户端。'}});assert.equal(submitted.statusCode,200,submitted.body);assert.equal(submitted.json().disposition,'applied',submitted.body);
+ const secondRa=exportReviewOrder(f.wb,{run_id:next,reviewer_id:'zcode',expected_revision:f.wb.get('tasks',s.tid).revision,reason:'第二次同会话返修接口测试'},{role:'user'});const secondCtx=reviewAssignmentContext(f.wb,secondRa.review_id);startReview(f.wb,{review_id:secondRa.review_id,identity:secondCtx.assignment.reviewer_id});submitReviewResult(f.wb,{review_id:secondRa.review_id,task_id:s.tid,run_id:next,review_digest:secondCtx.review_digest,verdict:'changes_requested',findings:['第二轮合成返修'],limitations:['无真实模型'],evidence:['第二轮交付绑定'],report_markdown:'# 第二轮合成审查报告：验证原凭据在中间Run的请求幂等性'},'reviewer:'+secondRa.review_id);
+ const secondRequest={request_id:crypto.randomUUID(),expected_revision:f.wb.get('tasks',s.tid).revision};const second=await call('continue_run',secondRequest);assert.equal(second.statusCode,200,second.body);assert.notEqual(second.json().run_id,next);assert.equal(second.json().previous_run_id,next);
+ const secondReplay=await call('continue_run',secondRequest);assert.equal(secondReplay.statusCode,200,secondReplay.body);assert.deepEqual(secondReplay.json(),second.json());
+ const oldReplay=await call('continue_run',firstRequest);assert.equal(oldReplay.statusCode,409,oldReplay.body);
+ const latestContext=await call('get_run_context');assert.equal(latestContext.json().authority.run_id,second.json().run_id);
+ const nonChainId='R-'+crypto.randomUUID();f.wb.put('runs',{...f.wb.get('runs',s.rid),id:nonChainId,continuations:[]},{task_id:s.tid});
+ const jobRuns=[s.rid,next,second.json().run_id,other.rid,nonChainId];const jobs=jobRuns.map((run_id,index)=>({id:'AJ-'+crypto.randomUUID(),run_id,task_id:run_id===other.rid?other.tid:s.tid,role:index===0?'execution':'review',route:{client:'grok',model:'synthetic'},phase:'review',status:'completed',revision:1,session_mode:'new'}));for(const job of jobs)f.wb.put('agent_jobs',job,{run_id:job.run_id});
+ for(const job of jobs.slice(0,3)){const read=await call('get_agent_job',{job_id:job.id,timeout_ms:0});assert.equal(read.statusCode,200,read.body);assert.equal(read.json().run_id,job.run_id);}
+ for(const job of jobs.slice(3)){const read=await call('get_agent_job',{job_id:job.id,timeout_ms:0});assert.equal(read.statusCode,403,read.body);}
+ const management=await call('get_task_detail',{task_id:s.tid});assert.equal(management.statusCode,200,management.body);
+ }finally{await f.app.close();}
+});
+
+
+
+
+test('HTTP managed capability distinguishes the live owner and survives formal Run continuation',async()=>{
+ const f=await apiFixture();let release=()=>{};let launch:Parameters<Launcher>[0]|undefined;
+ Object.assign(f.agents,{launcher:(options:Parameters<Launcher>[0])=>new Promise(resolve=>{launch=options;release=()=>resolve({exitCode:0,signal:null,processStopped:true});options.signal.addEventListener('abort',()=>resolve({exitCode:null,signal:'SIGTERM',processStopped:true}),{once:true});}),clients:{async resolve(_data:string,kind:ClientKind){return {kind,label:'合成',status:'verified',reason:'隔离',checkedAt:new Date().toISOString(),authentication:'unknown',quota:'unknown',invocation:'unknown'};},async build(){return {command:'SYNTHETIC-NOT-EXECUTED',args:[]};},async discover(){return [];}}});
+ try{const s=routedRecoverySetup(f.wb,f.root,'synthetic-managed-http'),job=f.agents.dispatchRun({run_id:s.rid,request_id:crypto.randomUUID(),expected_revision:f.wb.get('tasks',s.tid).revision},{role:'user',source:'page'});const deadline=Date.now()+4000;while(!launch&&Date.now()<deadline)await new Promise(r=>setTimeout(r,10));assert(launch);
+ const ra=deliver(f.wb,f.root,s),{reviewAssignmentContext,startReview,submitReviewResult}=await import('../src/core/review-workflow.ts'),ctx=reviewAssignmentContext(f.wb,ra.review_id);startReview(f.wb,{review_id:ra.review_id,identity:ctx.assignment.reviewer_id});submitReviewResult(f.wb,{review_id:ra.review_id,task_id:s.tid,run_id:s.rid,review_digest:ctx.review_digest,verdict:'changes_requested',findings:['合成受管返修'],limitations:['无真实模型'],evidence:['当前正式交付'],report_markdown:'# 合成受管进程接口审查：仅验证能力凭据和正式返修链'},'reviewer:'+ra.review_id);
+ const token=keys(f.config.dataDir,'run',s.rid),host='127.0.0.1:'+f.config.port,cap={'x-workbench-execution-job-id':job.job_id,'x-workbench-execution-job-token':launch.env!.WORKBENCH_EXECUTION_JOB_TOKEN};const call=(tool:string,body:Row={},headers:Row={})=>f.app.inject({method:'POST',url:'/api/mcp/'+tool,headers:{host,authorization:'Bearer '+token,...headers},payload:{run_id:s.rid,...body}});const request={request_id:crypto.randomUUID(),expected_revision:f.wb.get('tasks',s.tid).revision};
+ const absent=await call('continue_run',request);assert.equal(absent.statusCode,409,absent.body);const wrong=await call('continue_run',request,{...cap,'x-workbench-execution-job-token':'0'.repeat(64)});assert.equal(wrong.statusCode,403,wrong.body);
+ const next=await call('continue_run',request,cap);assert.equal(next.statusCode,200,next.body);const rid=next.json().run_id;assert.notEqual(rid,s.rid);const replay=await call('continue_run',request,cap);assert.equal(replay.statusCode,200,replay.body);assert.deepEqual(replay.json(),next.json());
+ const context=await call('get_run_context',{mode:'brief'},cap);assert.equal(context.statusCode,200,context.body);assert.equal(context.json().authority.run_id,rid);assert.equal(context.json().next_action.owner,'agent');assert.notEqual(context.json().next_action.label,'交给执行者');const originalJob=await call('get_agent_job',{job_id:job.job_id,timeout_ms:0},cap);assert.equal(originalJob.statusCode,200,originalJob.body);assert.equal(originalJob.json().run_id,s.rid);assert.equal((await call('ack_run_context',{context_hash:context.json().context_hash},cap)).statusCode,200);const started=await call('report_run_activity',{event_id:'managed-http-start-'+crypto.randomUUID(),event_type:'started',data:{message:'受管本人同会话返修接单'}},cap);assert.equal(started.statusCode,200,started.body);assert.equal(started.json().disposition,'applied');assert.equal(started.json().run_id,rid);
+ const submitted=await call('report_run_activity',{event_id:'managed-http-submit-'+crypto.randomUUID(),event_type:'submitted',data:{result:'受管本人同会话返修正式报告：隔离API验证通过，无真实模型调用。'}},cap);assert.equal(submitted.statusCode,200,submitted.body);assert.equal(submitted.json().disposition,'applied');assert.equal(f.wb.get('runs',rid).status,'submitted');await(f.agents as any).tick();assert.equal(launch.signal.aborted,false);release();const end=Date.now()+4000;while(f.wb.get('agent_jobs',job.job_id).status==='running'&&Date.now()<end)await new Promise(r=>setTimeout(r,10));assert.equal(f.wb.get('agent_jobs',job.job_id).status,'completed');assert.equal(f.wb.get('agent_jobs',job.job_id).run_id,s.rid);assert(!next.body.includes(cap['x-workbench-execution-job-token']));
+ }finally{release();await f.app.close();}
 });

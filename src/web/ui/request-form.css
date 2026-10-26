@@ -1,0 +1,7 @@
+.request-form { gap: 16px; }
+.request-options { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 14px; }
+.request-options > *, .request-form .field { min-width: 0; }
+.request-delivery-summary { margin: -6px 0 0; font-size: 13px; color: var(--ink-2); line-height: 1.6; overflow-wrap: anywhere; }
+.request-form .request-choice-note { margin: -6px 0 0; }
+.request-form .delivery-profile-fields { border-left: 2px solid var(--line); padding-left: 14px; }
+@media (max-width: 520px) { .request-options { grid-template-columns: 1fr; } }

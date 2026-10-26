@@ -3,7 +3,12 @@ import path from 'node:path';import type {Row} from './schema.ts';import {compac
 import {runTask} from './workflow-policy.ts';
 import {priorityInstructions} from './priority-policy.ts';
 import {resolveDeliveryProfile} from './delivery-profile.ts';
-export function compactOrder(t:Row,p:Row,r:Row,ledgerRoot:string,execution:Row={}){
+export function runnerEntry(runId:string,ledgerRoot:string,connection:Row={}){
+ const quote=(s:string)=>"'"+s.replace(/'/g,"''")+"'";
+ const env=`$env:WORKBENCH_ROOT=${quote(ledgerRoot)}; `+(connection.dataDir?`$env:WORKBENCH_DATA_DIR=${quote(connection.dataDir)}; `:'')+(connection.port?`$env:WORKBENCH_PORT=${quote(String(connection.port))}; `:'');
+ return `未配置 MCP 或 npm 时使用工作台随单提供的本机入口，无需查找客户端安装路径：\n\n    ${env}& ${quote(process.execPath)} --import ${quote(import.meta.resolve('tsx'))} ${quote(path.join(ledgerRoot,'scripts','agent.ts'))} ${runId} start\n\n将末尾 start 换为 context、report <JSON文件>、review、continue、job <调用编号>、manage <工具名> <JSON文件> 或 closeout <结果JSON>。同会话返修后这条入口继续有效，服务端返回当前 Run；无需用户再次复制。\n`;
+}
+export function compactOrder(t:Row,p:Row,r:Row,ledgerRoot:string,execution:Row={},connection:Row={}){
  t=runTask(t,r);
  const profile=resolveDeliveryProfile(t),deployment=profile.deployment;
  const deploymentInstructions=deployment.verification==='executor_reported'
@@ -55,13 +60,14 @@ ${t.tests.map((x:string)=>'- 检查：'+x).join('\n')}
 ## 继续执行
 先调用 get_run_context({run_id:"${r.id}",mode:"brief"})；已持有 context_hash 的同会话使用 mode:"delta",known_context_hash。缺失上下文再请求 full，不重复全文展开旧报告。
 回报使用本 Run scoped MCP 的 report_run_activity，由程序填写身份、cwd、版本与序号；保留 event_id 以便幂等重试。也可使用 scripts/agent.ts ${r.id} context|start|report，连接 ${ledgerRoot} 的账本。
-交付后按本任务计划调用 dispatch_review 或 scripts/agent.ts <Run> review；已启用 auto_review 时工作台自动接手，同一请求不要重复派发。需要修改时，本人无外部调用路线可用 continue_run 建立手工新 Run；外部主执行由用户启动，只有用户另行开启且计划允许才自动续作。旧交付保留，复审按真实会话编号续接。调用与模型路径由工作台负责，执行者无需重新读取调度手册。子代理可用 scripts/agent.ts <Run> register-delegation <JSON文件> 先登记，完成后 report-delegation <JSON文件> 回报。缺失客户端或调用失败必须保留实际原因。
+${runnerEntry(r.id,ledgerRoot,connection)}
+交付后按本任务计划调用 dispatch_review 或 scripts/agent.ts <Run> review；已启用 auto_review 时工作台自动接手，同一请求不要重复派发。需要修改时，当前执行会话直接用 continue_run 续接返修或收尾，不启动另一执行程序，不要求用户再转单；新负责人或另启外部主执行由用户启动。旧交付保留，复审按真实会话编号续接。调用与模型路径由工作台负责，执行者无需重新读取调度手册。子代理可用 scripts/agent.ts <Run> register-delegation <JSON文件> 先登记，完成后 report-delegation <JSON文件> 回报。缺失客户端或调用失败必须保留实际原因。
 
 ## 资料索引
 ${t.required_files.join('\n')}
 读取合同（必读、条件补读、输出目录、预算）：${JSON.stringify(t.context_contract||null)}
 完整原需求、验收项与完整执行协议：${path.join(r.directory,'FULL-RUN.md')}
-项目上下文：${path.join(r.directory,'CONTEXT.md')}
+项目经验按需索引：${path.join(r.directory,'CONTEXT.md')}。当前上下文已带索引时无需再开；get_project_memories 按编号补读相关经验，同会话传已读哈希只取变化。
 历史记录不能扩大权限。
 `+compactRetry(r);
 }

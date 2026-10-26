@@ -26,10 +26,10 @@ test('42个预设全部使用可解码的本地图标，明暗和窄屏可用',a
 
 test('不勾选即可不通过，复制返工原因生成新Run且可重复复制，旧成果保留',async({page})=>{
  const m=await makeTask(page,{title:'测试用户退回返工',stage:'reviewed'}),before=await m.get('/tasks/'+m.tid),old=fs.readFileSync(before.runs[0].order_path);
- await page.goto('/');await page.getByRole('article',{name:m.title,exact:true}).getByRole('button',{name:'去试用确认'}).click();await drawer(page).getByRole('button',{name:'试用后确认完成',exact:true}).click();let d=page.getByRole('dialog',{name:'试用后确认完成'});
+ await page.goto('/');await page.getByRole('article',{name:m.title,exact:true}).getByRole('button',{name:'去试用确认'}).click();await expect(drawer(page)).toHaveCount(0);let d=page.getByRole('dialog',{name:'试用后确认完成'});
  await expect(d.getByRole('button',{name:'确认结果符合需求'})).toBeDisabled();await d.getByRole('button',{name:'不通过，退回修改'}).click();d=page.getByRole('dialog',{name:'不通过，退回修改'});await expect(d.getByRole('button',{name:'确认不通过'})).toBeDisabled();await d.getByLabel('哪里不符合你的要求？').fill('卡片过高，请拆成两张，保持原设计。');await shot(page,'验收-填写不通过意见');await d.getByRole('button',{name:'确认不通过'}).click();d=page.getByRole('dialog',{name:'已记录不通过'});await expect(d).toBeVisible();expect((await m.get('/tasks/'+m.tid)).task.status).toBe('acceptance_rejected');
  await d.getByRole('button',{name:'复制返工要求'}).click();await expect(page.getByRole('status')).toContainText('返工要求已复制');const clip=await page.evaluate(()=>navigator.clipboard.readText());expect(clip).toContain('卡片过高');const current=await m.get('/tasks/'+m.tid);expect(current.runs.length).toBe(2);expect(current.task.status).toBe('awaiting_dispatch');expect(clip).toContain(current.task.current_run_id);expect(current.task.current_run_id).not.toBe(m.rid);expect(fs.readFileSync(before.runs[0].order_path)).toEqual(old);expect(current.artifacts).toEqual(before.artifacts);expect(current.reviews).toEqual(before.reviews);
- await d.getByRole('button',{name:'复制返工要求'}).click();expect((await m.get('/tasks/'+m.tid)).runs.length).toBe(2);await d.getByRole('button',{name:'关闭',exact:true}).first().click();await page.reload();await expect(drawer(page)).toContainText('卡片过高');await shot(page,'验收-返工已保存');
+ await d.getByRole('button',{name:'复制返工要求'}).click();expect((await m.get('/tasks/'+m.tid)).runs.length).toBe(2);await d.getByRole('button',{name:'关闭',exact:true}).first().click();await page.goto('/#/today?task='+m.tid);await page.reload();await expect(drawer(page)).toContainText('卡片过高');await shot(page,'验收-返工已保存');
 });
 
 test('不通过关联已有后续任务后首页不再催确认，项目历史仍能查看',async({page})=>{
