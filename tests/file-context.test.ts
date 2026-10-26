@@ -21,7 +21,7 @@ test('文件合同限制范围和预算，旧任务不声称已读源码',()=>{
   assert.throws(()=>contextContractSchema.parse({required:[{path:'a',range:{start_line:3,end_line:2}}],output_dir:'out'}));
   assert.throws(()=>contextContractSchema.parse({required:[],output_dir:'out',max_bytes:262145}));
   assert.throws(()=>contextContractSchema.parse({required:[{path:'src/**'}],output_dir:'out'}));
-  const f=fixture();try{const s=setup(f.wb,f.root),c=executionContext(f.wb,{run_id:s.rid});assert.equal(c.context.file_context.source_knowledge,'unknown');assert.deepEqual(c.context.file_context.files,[]);assert.equal(c.reading.model_reading,'unknown');assert.equal(c.usage.token_count,null)}finally{f.wb.close()}
+  const f=fixture();try{const s=setup(f.wb,f.root),c=executionContext(f.wb,{run_id:s.rid,mode:'full'});assert.equal(c.context.file_context.source_knowledge,'unknown');assert.deepEqual(c.context.file_context.files,[]);assert.equal(c.reading.model_reading,'unknown');assert.equal(c.usage.token_count,null)}finally{f.wb.close()}
 });
 
 test('版本哈希覆盖实际内容与片段范围，旧确认失效且未知hash重置',()=>{
@@ -29,23 +29,23 @@ test('版本哈希覆盖实际内容与片段范围，旧确认失效且未知ha
     const first=executionContext(f.wb,{run_id:f.rid});acknowledgeContext(f.wb,{run_id:f.rid,context_hash:first.context_hash,session_id:'runner'});
     assert.deepEqual(executionContext(f.wb,{run_id:f.rid,mode:'delta',known_context_hash:first.context_hash}).context,{});
     const file=path.join(f.root,'source.ts'),stat=fs.statSync(file);fs.writeFileSync(file,'FIRST\nsecond\nthird\n');fs.utimesSync(file,stat.atime,stat.mtime);
-    const changed=executionContext(f.wb,{run_id:f.rid,mode:'delta',known_context_hash:first.context_hash});assert.notEqual(changed.context_hash,first.context_hash);assert.equal(changed.file_changes.length,1);assert.throws(()=>acknowledgeContext(f.wb,{run_id:f.rid,context_hash:first.context_hash}),/变化/);
+    const changed=executionContext(f.wb,{run_id:f.rid,mode:'delta',known_context_hash:first.context_hash});assert.notEqual(changed.context_hash,first.context_hash);assert.equal(changed.context.files.total,1);assert.throws(()=>acknowledgeContext(f.wb,{run_id:f.rid,context_hash:first.context_hash}),/变化/);
     f.task.context_contract.required[0].range={start_line:2,end_line:2};putTask(f);const range=executionContext(f.wb,{run_id:f.rid,mode:'delta',known_context_hash:changed.context_hash});assert.notEqual(range.context_hash,changed.context_hash);
     const reset=executionContext(f.wb,{run_id:f.rid,mode:'delta',known_context_hash:'unknown'});assert.equal(reset.reset_required,true);assert.equal(reset.mode,'brief');assert(!('original_request' in reset.context));
   }finally{f.wb.close()}
 });
 
-test('文件阅读按合同片段和累计UTF-8字节限额提供，补读需要指定条件',()=>{
+test('文件阅读按所需片段提供，累计预算和补读原因仅作提示',()=>{
   const f=contracted();try{
     fs.writeFileSync(path.join(f.root,'source.ts'),'excluded\n'+'字'.repeat(100)+'\n'+'文'.repeat(100)+'\n');fs.writeFileSync(path.join(f.root,'extra.txt'),'conditional detail');
     f.task.context_contract.required=[{path:'source.ts',range:{start_line:2,end_line:3}}];f.task.context_contract.supplemental=[{path:'extra.txt',reason:'必读资料没有解释失败原因'}];putTask(f);
-    assert.throws(()=>readRunContextFile(f.wb,{run_id:f.rid,path:'source.ts'}),/合同/);
-    assert.throws(()=>readRunContextFile(f.wb,{run_id:f.rid,path:'source.ts',range:{start_line:1,end_line:2}}),/合同/);
+    assert(readRunContextFile(f.wb,{run_id:f.rid,path:'source.ts'}).warnings.length);
+    assert(readRunContextFile(f.wb,{run_id:f.rid,path:'source.ts',range:{start_line:1,end_line:2}}).warnings.length);
     const read=readRunContextFile(f.wb,{run_id:f.rid,path:'source.ts',range:{start_line:2,end_line:3}});assert.equal(read.usage.bytes,602);assert(!read.content.includes('excluded'));assert.equal(read.record.status,'delivered');assert.equal(read.usage.token_count,null);
-    assert.throws(()=>readRunContextFile(f.wb,{run_id:f.rid,path:'source.ts',range:{start_line:2,end_line:3}}),/预算/);
-    assert.throws(()=>readRunContextFile(f.wb,{run_id:f.rid,path:'extra.txt'}),/合同/);assert.throws(()=>readRunContextFile(f.wb,{run_id:f.rid,path:'extra.txt',reason:'任意理由'}),/合同/);
+    assert(readRunContextFile(f.wb,{run_id:f.rid,path:'source.ts',range:{start_line:2,end_line:3}}).warnings.length);
+    assert(readRunContextFile(f.wb,{run_id:f.rid,path:'extra.txt'}).warnings.length);assert(readRunContextFile(f.wb,{run_id:f.rid,path:'extra.txt',reason:'任意理由'}).warnings.length);
     const extra=readRunContextFile(f.wb,{run_id:f.rid,path:'extra.txt',reason:'必读资料没有解释失败原因'});assert.equal(extra.condition_evidence,'caller_attested_condition');
-    assert.equal(executionContext(f.wb,{run_id:f.rid}).reading.files_delivered.length,2);
+    assert.equal(executionContext(f.wb,{run_id:f.rid}).reading.files_delivered_count,7);
   }finally{f.wb.close()}
 });
 
@@ -66,7 +66,7 @@ test('读取合同与写权限分离，保护路径、穿越、链接和疑似�
 
 test('文件指纹限额失败时保留未知，跨Task不能继承执行缓存',()=>{
   const f=contracted();try{
-    fs.writeFileSync(path.join(f.root,'source.ts'),Buffer.alloc(4*1024*1024+1,97));const big=executionContext(f.wb,{run_id:f.rid});assert.equal(big.context.file_context.files[0].file_sha256,null);assert.equal(big.context.file_context.files[0].status,'size_limit');
+    fs.writeFileSync(path.join(f.root,'source.ts'),Buffer.alloc(4*1024*1024+1,97));const big=executionContext(f.wb,{run_id:f.rid,mode:'full'});assert.equal(big.context.file_context.files[0].file_sha256,null);assert.equal(big.context.file_context.files[0].status,'size_limit');
     const other=setup(f.wb,f.root),r=f.wb.get('runs',other.rid);r.retry_context={previous_run_id:f.rid};r.context_cache=f.wb.get('runs',f.rid).context_cache;f.wb.put('runs',r,{task_id:other.tid});const reset=executionContext(f.wb,{run_id:other.rid,mode:'delta',known_context_hash:big.context_hash});assert.equal(reset.reset_required,true);assert(!JSON.stringify(reset.context).includes(f.tid));
   }finally{f.wb.close()}
 });
@@ -112,7 +112,7 @@ test('首次无会话投递由真实job绑定，续审预计会话只供增量�
   }finally{f.wb.close()}
 });
 
-test('合同内其他文件或当前文件内容改变均不能重置累计阅读预算',()=>{
+test('内容变化保留累计阅读统计，超预算仅作提醒',()=>{
   const f=contracted();try{
     fs.writeFileSync(path.join(f.root,'source.ts'),'a'.repeat(600));fs.writeFileSync(path.join(f.root,'other.txt'),'initial');
     f.task.context_contract.required.push({path:'other.txt'});putTask(f);
@@ -120,11 +120,11 @@ test('合同内其他文件或当前文件内容改变均不能重置累计阅�
     assert.equal(first.budget.delivered_bytes,600);assert.equal(first.record.budget_key,before.budget_key);
     fs.writeFileSync(path.join(f.root,'other.txt'),'changed unrelated contract content');
     const after=fileContextSnapshot(taskFileScope(f.wb,f.task));assert.notEqual(after.scope_hash,before.scope_hash);assert.equal(after.budget_key,before.budget_key);
-    assert.throws(()=>readRunContextFile(f.wb,{run_id:f.rid,path:'source.ts'}),/预算不足/);
+    assert(readRunContextFile(f.wb,{run_id:f.rid,path:'source.ts'}).warnings.length);
     fs.writeFileSync(path.join(f.root,'source.ts'),'b'.repeat(600));
-    assert.throws(()=>readRunContextFile(f.wb,{run_id:f.rid,path:'source.ts'}),/文件内容已变化，已用额度仍累计/);
+    assert(readRunContextFile(f.wb,{run_id:f.rid,path:'source.ts'}).warnings.length);
     const changed=fileContextSnapshot(taskFileScope(f.wb,f.task));assert.equal(changed.budget_key,before.budget_key);assert.notEqual(changed.scope_hash,after.scope_hash);
-    assert.equal(f.wb.get('runs',f.rid).context_reads.length,1);
+    assert.equal(f.wb.get('runs',f.rid).context_reads.length,3);
   }finally{f.wb.close()}
 });
 
@@ -143,7 +143,7 @@ test('单次读取只打开指定合同文件并报告旧指纹变化，额度�
     assert.equal(changed.stale.status,'changed');assert.equal(changed.stale.reason,'file_content_changed');assert.equal(changed.stale.previous_file_sha256,first.record.file_sha256);assert.equal(changed.stale.budget_reset,false);assert.equal(changed.budget.delivered_bytes,602);
     const same=readContractFile(scope,{path:'source.ts',range:{start_line:1,end_line:1}},records);records.push(same.record);assert.equal(same.stale.status,'unchanged');assert.equal(same.budget.delivered_bytes,903);assert.equal(same.budget.remaining_bytes,121);
     assert.deepEqual(opened,[path.join(f.root,'source.ts'),path.join(f.root,'source.ts'),path.join(f.root,'source.ts')]);
-    assert.throws(()=>readContractFile(scope,{path:'source.ts',range:{start_line:2,end_line:2}},records),/预算不足/);
+    assert(readContractFile(scope,{path:'source.ts',range:{start_line:2,end_line:2}},records).warnings.length);
     t.mock.restoreAll();
   }finally{t.mock.restoreAll();f.wb.close()}
 });
@@ -152,11 +152,11 @@ test('缺少budget_key的旧记录保守计费，只有明确合同结构变更�
   const f=contracted();try{
     fs.writeFileSync(path.join(f.root,'source.ts'),'a'.repeat(300));let scope=taskFileScope(f.wb,f.task);
     const legacy:Row={task_id:f.tid,path:'source.ts',scope_hash:'obsolete-content-snapshot',file_sha256:'0'.repeat(64),status:'delivered',bytes:800};
-    assert.throws(()=>readContractFile(scope,{path:'source.ts'},[legacy]),/预算不足/);
+    assert(readContractFile(scope,{path:'source.ts'},[legacy]).warnings.length);
     fs.writeFileSync(path.join(f.root,'source.ts'),'b'.repeat(200));const first=readContractFile(scope,{path:'source.ts'},[legacy]);assert.equal(first.budget.delivered_bytes,1000);assert.equal(first.budget.legacy_records_charged,1);assert.equal(first.stale.reason,'file_content_changed');
     const oldBudget=first.record.budget_key;f.task.context_contract.max_bytes=2048;putTask(f);scope=taskFileScope(f.wb,f.task);
     const replanned=readContractFile(scope,{path:'source.ts'},[legacy,first.record]);assert.notEqual(replanned.record.budget_key,oldBudget);assert.equal(replanned.budget.delivered_bytes,1000);assert.equal(replanned.budget.legacy_records_charged,1);
     assert.throws(()=>readContractFile(scope,{path:'source.ts'},[{...legacy,bytes:-1}]),/账目字节数无效/);
-    assert.throws(()=>readContractFile(scope,{path:'source.ts'},[{...legacy,budget_key:'invalid-key',bytes:2000}]),/预算不足/);
+    assert(readContractFile(scope,{path:'source.ts'},[{...legacy,budget_key:'invalid-key',bytes:2000}]).warnings.length);
   }finally{f.wb.close()}
 });

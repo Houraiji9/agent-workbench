@@ -30,7 +30,7 @@ export function ExecutionList({tasks, queue=false}: {tasks:R[];queue?:boolean}) 
       <div className="order-body">
         <button className="order-title" onClick={()=>s.openTask(t.id)}>{t.title}</button>
         <div className="order-meta"><span>{queue?s.pname(t.project_id):s.name(s.executorOf(t))}</span><OrderStatus task={t}/></div>
-        {waiting&&<div className="order-dependencies">先完成{next.map((d:R)=><button className="link" key={d.id} onClick={()=>s.openTask(d.effective_id)}>{d.effective_title}</button>)}{!next.length&&<span>顺序核对</span>}</div>}
+        {!!next.length&&<div className="order-dependencies">建议前序：{next.map((d:R)=><button className="link" key={d.id} onClick={()=>s.openTask(d.effective_id)}>{d.effective_title}</button>)}</div>}
       </div>
       {!queue&&ready&&<button className="btn small" disabled={s.busy} onClick={()=>void copyOrder(s,t)}><Copy size={14}/>复制执行单</button>}
       {!ready&&<TaskQuickActions task={t}/>}
@@ -47,7 +47,7 @@ export function TaskOrder({task}: {task:R}) {
     <div className="order-heading"><h2>执行顺序</h2><OrderStep task={task}/></div>
     {e.queue_position&&<p className="order-queue">{s.name(e.executor_id)} · 建议第 {e.queue_position} 单{e.ahead&&<>，先处理 <button className="link inline" onClick={()=>s.openTask(e.ahead.id)}>{e.ahead.title}</button></>}</p>}
     {!!e.active_work.length&&<div className="order-dependencies">手头正在处理：{e.active_work.map((t:R)=><button className="link" key={t.id} onClick={()=>s.openTask(t.id)}>{t.title}</button>)}</div>}
-    {!!e.dependencies.length&&<div className="order-dependency-list">{e.dependencies.map((d:R)=><div key={d.id}><span>{d.satisfied?'已完成':'先完成'}</span><button className="link" onClick={()=>s.openTask(d.effective_id)}>{d.effective_title}</button><Pill task={s.data.tasks.find((t:R)=>t.id===d.effective_id)||d}/></div>)}</div>}
+    {!!e.dependencies.length&&<div className="order-dependency-list">{e.dependencies.map((d:R)=><div key={d.id}><span>{d.satisfied?'已完成':'建议前序'}</span><button className="link" onClick={()=>s.openTask(d.effective_id)}>{d.effective_title}</button><Pill task={s.data.tasks.find((t:R)=>t.id===d.effective_id)||d}/></div>)}</div>}
     {!!following.length&&<details className="fold"><summary>完成后可继续的任务（{following.length}）</summary><div className="order-dependencies">{following.map((t:R)=><button className="link" key={t.id} onClick={()=>s.openTask(t.id)}><ArrowRight size={14}/>{t.title}</button>)}</div></details>}
   </section>;
 }

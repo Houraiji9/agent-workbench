@@ -33,7 +33,7 @@ test('real Run policy is frozen against later mutable Task and project defaults;
     const mutated=f.wb.get('tasks',tid);f.wb.put('tasks',{...mutated,execution_policy:policy({max_calls:29}),requested_model:'gpt-6-astra'},{project_id:mutated.project_id});
     const project=f.wb.get('projects','P-workbench');saveProjectPolicy(f.wb,project.id,{version:project.version,agent_id:'codex',execution_policy:policy({max_calls:30})});
     const effective=runTask(f.wb.get('tasks',tid),f.wb.get('runs',rid));assert.equal(effective.execution_policy.max_calls,2);assert.equal(effective.requested_model,'gpt-6-sol');assert.equal(f.wb.get('runs',rid).execution_contract.digest,digest);
-    assert.throws(()=>saveTaskPolicy(f.wb,tid,{revision:mutated.revision,execution_policy:chosen}),/冻结/);
+    assert.equal(saveTaskPolicy(f.wb,tid,{revision:mutated.revision,execution_policy:chosen}).execution_policy.max_calls,2);assert.equal(f.wb.get('runs',rid).policy_advice_history.length,1);
   }finally{f.wb.close();}
 });
 test('stale policy revisions are rejected without replacing valid user settings',()=>{
@@ -50,42 +50,42 @@ test('explicit model override on a new Run keeps its frozen policy consistent an
     assert.equal(run.execution_contract.execution_policy.main_model,'gpt-6-sol','frozen policy must describe the model explicitly chosen for the new Run');assert.deepEqual(f.wb.get('runs',rid).execution_contract,oldContract);
   }finally{f.wb.close();}
 });
-test('delegations enforce idempotency, live concurrency and lifetime call limits using actual DB rows',()=>{
+test('delegations preserve idempotency and record concurrency/call advice',()=>{
   const f=isolated();try{const {rid}=running(f.wb,f.root,policy({max_calls:2,max_concurrency:1})),input=child(f.root,rid),first=registerDelegation(f.wb,input);
     assert.equal(registerDelegation(f.wb,input).id,first.id);assert.throws(()=>registerDelegation(f.wb,{...input,goal:'同编号更改内容必须拒绝'}),/冲突/);
-    assert.throws(()=>registerDelegation(f.wb,child(f.root,rid)),/并发/);assert.equal(f.wb.all('delegations').length,1);
+    assert(registerDelegation(f.wb,child(f.root,rid)).warnings.includes('超过建议并发数'));assert.equal(f.wb.all('delegations').length,2);
     const completed=reportDelegation(f.wb,{run_id:rid,delegation_id:first.id,status:'completed',actual_model:'gpt-6-luna',summary:'隔离测试完成'});assert.equal(completed.observed_by,'executor_reported');
     const second=registerDelegation(f.wb,child(f.root,rid));reportDelegation(f.wb,{run_id:rid,delegation_id:second.id,status:'cancelled'});
-    assert.throws(()=>registerDelegation(f.wb,child(f.root,rid)),/次数/);assert.equal(f.wb.all('delegations').length,2);
+    assert(registerDelegation(f.wb,child(f.root,rid)).warnings.includes('超过建议委派次数'));assert.equal(f.wb.all('delegations').length,4);
   }finally{f.wb.close();}
 });
-test('delegation policy rejects disabled delegation, wrong model, excess depth and context',()=>{
-  const f=isolated();try{const disabled=running(f.wb,f.root,policy({allow_subagents:false}));assert.throws(()=>registerDelegation(f.wb,child(f.root,disabled.rid)),/未允许/);
-    const {rid}=running(f.wb,f.root,policy({max_depth:1,context_bytes:1024}));assert.throws(()=>registerDelegation(f.wb,child(f.root,rid,{context_bytes:1025})),/上下文/);
-    const parent=registerDelegation(f.wb,child(f.root,rid));assert.throws(()=>registerDelegation(f.wb,child(f.root,rid,{parent_id:parent.id})),/层数/);
-    assert.equal(f.wb.all('delegations').filter(d=>d.run_id===rid).length,1);
+test('delegation policy records advice without blocking actual work',()=>{
+  const f=isolated();try{const disabled=running(f.wb,f.root,policy({allow_subagents:false}));assert(registerDelegation(f.wb,child(f.root,disabled.rid)).warnings.length);
+    const {rid}=running(f.wb,f.root,policy({max_depth:1,context_bytes:1024}));assert(registerDelegation(f.wb,child(f.root,rid,{context_bytes:1025})).warnings.includes('超过建议上下文预算'));
+    const parent=registerDelegation(f.wb,child(f.root,rid));assert(registerDelegation(f.wb,child(f.root,rid,{parent_id:parent.id})).warnings.includes('超过建议层数'));
+    assert.equal(f.wb.all('delegations').filter(d=>d.run_id===rid).length,3);
   }finally{f.wb.close();}
 });
-test('delegation paths cannot escape Task, parent scope, protected data or a junction to the data directory',()=>{
+test('delegation paths cannot escape project, protected data or a junction to the data directory',()=>{
   const f=isolated();try{const {rid}=running(f.wb,f.root),allowed=path.join(f.root,'child');fs.mkdirSync(allowed);const other=path.join(f.root,'other');fs.mkdirSync(other);const required=path.join(other,'context.txt');fs.writeFileSync(required,'synthetic context');
     const parent=registerDelegation(f.wb,child(f.root,rid,{allowed_paths:[allowed],output_dir:allowed}));
     for(const patch of [{allowed_paths:[path.dirname(f.root)],output_dir:path.dirname(f.root)},{allowed_paths:[f.wb.config.dataDir],output_dir:f.wb.config.dataDir},{allowed_paths:[allowed],output_dir:other}])assert.throws(()=>registerDelegation(f.wb,child(f.root,rid,patch)));
-    assert.throws(()=>registerDelegation(f.wb,child(f.root,rid,{parent_id:parent.id,allowed_paths:[other],output_dir:other})),/路径|授权|范围|目录/);
-    assert.throws(()=>registerDelegation(f.wb,child(f.root,rid,{parent_id:parent.id,allowed_paths:[allowed],output_dir:allowed,required_files:[required]})),/父委派范围/);
-    const link=path.join(f.root,'data-link');fs.symlinkSync(f.wb.config.dataDir,link,'junction');assert.throws(()=>registerDelegation(f.wb,child(f.root,rid,{allowed_paths:[link],output_dir:link})));assert.equal(f.wb.all('delegations').length,1);
+    assert.equal(registerDelegation(f.wb,child(f.root,rid,{parent_id:parent.id,allowed_paths:[other],output_dir:other})).output_dir,other);
+    assert.deepEqual(registerDelegation(f.wb,child(f.root,rid,{parent_id:parent.id,allowed_paths:[allowed],output_dir:allowed,required_files:[required]})).required_files,[required]);
+    const link=path.join(f.root,'data-link');fs.symlinkSync(f.wb.config.dataDir,link,'junction');assert.throws(()=>registerDelegation(f.wb,child(f.root,rid,{allowed_paths:[link],output_dir:link})));assert.equal(f.wb.all('delegations').length,3);
   }finally{f.wb.close();}
 });
-test('cross-Run parent and reports, unauthorized actual model and replacement of terminal report are rejected',()=>{
+test('cross-Run parent and reports, unauthorized actual model and terminal report history is preserved',()=>{
   const f=isolated();try{const a=running(f.wb,f.root),b=running(f.wb,f.root),first=registerDelegation(f.wb,child(f.root,a.rid));
     assert.throws(()=>registerDelegation(f.wb,child(f.root,b.rid,{parent_id:first.id})),/父委派/);
     assert.throws(()=>reportDelegation(f.wb,{run_id:b.rid,delegation_id:first.id,status:'completed'}),/跨执行/);
     assert.equal(reportDelegation(f.wb,{run_id:a.rid,delegation_id:first.id,status:'running',actual_model:'gpt-6-astra'}).actual_model,'gpt-6-astra');
-    const body={run_id:a.rid,delegation_id:first.id,status:'completed',actual_model:'gpt-6-luna',summary:'隔离回执只验证记录'};reportDelegation(f.wb,body);assert.equal(reportDelegation(f.wb,body).status,'completed');assert.throws(()=>reportDelegation(f.wb,{...body,summary:'禁止覆盖已结束回执'}),/已结束/);
+    const body={run_id:a.rid,delegation_id:first.id,status:'completed',actual_model:'gpt-6-luna',summary:'隔离回执只验证记录'};reportDelegation(f.wb,body);assert.equal(reportDelegation(f.wb,body).status,'completed');assert.equal(reportDelegation(f.wb,{...body,summary:'追加结果'}).report_history.at(-1).summary,body.summary);
   }finally{f.wb.close();}
 });
 test('a previous Run cannot create new delegations after a replacement Run becomes current',()=>{
   const f=isolated();try{const {tid,rid}=running(f.wb,f.root);assert.equal(f.wb.event(event(f.root,tid,rid,2,'failed')).disposition,'applied');const task=f.wb.get('tasks',tid);f.wb.exportOrder(tid,1,true,undefined,task.revision);
-    assert.throws(()=>registerDelegation(f.wb,child(f.root,rid)),/当前正在执行/);assert.equal(f.wb.all('delegations').length,0);
+    assert.throws(()=>registerDelegation(f.wb,child(f.root,rid)),/当前执行/);assert.equal(f.wb.all('delegations').length,0);
   }finally{f.wb.close();}
 });
 

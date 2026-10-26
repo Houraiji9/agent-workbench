@@ -17,6 +17,7 @@ export const agentDispatchInput=z.object({
   request_id:z.string().uuid(),
   expected_revision:z.number().int().positive(),
   fresh_session:z.boolean().optional(),
+  instructions:z.string().trim().max(4000).optional(),
   review_id:z.string().regex(/^RA-[a-f0-9-]{36}$/).optional(),
 }).strict();
 export const agentJobInput=z.object({

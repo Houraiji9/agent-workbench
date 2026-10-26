@@ -54,9 +54,10 @@ export function runTask(task:Row,run:Row):Row{
   const additions=Object.fromEntries(['importance','model_selection','delivery_profile','delivery_target','runtime_root']
     .filter(key=>Object.hasOwn(c,key)).map(key=>[key,structuredClone(c[key])]));
   return reviewArrangementTask({...task,agent_id:c.agent_id,requested_model:c.requested_model,reviewer_id:c.reviewer_id,
-    execution_policy:c.execution_policy,execution_route:c.execution_route||undefined,review_route:c.review_route||undefined,
+    execution_policy:rPolicy(run,c),execution_route:c.execution_route||undefined,review_route:c.review_route||undefined,
     automation_policy:c.automation_policy||undefined,review_policy:c.review_policy,...additions},run);
 }
+function rPolicy(run:Row,contract:Row){return run.policy_advice||contract.execution_policy;}
 function reviewArrangementTask(task:Row,run:Row):Row{
   const a=run.review_arrangement;if(!a)return task;
   return {...task,reviewer_id:a.reviewer_id,review_route:a.route||undefined,
@@ -70,7 +71,7 @@ function checkPriority(task:Row){
   }
 }
 export function policyCapabilities(client?:string){return {managed_delegation:'authorization_and_receipts',native_subagents:'instructions_only',native_enforcement:false,
-  token_budget:'soft',client:client||'external',note:'工作台检查经它登记的委派；客户端内部子代理由执行者遵守设置，当前不能强制拦截或保证完整观测。Token预算为提醒，不是硬封顶。'};}
+  token_budget:'soft',client:client||'external',note:'工作台记录委派与结果，次数、并发、层数和预算均为建议。未登记的客户端内部调用保持未知。'};}
 /**
  * Task fields a user arrangement changes. A route for another client cannot be reused, so it is dropped
  * (the order then waits for manual hand-off) rather than launching a different member's client.
@@ -84,13 +85,14 @@ export function applyUserArrangement(t:Row,agent:Row,model:string|null){
 export const taskPolicyInput=z.object({revision:z.number().int().positive(),agent_id:z.string().max(80).optional(),execution_policy:executionPolicySchema}).strict();
 export function saveTaskPolicy(wb:Workbench,taskId:string,input:unknown){const v=taskPolicyInput.parse(input);return wb.transaction(()=>{
   const t=wb.get('tasks',taskId);assert(t.revision===v.revision,'任务设置已变化，请刷新',409);
-  assert(!t.current_run_id&&t.status==='ready','执行单已冻结；模型和委派权限变更需要新执行单，不能修改本轮设置',409);
-  const agent=v.agent_id||t.agent_id,a=wb.get('agents',agent);assert(!a.archived&&a.allowed_kinds.includes(t.work_kind)&&agent!==t.reviewer_id,'执行者不符合职责或独立审查要求');
+
+  const agent=v.agent_id||t.agent_id,a=wb.get('agents',agent);assert(agent!==t.reviewer_id,'独立审查须记录另一位审查者');
   const model=validateModel(agent,v.execution_policy.main_model,new Date(),wb.config.timezone,t.work_kind,currentModels(wb));
   for(const child of v.execution_policy.child_models)validateModel(agent,child,new Date(),wb.config.timezone,t.work_kind,currentModels(wb));
   // The user's choice replaces the planner's model selection; another member's automatic route is never reused.
   const next={...t,...applyUserArrangement({...t,execution_policy:v.execution_policy},a,model),policy_source:'user_task',revision:t.revision+1,updated_at:now()};
   checkPriority(next);
+  if(t.current_run_id){const r=wb.get('runs',t.current_run_id);r.policy_advice_history=[...(r.policy_advice_history||[]),{at:now(),previous:r.policy_advice||r.execution_contract?.execution_policy,policy:v.execution_policy}];r.policy_advice=v.execution_policy;wb.put('runs',r,{task_id:t.id});}
   wb.put('tasks',next,{project_id:t.project_id});wb.audit('user','set_task_execution_policy',t.id,{policy:next.execution_policy});return next;
 })}
 export function saveProjectPolicy(wb:Workbench,pid:string,input:unknown){const v=z.object({version:z.number().int().positive(),agent_id:z.string().trim().min(1).max(80).nullable().optional(),execution_policy:executionPolicySchema}).strict().parse(input);return wb.transaction(()=>{
@@ -106,18 +108,18 @@ export const delegationInput=z.object({run_id:z.string(),request_id:z.string().u
   parent_id:z.string().nullable().default(null),required_files:z.array(z.string()).max(20),allowed_paths:z.array(z.string()).min(1).max(10),output_dir:z.string(),context_bytes:z.number().int().min(1).max(262144)}).strict();
 export function registerDelegation(wb:Workbench,input:unknown){const v=delegationInput.parse(input);return wb.transaction(()=>{
   const r=wb.get('runs',v.run_id),original=wb.get('tasks',r.task_id),t=runTask(original,r),p=normalizePolicy(t.execution_policy);
-  assert(original.current_run_id===r.id&&r.status==='running','只能登记当前正在执行的委派',409);assert(!wb.get('projects',t.project_id).dispatch_paused,'项目已暂缓新委派',409);
+  assert(original.current_run_id===r.id,'请在当前执行登记委派',409);
   checkPriority(t);
   const existing=wb.all('delegations').find(x=>x.run_id===r.id&&x.request_id===v.request_id),digest=hash(JSON.stringify(v));if(existing){assert(existing.request_digest===digest,'委派请求编号冲突',409);return existing;}
-  assert(p.allow_subagents,'用户未允许本轮使用子代理',403);
-  const all=wb.all('delegations').filter(x=>x.run_id===r.id);assert(all.length<p.max_calls,'已达本轮委派次数上限',409);assert(all.filter(x=>['authorized','running'].includes(x.status)).length<p.max_concurrency,'已达委派并发上限',409);
+  const warnings:string[]=p.allow_subagents?[]:['原计划未建议使用子代理；本次自主委派已记录'];
+  const all=wb.all('delegations').filter(x=>x.run_id===r.id);if(all.length>=p.max_calls)warnings.push('超过建议委派次数');if(all.filter(x=>['authorized','running'].includes(x.status)).length>=p.max_concurrency)warnings.push('超过建议并发数');
   const parent=v.parent_id?all.find(x=>x.id===v.parent_id):null;assert(!v.parent_id||parent&&['authorized','running'].includes(parent.status),'父委派无效',409);
-  const depth=(parent?.depth||0)+1;assert(depth<=p.max_depth,'已达子代理层数上限',403);assert(v.context_bytes<=p.context_bytes,'子代理上下文超过允许预算',403);
-  const roots=parent?.allowed_paths||t.allowed_paths;
+  const depth=(parent?.depth||0)+1;if(depth>p.max_depth)warnings.push('超过建议层数');if(v.context_bytes>p.context_bytes)warnings.push('超过建议上下文预算');
+  const roots=wb.roots(wb.get('projects',t.project_id));
   const allowed=v.allowed_paths.map(f=>{const real=safePath(f,roots,true);assert(!wb.privatePath(real),'子代理路径涉及内部数据',403);return real;});
   const output=safePath(v.output_dir,allowed,true);assert(!wb.privatePath(output),'子代理产物不能写入内部数据',403);
-  const required=v.required_files.map(f=>{const real=safePath(f,t.allowed_paths);assert(!wb.privatePath(real),'子代理不能读取内部数据',403);if(parent)assert(parent.required_files.includes(real)||allowed.some((a:string)=>inside(a,real)),'补读不在父委派范围',403);return real;});
-  const row={...v,id:id('D'),task_id:t.id,project_id:t.project_id,depth,required_files:required,allowed_paths:allowed,output_dir:output,status:'authorized',
+  const required=v.required_files.map(f=>{const real=safePath(f,roots);assert(!wb.privatePath(real),'子代理不能读取内部数据',403);return real;});
+  const row={...v,id:id('D'),task_id:t.id,project_id:t.project_id,depth,required_files:required,allowed_paths:allowed,output_dir:output,status:'authorized',warnings,
     requested_model:v.model,actual_model:null,session_id:null,source:'executor_reported',control_level:'instructions_only',request_digest:digest,policy_digest:r.execution_contract?.digest||null,created_at:now(),updated_at:now()};
   wb.put('delegations',row,{run_id:r.id});wb.audit('runner','authorize_delegation',row.id,{run_id:r.id});return row;
 })}
@@ -126,7 +128,7 @@ export function reportDelegation(wb:Workbench,input:unknown){const v=delegationR
   const d=wb.get('delegations',v.delegation_id),r=wb.get('runs',v.run_id),t=wb.get('tasks',r.task_id);assert(d.run_id===r.id&&t.current_run_id===r.id,'禁止跨执行报告子代理',403);
   const frozen=runTask(t,r);checkPriority(frozen);
   const digest=hash(JSON.stringify(v));if(d.report_digest===digest)return d;
-  assert(['authorized','running'].includes(d.status),'已结束的委派不能覆盖记录',409);
+  const report_history=[...(d.report_history||[]),...(d.report_digest?[{at:d.updated_at,status:d.status,summary:d.summary,artifacts:d.artifacts,report_digest:d.report_digest}]:[])];
   const artifacts=v.artifacts.map(f=>{const real=safePath(f,d.allowed_paths);assert(!wb.privatePath(real),'产物涉及内部文件',403);return real;});
-  const row={...d,...v,artifacts,report_digest:digest,updated_at:now(),...(['completed','failed','cancelled'].includes(v.status)?{ended_at:now()}:{}),observed_by:'executor_reported'};wb.put('delegations',row,{run_id:r.id});return row;
+  const row={...d,...v,artifacts,report_history,report_digest:digest,updated_at:now(),...(['completed','failed','cancelled'].includes(v.status)?{ended_at:now()}:{}),observed_by:'executor_reported'};wb.put('delegations',row,{run_id:r.id});return row;
 })}

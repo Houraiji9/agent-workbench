@@ -93,7 +93,7 @@ export function usageInputFromOutput(job:UsageJob&{client_kind?:string;client?:s
   for(const [target,from] of [['input_tokens','inputTokens'],['output_tokens','outputTokens'],['cache_read_tokens','cacheReadTokens'],['cache_write_tokens','cacheWriteTokens'],['total_tokens','totalTokens'],['cost_usd','totalCostUsd']] as const){const value=output.usage[from];if(value!==undefined)usage[target]=value;}
   const input:UsageEventInput={source:'client:'+(job.client_kind||job.client||'unknown'),job_id:job.id,event_id:startOrComplete?key(messageId,output.eventType):'ordinal:'+ordinal,identity_quality:startOrComplete?'source_event_id':'persisted_ordinal',aggregation_status:output.usage.scope==='message'&&!messageId?'unresolved_scope':'ready',scope_id:output.usage.scope==='message'?'message:'+(messageId||'unresolved'):'job:'+job.id,epoch:job.id,sequence:ordinal,mode:output.usage.scope==='step'?'incremental':'cumulative',occurred_at:at,usage};
   for(const field of ['project_id','task_id','run_id','agent_id','requested_model'] as const)if(job[field])input[field]=job[field];
-  input.actual_model=output.model||job.actual_model;input.session_id=output.sessionId||job.session_id;
+  input.actual_model=output.model||job.actual_model||undefined;input.session_id=output.sessionId||job.session_id||undefined;
   if(output.usage.scope!=='step'&&(job.client_kind==='claude'||job.client==='claude'||output.eventType==='message_start'||output.eventType==='message'||output.eventType==='message_delta'))input.total_semantics='input_excludes_cache';
   return input;
 }

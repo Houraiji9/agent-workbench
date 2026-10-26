@@ -98,7 +98,7 @@ export const deploymentReceiptInput=z.object({
   rollback_evidence:z.string().trim().min(1).max(20000),
   verification:z.literal('executor_reported'),
 }).strict();
-export const deploymentReceiptSchema=deploymentReceiptInput.extend({verification_note:z.literal(executorVerificationNote)}).strict();
+export const deploymentReceiptSchema=deploymentReceiptInput.extend({verification_note:z.literal(executorVerificationNote),review_pending:z.boolean().optional()}).strict();
 export type DeploymentReceipt=z.infer<typeof deploymentReceiptSchema>;
 export type DeploymentReceiptContext={
   run_id:string;
@@ -110,6 +110,7 @@ export type DeploymentReceiptContext={
   review_id:string|null;
   review_decision_id?:string;
   review_skipped:boolean;
+  review_pending?:boolean;
 };
 
 function canonicalHashes(input:string[],label:string):string[]{
@@ -126,7 +127,8 @@ function validateReceipt(context:DeploymentReceiptContext,input:unknown){
   if(receipt.reported_by!==identifier.parse(context.agent_id))fail('部署回执执行者与当前 Run 不匹配');
   if(receipt.profile_sha256!==deliveryProfileDigest(profile))fail('部署目标或完整任务档案已改变');
   if(receipt.version!==identifier.parse(context.version))fail('部署回执版本与当前受审版本不匹配');
-  if(context.review_skipped?context.review_id!==null:!context.review_id&&!context.review_decision_id)fail('当前审查绑定无效；仅显式跳过审查允许空审查编号');
+  if(context.review_skipped&&context.review_id!==null)fail('免审标记与实际审查绑定冲突');
+
   if(receipt.review_decision_id!==context.review_decision_id)fail('部署回执与当前审查决定不匹配');
   if(receipt.review_id!==context.review_id)fail('部署回执与当前审查不匹配');
   const expected=canonicalHashes(context.artifact_hashes,'当前受审'),actual=canonicalHashes(receipt.artifact_hashes,'回执');
@@ -136,11 +138,14 @@ function validateReceipt(context:DeploymentReceiptContext,input:unknown){
 
 /** Does not contact a deployment target or prove it is healthy. */
 export function bindDeploymentReceipt(context:DeploymentReceiptContext,input:unknown):DeploymentReceipt{
-  return {...validateReceipt(context,input),verification_note:executorVerificationNote};
+  return {...validateReceipt(context,input),verification_note:executorVerificationNote,review_pending:!!context.review_pending};
 }
 
 /** Recheck a stored receipt at closeout/acceptance against the current frozen Run. */
 export function assertDeploymentReceipt(context:DeploymentReceiptContext,input:unknown):DeploymentReceipt{
-  const {verification_note,...receipt}=deploymentReceiptSchema.parse(input);
-  return {...validateReceipt(context,receipt),verification_note};
+  const {verification_note,review_pending,...receipt}=deploymentReceiptSchema.parse(input);
+  // A receipt recorded before review remains evidence for the same version/artifacts afterwards.
+  // Its original review snapshot stays unchanged; it does not claim an approval at deployment time.
+  const binding=review_pending?{...context,review_id:receipt.review_id,review_decision_id:receipt.review_decision_id}:context;
+  return {...validateReceipt(binding,receipt),verification_note,review_pending:!!review_pending};
 }

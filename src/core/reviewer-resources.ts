@@ -23,10 +23,10 @@ export function reviewerResources(wb:Workbench,agentId:string,at=Date.now()){
   const minimum=low.length?Math.min(...low.map(w=>w.remaining_percent!)):null;
   const source_state=!linkedAll.length?'unmapped':observations.some(w=>w.fresh)?'fresh':observations.length?'stale':linkedAll.some(p=>p.status==='notConfigured')?'not_configured':'unavailable';
   const unknownReason=source_state==='unmapped'?'尚未关联来源池':source_state==='stale'?'上游采样已过期；刷新工作台仅重新读取快照，不会触发上游采样':source_state==='not_configured'?'来源尚未配置':'来源未提供有效额度';
-  return {status,source_state,assignable:!low.length,reserve_percent:REVIEW_RESERVE_PERCENT,observations,
-    reason:low.length?`剩余额度 ${minimum}%${status==='low_cached'?'（上次记录）':''}，请换一位审查者`:status==='available'?'额度可用':'额度待确认：'+unknownReason};
+  return {status,source_state,assignable:true,advisory:true,reserve_percent:REVIEW_RESERVE_PERCENT,observations,
+    reason:low.length?`剩余额度 ${minimum}%${status==='low_cached'?'（上次记录）':''}，建议关注实际客户端额度`:status==='available'?'额度可用':'额度待确认：'+unknownReason};
 }
-export function assertReviewerResources(wb:Workbench,agentId:string){const r=reviewerResources(wb,agentId);assert(r.assignable,`${wb.get('agents',agentId).name}：${r.reason}。请读取 get_review_candidates 后重新选择`,409);return r}
+export function assertReviewerResources(wb:Workbench,agentId:string){return reviewerResources(wb,agentId)}
 export function reviewCandidates(wb:Workbench,taskId:string){
   const task=wb.get('tasks',taskId),run=task.current_run_id?wb.get('runs',task.current_run_id):null,author=wb.get('agents',run?.agent_id||task.agent_id);
   return {task_id:taskId,run_id:run?.id||null,revision:task.revision,current_reviewer_id:task.reviewer_id,reserve_percent:REVIEW_RESERVE_PERCENT,

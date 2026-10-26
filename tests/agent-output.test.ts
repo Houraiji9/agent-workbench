@@ -125,3 +125,17 @@ test('DSH 官方 error 事件使调用失败，后续 final 不能抹掉错误',
   const final = parser.push(line({type: 'final', text: report}));
   assert.equal(final.success, false); assert.equal(final.finalText, undefined);
 });
+
+test('Grok Build 1.0.41 flat stream keeps tool and thought payloads out of final; end carries totals',()=>{
+ const parser=createAgentOutputParser('grok');
+ parser.push(line({type:'text',data:'preliminary'}));
+ parser.push(line({type:'tool_call',toolCallId:'t1',toolName:'read_file',rawInput:{}}));
+ parser.push(line({type:'tool_call_update',toolCallId:'t1',rawOutput:{text:report}}));
+ parser.push(line({type:'thought',data:report}));
+ assert.equal(parser.push(line({type:'usage',usage:{input_tokens:999}})).usage,undefined);
+ parser.push(line({type:'text',data:report}));
+ const final=parser.push(line({type:'end',stopReason:'end_turn',sessionId:'grok-session',usage:{input_tokens:10,output_tokens:5,cache_read_input_tokens:20,total_tokens:35},total_cost_usd:.01,modelUsage:{'grok-reported':{}}}));
+ assert.equal(final.finalText,report);assert.equal(final.model,'grok-reported');assert.equal(final.usage?.totalTokens,35);
+ const cancelled=createAgentOutputParser('grok');cancelled.push(line({type:'text',data:report}));
+ const end=cancelled.push(line({type:'end',stopReason:'cancelled',sessionId:'grok-cancelled'}));assert.equal(end.success,false);assert.equal(end.finalText,undefined);assert.equal(end.sessionId,'grok-cancelled');
+});

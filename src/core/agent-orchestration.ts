@@ -16,12 +16,13 @@ import {ROOT} from './config.ts';
 import {assert,id,now,hash,safePath,atomicWrite,protectedName} from './security.ts';
 import {agentDispatchInput,agentJobInput,agentRouteSchema,agentControlInput,agentRecoveryInput,type AgentRoute} from './agent-route-schema.ts';
 import {discoverAgentClients,readClientCapabilities,resolveAgentClient,buildAgentInvocation,createAgentOutputParser,type ParsedAgentOutput} from './agent-clients.ts';
-import {exportReviewOrder,reviewAssignmentContext,reviewFeedbackOrder,submitReviewResult,reviewResultInput,isRecoveredReviewJob} from './review-workflow.ts';
+import {exportReviewOrder,reviewAssignmentContext,reviewFeedbackOrder,submitReviewResult,reviewResultInput,isRecoveredReviewJob,recordReviewActivity,syncReviewCollaborationState} from './review-workflow.ts';
 import {assertReviewerResources,sameAgent} from './reviewer-resources.ts';
 import {executionContext} from './execution-context.ts';
 import {reviewContext,bindReviewContextSession} from './review-context.ts';
 import {nativeReviewResult} from './native-review-result.ts';
 import {reviewSkipped} from './acceptance.ts';
+import {reviewProceedAuthority} from './latest-review.ts';
 import {closeoutStates,getCloseoutContext} from './closeout.ts';
 import {executionJobRun} from './execution-job-capability.ts';
 import {canQueryRunnerJob} from './run-continuation-scope.ts';
@@ -30,7 +31,7 @@ const active=new Set(['queued','launching','running']);
 const terminal=new Set(['completed','failed','interrupted']);
 const sessionPattern=/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,299}$/;
 export function validateAgentRoutes(wb:Workbench,task:Row){
-  if(task.execution_route||task.review_route)assert(task.context_contract,'自动调用任务须提供必读/补读文件与产物目录合同，不能默认全量读取项目');
+
   for(const [field,agentId] of [['execution_route',task.agent_id],['review_route',task.reviewer_id]]){
     if(!task[field!])continue;
     const route=agentRouteSchema.parse(task[field!]),agent=wb.get('agents',agentId!);
@@ -38,12 +39,12 @@ export function validateAgentRoutes(wb:Workbench,task:Row){
     if(route.client==='dsh'&&route.model)assert(!!route.provider,'DSH指定模型时需提供provider；省略模型时使用客户端默认配置');
     if(route.client!=='dsh')assert(!route.provider,'此客户端不接受额外 provider 参数');
   }
-  if(task.execution_route&&task.review_route)assert(task.execution_route.client!==task.review_route.client,'执行与独立审查不能使用同一客户端入口副本');
+
   if(task.automation_policy?.auto_review)assert(task.review_route&&!reviewSkipped(task),'自动审查需要规划者指定独立审查路由');
 }
 export function jobView(job:Row){
   return {job_id:job.id,task_id:job.task_id,run_id:job.run_id,review_id:job.review_id||null,role:job.role,phase:job.phase,client:job.route.client,
-    status:job.status,reason:job.reason,session_id:job.session_id||null,session_mode:job.session_mode,requested_model:job.route.model,actual_model:job.actual_model||null,actual_model_display:job.actual_model_display||null,
+    status:job.status,reason:job.reason,native_stop_reason:job.native_stop_reason||null,activity_started_at:job.activity_started_at||null,session_id:job.session_id||null,session_mode:job.session_mode,requested_model:job.route.model,actual_model:job.actual_model||null,actual_model_display:job.actual_model_display||null,
     revision:job.revision,created_at:job.created_at,started_at:job.started_at||null,ended_at:job.ended_at||null,exit_code:job.exit_code??null,
     artifacts:job.files||null,usage:job.usage||null,usage_source:job.usage?'client_reported':'unknown',recovery_required:!!job.process_may_be_running&&['failed','interrupted'].includes(job.status),cancel_requested:!!job.cancel_requested_at,process_end_evidence:job.process_end_evidence||null,process_may_be_running:job.process_may_be_running??null,recovery:job.recovery||null,superseded:job.superseded||null};
 }
@@ -113,9 +114,9 @@ export class AgentOrchestrator {
     const deadline=Date.now()+5000;while(this.launching.size&&Date.now()<deadline)await new Promise(r=>setTimeout(r,30));this.databaseOpen=false;
   }
   private update(jid:string,changes:Row){if(this.closed&&!this.wb.maybe('agent_jobs',jid))return;this.wb.transaction(()=>{const j=this.wb.get('agent_jobs',jid);Object.assign(j,changes,{revision:j.revision+1,updated_at:now()});this.wb.put('agent_jobs',j,{run_id:j.run_id});const t=this.wb.get('tasks',j.task_id);let effective=j.run_id;try{effective=executionJobRun(this.wb,j)}catch{}if(t.current_run_id===effective){t.automation={...jobView(j),run_id:effective,source_run_id:j.run_id};this.wb.put('tasks',t,{project_id:t.project_id})}})}
-  private assertCurrent(runId:string,revision?:number){const r=this.wb.get('runs',runId),t=this.wb.get('tasks',r.task_id);assert(t.current_run_id===r.id&&!t.request_withdrawn&&!['cancelled','accepted','rework_linked','awaiting_confirmation'].includes(t.status)&&!this.wb.get('projects',t.project_id).archived,'只能调用当前有效执行',409);if(revision!==undefined)assert(t.revision===revision,'任务已变化，请读取最新 revision',409);this.wb.assertDependencies(t);assertProjectDispatch(this.wb,t.project_id);return {r,t:runTask(t,r)}}
+  private assertCurrent(runId:string,revision?:number){const r=this.wb.get('runs',runId),t=this.wb.get('tasks',r.task_id);assert(t.current_run_id===r.id&&!t.request_withdrawn&&!['cancelled','accepted','rework_linked'].includes(t.status)&&!this.wb.get('projects',t.project_id).archived,'只能调用当前有效执行',409);if(revision!==undefined)assert(t.revision===revision,'任务已变化，请读取最新 revision',409);this.wb.assertDependencies(t);assertProjectDispatch(this.wb,t.project_id);return {r,t:runTask(t,r)}}
   private duplicate(input:ReturnType<typeof agentDispatchInput.parse>,role:string){const old=this.wb.all('agent_jobs').find(j=>j.request_id===input.request_id);if(old){assert(old.request_digest===hash(JSON.stringify({...input,role})),'同一调用编号内容冲突',409);return jobView(old)}}
-  private priorSession(t:Row,role:string,route:AgentRoute){return this.wb.all('agent_jobs').filter(j=>j.task_id===t.id&&j.role===role&&j.session_id&&j.status==='completed'&&JSON.stringify(j.route)===JSON.stringify(route)).sort((a,b)=>b.created_at.localeCompare(a.created_at))[0]}
+  private priorSession(t:Row,role:string,route:AgentRoute){return this.wb.all('agent_jobs').filter(j=>j.task_id===t.id&&j.role===role&&j.session_id&&!j.session_mismatch&&!j.cancel_requested_at&&(j.status==='completed'||['failed','interrupted'].includes(j.status)&&j.process_may_be_running===false&&j.process_end_evidence==='owned_child_exit')&&JSON.stringify(j.route)===JSON.stringify(route)).sort((a,b)=>b.created_at.localeCompare(a.created_at))[0]}
   private assertNoOrphan(taskId:string){
     for(const j of this.wb.all('agent_jobs').filter(j=>j.task_id===taskId&&j.process_may_be_running)){
       if(this.launching.has(j.id))continue;
@@ -147,8 +148,8 @@ export class AgentOrchestrator {
     const prior=input.fresh_session?null:this.priorSession(t,role,route);
     // A current same-role process which failed/interrupted must be inspected; a fresh request does not silently resume it.
     const uncertain=this.wb.all('agent_jobs').filter(j=>j.run_id===r.id&&j.role===role&&j.phase===phase&&(role!=='review'||j.review_id===reviewId)&&['failed','interrupted'].includes(j.status)).sort((a,b)=>b.created_at.localeCompare(a.created_at))[0];
-    assert(!uncertain||input.fresh_session,'上次调用未确认完成；核对原客户端已结束后以 fresh_session 明确重试',409);
-    const j:Row={id:id('AJ'),request_id:input.request_id,request_digest:hash(JSON.stringify({...input,role})),task_id:t.id,project_id:t.project_id,run_id:r.id,policy_digest:r.execution_contract?.digest||null,review_id:reviewId||null,role,phase,...(mainAuthorization?{main_launch_authorization:mainAuthorization}:{}),...(phase==='closeout'?{fresh_session:!!input.fresh_session}:{}),route,status:'queued',reason:'等待工作台调用本机客户端',revision:1,created_at:now(),session_id:null,resume_session_id:prior?.session_id||null,session_mode:prior?'resume':'new',previous_job_id:prior?.id||null};
+    assert(!uncertain||input.fresh_session||prior?.id===uncertain.id,'上次调用缺少可续接会话；核对原客户端已结束后可明确新开会话',409);
+    const j:Row={id:id('AJ'),request_id:input.request_id,request_digest:hash(JSON.stringify({...input,role})),task_id:t.id,project_id:t.project_id,run_id:r.id,policy_digest:r.execution_contract?.digest||null,review_id:reviewId||null,role,phase,instructions:input.instructions||null,...(mainAuthorization?{main_launch_authorization:mainAuthorization}:{}),...(phase==='closeout'?{fresh_session:!!input.fresh_session}:{}),route,status:'queued',reason:'等待工作台调用本机客户端',revision:1,created_at:now(),session_id:null,resume_session_id:prior?.session_id||null,session_mode:prior?'resume':'new',previous_job_id:prior?.id||null};
     this.wb.transaction(()=>{this.wb.put('agent_jobs',j,{run_id:r.id});const stored=this.wb.get('tasks',t.id);stored.automation=jobView(j);if(role==='review')stored.review_delivery='agent';this.wb.put('tasks',stored,{project_id:t.project_id});this.wb.audit('agent_dispatch','queue_client',j.id,{run_id:r.id,role,client:route.client,model:route.model,...(mainAuthorization?{main_launch_authorization:mainAuthorization}:{})})});
     setImmediate(()=>void this.run(j.id));return {job:j,created:true};
   }
@@ -172,13 +173,13 @@ export class AgentOrchestrator {
     return {...t,reviewer_id:a.reviewer_id,review_route:route};
   }
   dispatchReview(input:unknown){const v=agentDispatchInput.parse(input),old=this.duplicate(v,'review');if(old)return old;let {r,t}=this.assertCurrent(v.run_id,v.expected_revision);
-    assert(['submitted','in_review','changes_requested','awaiting_closeout','closing','closeout_blocked'].includes(t.status)&&!reviewSkipped(t),'当前执行尚未交付或不需要审查',409);
+    assert(['submitted','in_review','changes_requested','awaiting_closeout','closing','closeout_blocked','awaiting_confirmation'].includes(t.status),'当前执行尚未交付或不需要审查',409);
     let a=v.review_id?this.wb.get('review_assignments',v.review_id):this.wb.all('review_assignments').find(a=>a.run_id===r.id&&a.reviewer_id===t.reviewer_id&&['awaiting_dispatch','running'].includes(a.status));
     if(!a)assert(t.review_route,'未指定自动审查路由；可以先保存成员安排，再明确客户端与模型',409);
     if(a){assert(a.run_id===r.id,'审查单不属于当前执行',403);assert(!['completed','cancelled','superseded','revoked'].includes(a.status),'此审查已结束，请选择当前成员或追加审查',409);}
     const existing=this.wb.all('agent_jobs').find(j=>j.run_id===r.id&&j.role==='review'&&a&&j.review_id===a.id&&active.has(j.status));if(existing)return jobView(existing);
     this.assertNoOrphan(t.id);
-    if(a?.status==='running')assert(v.fresh_session&&this.wb.all('agent_jobs').some(j=>j.review_id===a!.id&&['failed','interrupted'].includes(j.status)&&!j.process_may_be_running),'已有审查者接单，不能重复启动',409);
+    if(a?.status==='running')assert(this.wb.all('agent_jobs').some(j=>j.review_id===a!.id&&['failed','interrupted'].includes(j.status)&&j.process_may_be_running===false&&(v.fresh_session||j.session_id&&!j.session_mismatch)),'已有审查者接单，不能重复启动',409);
     if(a&&v.fresh_session&&this.wb.all('agent_jobs').some(j=>j.review_id===a!.id&&j.role==='review'&&['failed','interrupted'].includes(j.status)&&j.process_may_be_running===false)){const previous=a;a=this.wb.transaction(()=>{previous.status='cancelled';previous.ended_at=now();previous.cancelled_by='dispatcher:'+r.id;previous.cancellation_reason='显式 fresh_session 恢复已结束的失败调用';this.wb.put('review_assignments',previous,{run_id:r.id});const order=exportReviewOrder(this.wb,{run_id:r.id,reviewer_id:previous.reviewer_id,requested_model:previous.requested_model||undefined,expected_revision:this.wb.get('tasks',t.id).revision,reason:'显式新会话恢复已确认结束的独立审查失败调用',delivery_mode:'agent',new_review:true},{role:'runner',id:'dispatcher:'+r.id,recovery_review_id:previous.id});const next=this.wb.get('review_assignments',order.review_id);if(previous.route){next.route=previous.route;this.wb.put('review_assignments',next,{run_id:r.id});}return next;});}
     if(!a){const order=exportReviewOrder(this.wb,{run_id:r.id,reviewer_id:t.reviewer_id,expected_revision:t.revision,reason:'按本轮当前安排调用独立审查',delivery_mode:'agent',...(t.review_route?.model?{requested_model:t.review_route.model}:{})},{role:'runner',id:'dispatcher:'+r.id});a=this.wb.get('review_assignments',order.review_id);}
     t=runTask(this.wb.get('tasks',t.id),r);const selected=this.reviewTask(t,a.id);assertReviewerResources(this.wb,a.reviewer_id);validateAgentRoutes(this.wb,selected);
@@ -196,13 +197,13 @@ export class AgentOrchestrator {
     const {r,t}=this.assertCurrent(v.run_id,v.expected_revision);
     assert(!v.fresh_session,'本会话续接不能请求新客户端会话，请由用户在页面启动',403);
     assert(!r.program_interruption,'程序已中断的执行须由用户在页面确认恢复',409);
-    assert(t.status==='changes_requested'||closeoutStates.includes(t.status),'当前阶段没有可由原会话继续的返修或收尾；首次外部主执行须由用户在工作台页面启动',409);
+
     const own=caller.job_id?this.wb.get('agent_jobs',caller.job_id):null;
     if(own)assert(this.launching.has(own.id)&&own.role==='execution'&&own.task_id===t.id&&own.status==='running'&&own.process_may_be_running===true&&!own.cancel_requested_at&&executionJobRun(this.wb,own)===r.id,'当前进程不是仍由工作台持有的本轮执行',403);
     this.assertNoOrphan(t.id);
     assert(!this.wb.all('agent_jobs').some(j=>j.task_id===t.id&&j.role==='execution'&&j.id!==own?.id&&(active.has(j.status)||j.process_may_be_running)),'原执行调用尚未结束，不能并发接续',409);
     return this.wb.transaction(()=>{
-      const closing=closeoutStates.includes(t.status),order:Row=closing?{}:reviewFeedbackOrder(this.wb,r.id,t.revision);
+      const closing=closeoutStates.includes(t.status),order:Row=t.status==='changes_requested'?reviewFeedbackOrder(this.wb,r.id,t.revision):{};
       const next=this.wb.get('runs',order.run_id||r.id);
       assert(next.agent_id===r.agent_id,'执行负责人已改派，原会话不能接替新负责人',403);
       if(own){const route=runTask(this.wb.get('tasks',t.id),next).execution_route;assert(route?.client===own.route?.client&&route?.provider===own.route?.provider,'下一轮执行客户端或供应商已改变，不能复用当前受管进程',409);}
@@ -241,7 +242,7 @@ export class AgentOrchestrator {
     }
     if(t.status!=='changes_requested')return this.dispatchRun(v,caller);
     const count=t.automatic_rework_count||0,limit=t.automation_policy?.max_rework_rounds||2;
-    assert(count<limit,'已达到本任务返修轮次上限，请由规划者根据问题重新安排',409);
+    if(count>=limit)this.wb.audit('runner','workflow_advisory',r.id,{message:'超过建议返修轮次，按当前请求继续'});
     this.assertNoOrphan(t.id);
     assert(!this.wb.all('agent_jobs').some(j=>j.task_id===t.id&&active.has(j.status)),'原调用尚未结束，不能开始下一轮执行',409);
     const order:Row=reviewFeedbackOrder(this.wb,r.id,t.revision),next=this.wb.get('runs',order.run_id),current=this.wb.get('tasks',t.id);
@@ -254,18 +255,20 @@ export class AgentOrchestrator {
   private prompt(j:Row,t:Row,r:Row,dir:string){
     const command=`& '${process.execPath.replace(/'/g,"''")}' --import '${import.meta.resolve('tsx').replace(/'/g,"''")}' '${path.join(ROOT,'scripts',j.role==='review'?'review.ts':'agent.ts').replace(/'/g,"''")}' ${j.role==='review'?j.review_id:r.id}`;
     const env=`$env:WORKBENCH_ROOT='${this.wb.config.root.replace(/'/g,"''")}'; $env:WORKBENCH_DATA_DIR='${this.wb.config.dataDir.replace(/'/g,"''")}'; $env:WORKBENCH_PORT='${this.wb.config.port}'; `;
-    const shared=`你正在执行工作台正式${j.role==='review'?'独立审查':'执行'}任务。所有主动产物（报告、日志、截图、临时测试文件）只写 ${dir} 或合同规定的项目产物目录。Harness正常会话缓存按客户端默认机制保留。不得读凭据、全盘扫描、绕过权限拒绝或伪造测试/回执。只读取本任务必读资料和有具体理由的条件补充，禁止重新扫整个项目或读取全量历史。程序发现的客户端和调用规则由规划者管理，无需重新查找安装路径。\n${j.session_mode==='resume'?`本次恢复同任务原${j.role==='review'?'审查':'执行'}会话 ${j.resume_session_id}；只处理本轮变化。若上下文丢失，读取简版检查点，不假装已记住原文。`:'这是独立的新会话；不要导入作者的完整会话历史。'}\n`;
+    const shared=(j.instructions?'本次补充：'+j.instructions+'\n':'')+`你承担本项目${j.role==='review'?'独立审查':'执行'}。主动产物放 ${dir}。按需读取资料；流程、模型和阅读预算是建议，工作台负责记录。真实结果与未验证项分别回报。\n${j.session_mode==='resume'?'继续原会话 '+j.resume_session_id+'，优先检查本轮变化，已有资料无需重读。':'新会话：从以下简版接手，缺失资料按引用补读。'}\n`;
     if(j.role==='review'){
       const base=reviewAssignmentContext(this.wb,j.review_id),previous=j.previous_job_id?this.wb.get('agent_jobs',j.previous_job_id):null;
       const prior=previous?.review_id?this.wb.maybe('review_assignments',previous.review_id):null;
       const known=prior?.context_ack?.hash||prior?.context_cache?.filter((x:Row)=>x.session_id===j.resume_session_id).at(-1)?.hash;
       const ctx=reviewContext(this.wb,{review_id:j.review_id,mode:known?'delta':'brief',...(known?{known_context_hash:known,session_id:j.resume_session_id}:{})},base,j.id);
-      return shared+`Task ${t.id} / Run ${r.id} / Review ${j.review_id}\n目标：${t.goal}\n验收标准：${JSON.stringify(t.acceptance)}\n必要验证：${JSON.stringify(t.tests)}\n可以通过本人回执接单：${env}${command} started ${base.assignment.reviewer_id}\n下面已经提供本单精简资料，无需再次完整输出。需要最新资料时 ${env}${command} context；用 read <请求JSON文件> 读取合同内文件，补读按合同说明原因。独立检验源码与证据，不替作者改代码；项目内提供临时测试目录。\n最终回复必须是一个严格JSON对象（不加Markdown围栏或前后说明），包含下面格式的完整 report_markdown。工作台仅从你的原生客户端最终成功输出登记本单结果，不从工具输出或作者文字提取结论。任何未运行测试如实写limitations；审查不通过列具体问题编号和文件位置。不绕过权限拒绝，不能用作者测试充当自己亲测。报告可同时保存 ${path.join(dir,'review-result.json')}；若通过scoped脚本submit登记，最终仍返回相同JSON。\n资料：${JSON.stringify(ctx)}\n结果格式：${JSON.stringify(base.report_template)}\n`;
+      // One copy of the context and result shape; transport binds task/version fields.
+      return shared+`Task ${t.id} / Run ${r.id} / Review ${j.review_id}\n按需回传入口：${env}${command} started ${base.assignment.reviewer_id}\n资料已附下方；实际客户端活动由工作台记录，不必为了接单运行命令。按需用只读工具补读。若客户端不允许写入或执行验证，记录未验证项并直接返回报告，不要求用户转交。独立检查源码与证据，列出具体问题和未验证项；不替作者实施修改。\n最终返回 JSON（可用 Markdown 围栏），字段 verdict、findings、limitations、evidence、report_markdown；完整报告保存在 report_markdown。可用 submit <JSON文件> 直接回传，或由工作台接收原生最终结果。\n${JSON.stringify(ctx)}\n`;
+
     }
     const priorJob=j.previous_job_id?this.wb.get('agent_jobs',j.previous_job_id):null,priorRun=priorJob?this.wb.get('runs',priorJob.run_id):null;
     const known=priorRun?.context_ack?.hash||priorRun?.context_cache?.at(-1)?.hash;
     const ctx=executionContext(this.wb,{run_id:r.id,mode:j.session_mode==='resume'&&known?'delta':'brief',...(j.session_mode==='resume'&&known?{known_context_hash:known}:{})});
-    return shared+`Task ${t.id} / Run ${r.id}\n本轮安排快照（型号仅作建议，Agent可自主选择且无需披露）：${JSON.stringify(r.execution_contract||null)}。子代理可用register_delegation登记读取范围和产物，再报告结果；模型字段可省略；原生内部子代理当前仅下发要求，不冒充强制隔离。\n${j.phase==='closeout'?`${reviewSkipped(t)?'本轮按用户选择未安排审查':r.review_decision?.decision==='continue'||r.closeout?.review_decision_id?'负责人已决定继续，审查意见各自保留原结论':'审查已通过'}，只完成本Run实际收尾：${env}${command} context；获取 get_closeout_context 按项执行，再通过 closeout <结果JSON> 回报。`:`先本人接单：${env}${command} start。按本轮任务实施和验证；报告用 ${env}${command} report <JSON文件>。交付event_type=submitted，data含result、artifacts、review_files及review_delivery=agent。交付后停止修改受审文件。${t.automation_policy?.auto_review?'工作台按本任务策略自动派审。':t.review_route?`接着调用 ${env}${command} review 直接安排审查。`:'本任务尚未登记自动审查路由，请按当前任务交接安排继续；不要假称已自动派审。'}需要等待则调用wait/get_agent_job，不重复读完整执行单。` }\n资料：${JSON.stringify(ctx)}\n`;
+    return shared+`Task ${t.id} / Run ${r.id}\n子代理按实际需要调用，用 register_delegation / report_delegation 记录；型号可省略。\n${j.phase==='closeout'?`${reviewSkipped(t)?'本轮按用户选择未安排审查':r.review_decision?.decision==='continue'||r.closeout?.review_decision_id?'负责人已决定继续，审查意见各自保留原结论':reviewProceedAuthority(this.wb,r.id).can_proceed?'审查已通过':'审查尚未通过或待完成'}，只完成本Run实际收尾：${env}${command} context；获取 get_closeout_context 按项执行，再通过 closeout <结果JSON> 回报。`:`先本人接单：${env}${command} start。按本轮任务实施和验证；报告用 ${env}${command} report <JSON文件>。交付event_type=submitted，data含result、artifacts、review_files及review_delivery=agent。交付后停止修改受审文件。${t.automation_policy?.auto_review?'工作台按本任务策略自动派审。':t.review_route?`接着调用 ${env}${command} review 直接安排审查。`:'本任务尚未登记自动审查路由，请按当前任务交接安排继续；不要假称已自动派审。'}需要等待则调用wait/get_agent_job，不重复读完整执行单。` }\n资料：${JSON.stringify(ctx)}\n`;
   }
   private onOutput(jid:string,v:ParsedAgentOutput){
     if(!v.recognized)return;
@@ -273,6 +276,7 @@ export class AgentOrchestrator {
     this.wb.transaction(()=>{
     const j=this.wb.get('agent_jobs',jid);const sid=v.sessionId,model=v.model;
     const patch:Row={};
+    if(j.role==='review'&&!j.activity_started_at&&!v.terminal&&v.success!==false&&(v.textDelta!==undefined||['system/init','session','grok/tool_call','acp/tool_call'].includes(v.eventType||''))){recordReviewActivity(this.wb,j.review_id,j.id);patch.activity_started_at=now();patch.reason='独立审查正在进行（已收到客户端实际活动）';}
     if(v.messageId)patch.usage_message_id=v.messageId;
     if(v.usage){const ordinal=(j.usage_ordinal||0)+1,task=this.wb.get('tasks',j.task_id);const input=usageInputFromOutput({...j,id:j.id,actual_model:v.modelFormat==='identifier'?v.model:j.actual_model,client_kind:j.route.client,requested_model:j.route.model,project_id:j.project_id||task.project_id,agent_id:j.role==='review'?this.wb.get('review_assignments',j.review_id).reviewer_id:task.agent_id,usage_message_id:v.messageId||j.usage_message_id},v,ordinal,now());
       if(input){const normalized=createUsageEvent(input),old=input.identity_quality==='source_event_id'?this.wb.maybe('usage_events',normalized.id):undefined;
@@ -287,7 +291,7 @@ export class AgentOrchestrator {
     if(typeof model==='string'&&model.length<=100&&v.modelFormat==='display_name')patch.actual_model_display=model;
     else if(typeof model==='string'&&model.length<=100){patch.actual_model=model;patch.observed_models=[...new Set([...(j.observed_models||[]),...(j.actual_model?[j.actual_model]:[]),model])];}
     if(v.usage){if(v.usage.scope==='step'){const previous=j.usage?.scope==='invocation_steps'?j.usage:{scope:'invocation_steps',steps:0};const usage:Row={...previous,steps:previous.steps+1};for(const key of ['inputTokens','outputTokens','cacheReadTokens','cacheWriteTokens','totalTokens'] as const)if(v.usage[key]!==undefined)usage[key]=(previous[key]||0)+v.usage[key]!;patch.usage=usage;}else patch.usage=v.usage;}
-    if(v.success===false)patch.output_failed=true;
+    if(v.success===false)patch.output_failed=true;if(v.stopReason)patch.native_stop_reason=v.stopReason;
     if(Object.keys(patch).length)this.update(jid,patch);
     });
   }
@@ -312,7 +316,7 @@ export class AgentOrchestrator {
       if(this.closed||ctl.signal.aborted||this.deferForProjectHold(jid))return;
       const current=this.assertCurrent(r.id);assertMainLaunch(this.wb,initial,current.t,current.r);validateAgentRoutes(this.wb,initial.role==='review'?this.reviewTask(current.t,initial.review_id):current.t);
       assert(JSON.stringify(initial.role==='review'?this.reviewTask(current.t,initial.review_id).review_route:current.t.execution_route)===JSON.stringify(initial.route),'调用路线已变化，请重新规划',409);
-      if(initial.role==='review'){const context=reviewAssignmentContext(this.wb,initial.review_id);assertReviewerResources(this.wb,context.assignment.reviewer_id);assert(context.assignment.status==='awaiting_dispatch','审查已被接单或结束，不能再次启动',409)}else this.wb.eligible(r.agent_id);
+      if(initial.role==='review'){const context=reviewAssignmentContext(this.wb,initial.review_id);assertReviewerResources(this.wb,context.assignment.reviewer_id);assert(context.assignment.status==='awaiting_dispatch'||context.assignment.status==='running'&&!!initial.resume_session_id,'审查已被接单或结束，不能重复启动',409)}else this.wb.eligible(r.agent_id);
       const files={prompt:promptFile,stdout:path.join(dir,'stdout.jsonl'),stderr:path.join(dir,'stderr.log')};
       this.update(jid,{status:'running',started_at:now(),files,process_may_be_running:true,reason:initial.role==='review'?'正在启动审查客户端，等待审查者本人回执':'正在启动执行客户端，等待本人回执'});
       if(this.closed||ctl.signal.aborted||this.deferForProjectHold(jid))return;
@@ -331,7 +335,8 @@ export class AgentOrchestrator {
         if(a.status!=='completed'&&finalText!==undefined&&result.exitCode===0&&!result.error&&!job.session_mismatch&&!job.output_failed){
           // Only the launched independent client's terminal answer can enter this path.
           // No HTTP endpoint accepts caller-provided native output or changes its provenance.
-          const payload=reviewResultInput.parse(nativeReviewResult(finalText));
+          const raw=nativeReviewResult(finalText);assert(raw&&typeof raw==='object'&&!Array.isArray(raw),'审查结果需为JSON对象');
+          const payload=reviewResultInput.parse({task_id:t.id,run_id:r.id,review_id:a.id,review_digest:a.review_digest,...raw as Row});
           assert(payload.review_id===a.id&&payload.task_id===t.id&&payload.run_id===r.id,'客户端最终报告属于其他审查任务',409);
           const context=reviewAssignmentContext(this.wb,a.id);assert(payload.review_digest===context.review_digest,'客户端报告不属于当前交付版本',409);
           atomicWrite(path.join(dir,'review-result.json'),JSON.stringify(payload,null,2));
@@ -340,8 +345,9 @@ export class AgentOrchestrator {
             const review=this.wb.get('reviews',receipt.review.id);review.source='native_client_output';review.client_job_id=jid;review.evidence_level='launched_client_final_output';review.independently_verified=false;this.wb.put('reviews',review,{run_id:r.id});
           });a=this.wb.get('review_assignments',initial.review_id);
         }
-        complete=a.status==='completed'&&!!a.result_id;
-        if(job.session_id&&!job.session_mismatch&&['running','completed'].includes(a.status))this.wb.transaction(()=>{a.session_id=job.session_id;a.actual_model=job.actual_model||a.actual_model;this.wb.put('review_assignments',a,{run_id:a.run_id});if(a.result_id){const review=this.wb.get('reviews',a.result_id);review.session_id=job.session_id;review.actual_model=job.actual_model||review.actual_model;this.wb.put('reviews',review,{run_id:a.run_id})}bindReviewContextSession(this.wb,a.id,jid)});
+        complete=!!a.result_id&&this.wb.maybe('reviews',a.result_id)?.review_id===a.id;
+        if(job.session_id&&!job.session_mismatch&&(a.result_id||['running','completed'].includes(a.status)))this.wb.transaction(()=>{a.session_id=job.session_id;a.actual_model=job.actual_model||a.actual_model;this.wb.put('review_assignments',a,{run_id:a.run_id});if(a.result_id){const review=this.wb.get('reviews',a.result_id);review.session_id=job.session_id;review.actual_model=job.actual_model||review.actual_model;this.wb.put('reviews',review,{run_id:a.run_id})}bindReviewContextSession(this.wb,a.id,jid)});
+        if(!complete&&a.status==='running')this.wb.transaction(()=>{const assignment=this.wb.get('review_assignments',a.id);assignment.status='awaiting_dispatch';assignment.last_segment={job_id:job.id,ended_at:now(),result:'incomplete',stop_reason:job.native_stop_reason||null};this.wb.put('review_assignments',assignment,{run_id:a.run_id});const currentTask=this.wb.get('tasks',t.id);if(currentTask.current_run_id===r.id){syncReviewCollaborationState(this.wb,currentTask,this.wb.get('runs',r.id));currentTask.revision++;this.wb.put('tasks',currentTask,{project_id:currentTask.project_id});}});
       }else{
         complete=initial.phase==='closeout'||job.continuation_closeout_run_id===run.id?['awaiting_confirmation','accepted'].includes(task.status):['submitted','waiting_input','blocked','failed'].includes(run.status);
         const identity=initial.phase==='closeout'||job.continuation_closeout_run_id===run.id?run.closeout:run;
@@ -352,7 +358,7 @@ export class AgentOrchestrator {
         if(job.session_id&&!job.session_mismatch)this.wb.transaction(()=>{identity.session_id=job.session_id;identity.actual_model=job.actual_model||(replaceCloseoutIdentity?null:identity.actual_model);if(initial.phase==='closeout')identity.client_job_id=job.id;this.wb.put('runs',run,{task_id:run.task_id});this.wb.upsertSession({agent:run.agent_id,native_id:job.session_id,source:'client_invocation',source_id:job.id,run_id:run.id,project_id:task.project_id,title:task.title,summary:'客户端调用返回真实会话编号'})});
       }
       const mismatch=job.session_mismatch,status=complete&&!mismatch?'completed':'failed';
-      this.update(jid,{status,session_mismatch:!!job.session_mismatch,model_mismatch:!!job.model_mismatch,exit_code:result.exitCode,ended_at:now(),reason:mismatch?'客户端会话与正式回执冲突，保留各自证据并停止自动流转':complete?(result.error||result.exitCode!==0?'已收到正式结果；客户端退出异常，详见项目日志':'已收到正式回执，工作台已登记结果'):(result.error||`客户端退出码 ${result.exitCode}，没有收到所需的正式${initial.role==='review'?'审查':'执行'}结果；未标记完成`)});
+      this.update(jid,{status,session_mismatch:!!job.session_mismatch,model_mismatch:!!job.model_mismatch,exit_code:result.exitCode,ended_at:now(),reason:mismatch?'客户端会话与正式回执冲突，保留各自证据并停止自动流转':complete?(result.error||result.exitCode!==0?'已收到正式结果；客户端退出异常，详见项目日志':'已收到正式回执，工作台已登记结果'):(result.error||(job.native_stop_reason?`客户端本段结束：${job.native_stop_reason}，尚无正式结论；可继续原会话。`:null)||`客户端退出码 ${result.exitCode}，没有收到所需的正式${initial.role==='review'?'审查':'执行'}结果；未标记完成`)});
     }catch(e){if(!this.closed){if(!launchCommitted&&!ctl.signal.aborted&&this.deferForProjectHold(jid))return;this.update(jid,{status:'failed',reason:(e as Error).message.slice(0,2000),ended_at:now()})}}
     finally{clearTimeout(timer);this.launching.delete(jid);this.changed()}
   }
@@ -361,7 +367,7 @@ export class AgentOrchestrator {
     try{
       for(const jid of this.launching.keys()){const job=this.wb.get('agent_jobs',jid);if(job.cancel_requested_at)continue;const task=this.wb.get('tasks',job.task_id),assignment=job.review_id?this.wb.maybe('review_assignments',job.review_id):null;
         let effectiveRun=job.run_id;try{effectiveRun=executionJobRun(this.wb,job)}catch{effectiveRun='invalid';}
-        if(task.current_run_id!==effectiveRun||task.request_withdrawn||['cancelled','rework_linked'].includes(task.status)||this.wb.get('projects',task.project_id).archived||job.role==='review'&&(['cancelled','superseded','revoked'].includes(assignment?.status)))this.stopOwned(jid,'任务或审查已取消、撤回、归档、改派或当前Run已更换，已请求停止原客户端','system')}
+        if(task.current_run_id!==effectiveRun||task.request_withdrawn||['cancelled','rework_linked'].includes(task.status)||this.wb.get('projects',task.project_id).archived||job.role==='review'&&(['cancelled','superseded','revoked'].includes(assignment?.status))){if(!job.context_changed_at)this.update(jid,{context_changed_at:now(),context_warning:'任务或审查安排已变化；原客户端继续运行，结果按原版本保存。停止调用由用户明确操作。'});}}
       for(const j of this.wb.all('agent_jobs'))if(j.status==='queued'&&!this.launching.has(j.id)&&!this.wb.get('projects',this.wb.get('tasks',j.task_id).project_id).dispatch_paused)setImmediate(()=>{if(!this.launching.has(j.id))void this.run(j.id)});
       for(const t of this.wb.all('tasks')){
       if(this.closed||!t.automation_policy||!t.current_run_id||this.wb.get('projects',t.project_id).dispatch_paused)continue;

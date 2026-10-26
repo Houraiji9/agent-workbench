@@ -55,7 +55,7 @@ function requirePolicy(condition:unknown,message:string):asserts condition {
 }
 /** Importance controls review coverage, never model identity or model availability. */
 export function validatePriorityPlan(task:Task,importance:Importance='normal',reviewPolicy:ReviewPolicy=task.review_policy):void {
-  if(importanceSchema.parse(importance)==='critical')requirePolicy((reviewPolicy?.mode||'required')==='required','重点需求必须安排完整独立审查，不能使用轻审查或跳过审查');
+  importanceSchema.parse(importance); // Priority is advice, not permission to block a plan.
   if(task.model_selection!=null)storedModelSelectionSchema.parse(task.model_selection);
 }
 

@@ -82,6 +82,6 @@ test('普通聊天和标准复制资料包含相同项目摘要，保留新需�
     const {as_of:a,...chatSummary}=chat.project_summary,{as_of:b,...copySummary}=copied;
     assert.deepEqual(chatSummary,copySummary);assert.equal(chat.request.text,q.text);assert(!JSON.stringify(chat.project_summary).includes(q.text));
     assert.equal(chat.request.importance_source,'project');assert.equal(chat.request.delivery_profile_source,'planner');assert.deepEqual(chat.request.planning_preferences,{delivery:'planner'});
-    assert.match(chat.instructions,/默认或继承值不是用户明确限制/);assert.match(chat.instructions,/source\/none/);assert.match(chat.instructions,/delivery_profile 与 delivery_target 仅为结构示例，必须由模型按本轮需求填写/);assert.match(entry.text,/本轮用户新需求/);assert.match(entry.text,/expected_version=1/);assert.equal(entry.context.project.id,q.project_id);
+    assert.match(chat.instructions,/默认或继承值不是用户明确限制/);assert.match(chat.instructions,/source\/none/);assert.match(chat.instructions,/delivery_profile 与 delivery_target 仅为结构示例，必须由模型按本轮需求填写/);assert.match(entry.text,/本轮用户新需求/);assert.match(entry.text,/expected_version=1/);assert.equal(entry.context.project_id,q.project_id);
   }finally{f.wb.close();}
 });

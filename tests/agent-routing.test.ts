@@ -103,12 +103,13 @@ test('successful native result records already completed work even if launch eli
 });
 
 test('closeout client prompt distinguishes explicit continue from a real passed review',async()=>{
- for(const scenario of ['zero_reports','disagreement','passed']){const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
+ for(const scenario of ['zero_reports','disagreement','passed','unreviewed']){const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
   try{const t=planned(f);deliver(f,t.tid,t.rid);
-   if(scenario!=='zero_reports'){const a=exportReviewOrder(f.wb,{run_id:t.rid,reviewer_id:'grok-build',expected_revision:f.wb.get('tasks',t.tid).revision,reason:'验证收尾启动提示与实际依据一致'},{role:'user'});finishReview(f,a.review_id,scenario==='passed'?'passed':'changes_requested');}
-   if(scenario!=='passed')decideReviewCollaboration(f.wb,{run_id:t.rid,expected_revision:f.wb.get('tasks',t.tid).revision,decision:'continue',reason:'测试负责人明确决定继续，保留尚未完成和反对意见'},{role:'user'});
+   if(!['zero_reports','unreviewed'].includes(scenario)){const a=exportReviewOrder(f.wb,{run_id:t.rid,reviewer_id:'grok-build',expected_revision:f.wb.get('tasks',t.tid).revision,reason:'验证收尾启动提示与实际依据一致'},{role:'user'});finishReview(f,a.review_id,scenario==='passed'?'passed':'changes_requested');}
+   if(scenario!=='passed'&&scenario!=='unreviewed')decideReviewCollaboration(f.wb,{run_id:t.rid,expected_revision:f.wb.get('tasks',t.tid).revision,decision:'continue',reason:'测试负责人明确决定继续，保留尚未完成和反对意见'},{role:'user'});
+   if(scenario==='unreviewed'){const {getCloseoutContext}=await import('../src/core/closeout.ts');getCloseoutContext(f.wb,t.rid);}
    const task=f.wb.get('tasks',t.tid),run=f.wb.get('runs',t.rid),prompt=(o as any).prompt({role:'execution',phase:'closeout',session_mode:'new'},task,run,path.join(f.root,'output'));
-   if(scenario==='passed')assert.match(prompt,/审查已通过，只完成本Run实际收尾/);else{assert.match(prompt,/负责人已决定继续，审查意见各自保留原结论/);assert.doesNotMatch(prompt,/审查已通过/);}
+   if(scenario==='passed')assert.match(prompt,/审查已通过，只完成本Run实际收尾/);else if(scenario==='unreviewed'){assert.match(prompt,/审查尚未通过或待完成/);const {relayOf}=await import('../src/web/lib/flow.ts');assert(!relayOf(f.wb.executionTasks().find(x=>x.id===t.tid)!,id=>id).headline.includes('审查已通过'));}else{assert.match(prompt,/负责人已决定继续，审查意见各自保留原结论/);assert.doesNotMatch(prompt,/审查已通过/);}
   }finally{await o.close();f.wb.close();}
  }
 });
@@ -179,13 +180,33 @@ test('CLI退出0和声称成功都不能替代正式审查回执；失败不会�
     fake.releases[0](); const ended = await terminal(f, job.job_id);
     assert.equal(ended.status, 'failed'); assert.match(ended.reason, /正式.*结果/);
     assert.equal(f.wb.get('tasks', t.tid).status, 'submitted'); assert.equal(f.wb.all('reviews').length, 0);
-    assert.throws(() => o.dispatchReview(input(f, t.tid)), /未确认完成|fresh_session/);
     assert.equal(fake.launches.length, 1);
-    const retry = o.dispatchReview({ ...input(f, t.tid), fresh_session: true });
-    await until(() => fake.launches.length === 2, '明确新会话后允许重试');
-    assert.equal(fake.builds[1].sessionId, undefined, '失败调用的会话不能被当作已完成历史恢复');
+    const retry = o.dispatchReview(input(f, t.tid));
+    await until(() => fake.launches.length === 2, '明确继续后复用已结束调用的真实会话');
+    assert.equal(fake.builds[1].sessionId, 'synthetic-failed-session');
     fake.releases[1](); await terminal(f, retry.job_id);
   } finally { await o.close(); f.wb.close(); }
+});
+
+test('guide: ordinary runner continuation stays in current Run and invokes no client',async()=>{
+ const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
+ try{const t=planned(f);receipt(f,t.tid,t.rid,'started');const result=o.continueRun(input(f,t.tid),{role:'runner',source:'mcp',run_id:t.rid});assert.equal(result.run_id,t.rid);assert.equal(result.continuation.mode,'same_session');assert.equal(fake.launches.length,0);}finally{await o.close();f.wb.close();}
+});
+
+test('guide: late native historical report completes its invocation without changing current delivery',async()=>{
+ const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
+ try{const t=planned(f);deliver(f,t.tid,t.rid);const job=o.dispatchReview(input(f,t.tid));await until(()=>fake.launches.length===1,'review start');const payload=nativeReviewResult(f,job.review_id!);
+  receipt(f,t.tid,t.rid,'submitted',{result:'新一版合成交付，旧独立审查继续完成并仅归档到原版本。'});const before=f.wb.get('tasks',t.tid).status;
+  fake.launches[0].onLine(JSON.stringify({type:'text',data:JSON.stringify(payload)}));fake.launches[0].onLine(JSON.stringify({type:'end',sessionId:'historical-native-session',stopReason:'end_turn'}));fake.releases[0]();const ended=await terminal(f,job.job_id);assert.equal(ended.status,'completed');const report=f.wb.all('reviews')[0];assert.equal(report.historical,true);assert.equal(report.session_id,'historical-native-session');assert.equal(f.wb.get('tasks',t.tid).status,before);
+ }finally{await o.close();f.wb.close()}
+});
+
+test('guide: changing assignment records context change without aborting a running review',async()=>{
+ const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
+ try{const t=planned(f);deliver(f,t.tid,t.rid);o.start();const job=o.dispatchReview({...input(f,t.tid),instructions:'只读复核本轮变化，报告直接返回'});await until(()=>fake.launches.length===1,'review start');
+  fake.launches[0].onLine(JSON.stringify({type:'text',data:'实际审查活动'}));assert.equal(f.wb.get('tasks',t.tid).review_stage,'running');assert.equal(f.wb.get('review_assignments',job.review_id!).start_evidence.source,'native_client_activity');assert(fs.readFileSync(fake.builds[0].promptFile,'utf8').includes('只读复核本轮变化，报告直接返回'));
+  const a=f.wb.get('review_assignments',job.review_id!);a.status='superseded';f.wb.put('review_assignments',a,{run_id:t.rid});f.wb.emit('change');await until(()=>!!f.wb.get('agent_jobs',job.job_id).context_changed_at,'record changed context');assert.equal(fake.launches[0].signal.aborted,false);fake.releases[0]();await terminal(f,job.job_id);
+ }finally{await o.close();f.wb.close();}
 });
 
 test('只有当前RA的正式回执能完成审查调用，通过后仍需执行收尾且不能再次派审', async () => {

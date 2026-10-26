@@ -104,7 +104,7 @@ export function relayOf(t: R, name: (id: string) => string, executor?: string): 
     case 'changes_requested': return r(4, 'you', 'problem', `${reviewer} 审查后要求修改`, '在原会话继续，只处理本轮新增修改意见');
     case 'acceptance_rejected': return r(6,'you','problem','你已确认本次结果不通过',`复制返工要求，交给 ${doer} 修改`);
     case 'rework_linked': return r(3,'none','quiet','本次验收未通过，已由后续任务接替','查看后续任务的进展；原交付与意见保留在这里');
-    case 'in_review': case 'awaiting_closeout': return r(5, t.closeout_delivery==='agent'?'agent':'you', t.closeout_delivery==='agent'?'working':'you', skippedReview ? `${doer} 已交付，等待收尾` : leadContinuedReview(t)?'负责人决定继续，等待执行者收尾':'审查已通过，等待执行者收尾', t.closeout_delivery==='agent'?(skippedReview?`${doer} 交付后继续完成剩余事项`:leadContinuedReview(t)?`${doer} 按负责人决定继续完成剩余事项`:`${doer} 收到审查结果后继续完成剩余事项`):`复制收尾单，交回 ${doer}`);
+    case 'in_review': case 'awaiting_closeout': return r(5, t.closeout_delivery==='agent'?'agent':'you', t.closeout_delivery==='agent'?'working':'you', skippedReview ? `${doer} 已交付，等待收尾` : leadContinuedReview(t)?'负责人决定继续，等待执行者收尾':'成果已交付，等待执行者收尾', t.closeout_delivery==='agent'?(skippedReview?`${doer} 交付后继续完成剩余事项`:leadContinuedReview(t)?`${doer} 按负责人决定继续完成剩余事项`:`${doer} 收到审查结果后继续完成剩余事项`):`复制收尾单，交回 ${doer}`);
     case 'closing': return r(5, 'agent', 'working', `${doer} 正在收尾`, '等执行者完成剩余事项，再试用验收');
     case 'closeout_waiting_input': return r(5, 'you', 'you', `${doer} 收尾时需要你回答`, '保存回答并复制回执行者');
     case 'closeout_blocked': return r(5, 'you', 'problem', `${doer} 收尾遇到阻碍`, '查看原因，协助执行者继续，或新开执行处理修改');

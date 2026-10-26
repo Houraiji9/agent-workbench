@@ -81,11 +81,13 @@ test('rejects replay, actor/version/review mismatch and incomplete or duplicate 
   assert.throws(()=>bindDeploymentReceipt({...context(),artifact_hashes:[A,A]},receipt()),/不能重复/);
 });
 
-test('null review requires explicit review skip and still binds current full artifacts',()=>{
+test('unreviewed deployment can be recorded truthfully and still binds current full artifacts',()=>{
   const input={...receipt(),review_id:null};
-  assert.throws(()=>bindDeploymentReceipt({...context(),review_id:null},input),/显式跳过/);
+  assert.equal(bindDeploymentReceipt({...context(),review_id:null,review_pending:true},input).review_pending,true);
+  const saved=bindDeploymentReceipt({...context(),review_id:null,review_pending:true},input);
+  assert.equal(assertDeploymentReceipt(context(),saved).review_pending,true);
   assert.doesNotThrow(()=>bindDeploymentReceipt({...context(),review_id:null,review_skipped:true},input));
-  assert.throws(()=>bindDeploymentReceipt({...context(),review_skipped:true},receipt()),/审查绑定无效/);
+  assert.throws(()=>bindDeploymentReceipt({...context(),review_skipped:true},receipt()),/冲突/);
 });
 
 test('none and portable deliveries cannot bypass their own checks with executor receipts',()=>{

@@ -35,10 +35,10 @@ export function verifyRuntime(wb:Workbench,t:Row,r:Row,options:{allowSuccessor?:
 export function reportDeployment(wb:Workbench,input:unknown){const v=deploymentInput.parse(input),r=wb.get('runs',v.run_id),t=wb.get('tasks',r.task_id),p=wb.get('projects',t.project_id);
   const task=runTask(t,r),profile=validatePlannedDelivery(resolveDeliveryProfile(task,p));
   assert(profile.deployment.verification==='portable_manifest','此任务不使用便携清单安装回执',409);
-  assert(t.current_run_id===r.id&&['submitted','awaiting_closeout','closing','closeout_blocked'].includes(t.status),'当前执行不允许记录安装',409);
-  const authority=reviewProceedAuthority(wb,r.id),review=authority.review;assert(reviewSkipped(task)||authority.can_proceed,'须先完成当前交付的独立审查或记录负责人继续决定',409);
-  const artifacts=wb.all('artifacts').filter(a=>a.run_id===r.id&&a.current);assert(artifacts.some(a=>a.sha256===v.manifest_sha256),'本机清单必须是当前已交付并受审的文件',409);
-  if(!reviewSkipped(task))assert(JSON.stringify(artifacts.map(a=>a.sha256).sort())===JSON.stringify([...(authority.decision?.artifact_hashes||review?.artifact_hashes||[])].sort()),'审查与交付版本不匹配',409);
+  assert(t.current_run_id===r.id,'安装回执须绑定当前执行',409);
+  const authority=reviewProceedAuthority(wb,r.id),review=authority.review;
+  const artifacts=wb.all('artifacts').filter(a=>a.run_id===r.id&&a.current);
+
   const target=profile.deployment.target;assert(target,'请先在项目资料登记运行目录');const root=safePath(target,wb.roots(p));assert(!wb.privatePath(root),'运行目录不能指向内部账本');
-  const pending={...r,deployment:{verified:true,runtime_root:root,manifest_sha256:v.manifest_sha256,verified_at:now(),review_id:review?.id||null,...(authority.decision?{review_decision_id:authority.decision.id}:{})}};verifyRuntime(wb,{...t,delivery_target:'runtime'},pending);wb.transaction(()=>{wb.put('runs',pending,{task_id:t.id});wb.audit('run:'+r.id,'deployment_verified',t.id,{runtime_root:root,manifest_sha256:v.manifest_sha256});});return pending.deployment;
+  const pending={...r,deployment:{review_pending:!authority.can_proceed&&!reviewSkipped(task),verified:true,runtime_root:root,manifest_sha256:v.manifest_sha256,verified_at:now(),review_id:review?.id||null,...(authority.decision?{review_decision_id:authority.decision.id}:{})}};verifyRuntime(wb,{...t,delivery_target:'runtime'},pending);wb.transaction(()=>{wb.put('runs',pending,{task_id:t.id});wb.audit('run:'+r.id,'deployment_verified',t.id,{runtime_root:root,manifest_sha256:v.manifest_sha256});});return pending.deployment;
 }

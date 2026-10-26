@@ -5,5 +5,5 @@ import {reviewAssignmentContext,reviewResultInput,submitReviewResult} from './re
 export const reviewReportInput=reviewResultInput.omit({task_id:true,run_id:true,review_digest:true}).extend({review_digest:z.string().regex(/^[a-f0-9]{64}$/).optional()}).strict();
 export function submitReviewReport(wb:Workbench,input:unknown,actor:string){
  const v=reviewReportInput.parse(input),context=reviewAssignmentContext(wb,v.review_id);
- return submitReviewResult(wb,{...context.report_template,...v,task_id:context.task_id,run_id:context.run_id},actor);
+ return submitReviewResult(wb,{review_digest:context.review_digest,...v,task_id:context.task_id,run_id:context.run_id},actor);
 }

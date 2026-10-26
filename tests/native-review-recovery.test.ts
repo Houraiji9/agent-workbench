@@ -11,9 +11,27 @@ function prepared(){
  const job={id:jid,task_id:t.tid,run_id:t.rid,review_id:a.review_id,role:'review',phase:'review',route:{client:'cursor',model:'synthetic-cursor'},status:'failed',reason:'Unexpected token in JSON at position 0',process_may_be_running:false,process_end_evidence:'owned_child_exit',exit_code:0,session_id:wire.session_id,files:{stdout:path.join(dir,'stdout.jsonl')},ended_at:new Date().toISOString()};
  fs.writeFileSync(job.files.stdout,JSON.stringify(wire)+'\n');f.wb.put('agent_jobs',job,{run_id:t.rid});return {f,t,a,job,payload,wire};
 }
+
+test('Grok cancelled native segment recovers its real session and usage once, never a verdict',()=>{
+ const {f,t,a,job}=prepared();try{
+  f.wb.put('agent_jobs',{...job,route:{client:'grok'},session_id:null},{run_id:t.rid});
+  fs.writeFileSync(job.files.stdout,[{type:'text',data:JSON.stringify({verdict:'passed'})},{type:'end',stopReason:'cancelled',sessionId:'native-grok',usage:{input_tokens:10,output_tokens:5,total_tokens:15}}].map(x=>JSON.stringify(x)).join('\n'));
+  const first=recoverNativeReview(f.wb,{run_id:t.rid,job_id:job.id});assert.equal(first.review,null);assert.equal(first.session_id,'native-grok');
+  recoverNativeReview(f.wb,{run_id:t.rid,job_id:job.id});assert.equal(f.wb.all('reviews').length,0);assert.equal(f.wb.all('usage_events').length,1);assert.equal(f.wb.get('agent_jobs',job.id).status,'failed');assert.equal(f.wb.get('review_assignments',a.review_id).session_id,'native-grok');
+ }finally{f.wb.close();}
+});
+
+test('Grok short native result binds absent fields from its launched assignment',()=>{
+ const {f,t,job,payload}=prepared();try{
+  f.wb.put('agent_jobs',{...job,route:{client:'grok'},session_id:null},{run_id:t.rid});
+  const {review_id,task_id,run_id,review_digest,...short}=payload;
+  fs.writeFileSync(job.files.stdout,[{type:'text',data:JSON.stringify(short)},{type:'end',stopReason:'end_turn',sessionId:'native-grok'}].map(x=>JSON.stringify(x)).join('\n'));
+  const result=recoverNativeReview(f.wb,{run_id:t.rid,job_id:job.id});assert.equal(result.review?.verdict,'passed');assert.equal(result.review?.session_id,'native-grok');
+ }finally{f.wb.close();}
+});
 test('saved independent terminal report is recovered idempotently with provenance; original failure remains',()=>{
  const {f,t,a,job}=prepared();try{const r=recoverNativeReview(f.wb,{run_id:t.rid,job_id:job.id}),again=recoverNativeReview(f.wb,{run_id:t.rid,job_id:job.id});
- assert.equal(r.review.verdict,'passed');assert.equal(r.review.source,'native_client_output');assert.equal(r.review.client_job_id,job.id);assert.equal(again.review.id,r.review.id);assert.equal(f.wb.all('reviews').length,1);
+ assert(r.review);assert(again.review);assert.equal(r.review.verdict,'passed');assert.equal(r.review.source,'native_client_output');assert.equal(r.review.client_job_id,job.id);assert.equal(again.review.id,r.review.id);assert.equal(f.wb.all('reviews').length,1);
  assert.equal(f.wb.get('agent_jobs',job.id).status,'failed');assert.equal(f.wb.get('agent_jobs',job.id).reason,job.reason);assert.equal(isRecoveredReviewJob(f.wb,f.wb.get('agent_jobs',job.id)),true);assert.equal(f.wb.get('review_assignments',a.review_id).started_at,undefined);
  }finally{f.wb.close();}
 });
@@ -26,11 +44,11 @@ test('native recovery refuses uncertain/alive processes, mismatches, external pa
  f.wb.put('agent_jobs',job,{run_id:t.rid});assert.throws(()=>recoverNativeReview(f.wb,{run_id:t.rid,job_id:job.id,verdict:'passed'}));
  }finally{f.wb.close();}
 });
-test('native recovery refuses ambiguous terminal, tool-only output, foreign digest/session and cancelled assignment',()=>{
+test('native recovery refuses ambiguous or foreign output; cancelled assignment keeps a historical report',()=>{
  const {f,t,a,job,wire,payload}=prepared();try{
  const invalid=[JSON.stringify(wire)+'\n'+JSON.stringify(wire),JSON.stringify({type:'tool_result',content:JSON.stringify(payload)}),JSON.stringify({...wire,session_id:'foreign'}),JSON.stringify({...wire,result:JSON.stringify({...payload,review_digest:'0'.repeat(64)})}),JSON.stringify({...wire,is_error:true})];
  for(const text of invalid){fs.writeFileSync(job.files.stdout,text);assert.throws(()=>recoverNativeReview(f.wb,{run_id:t.rid,job_id:job.id}));assert.equal(f.wb.all('reviews').length,0);}
- fs.writeFileSync(job.files.stdout,JSON.stringify(wire));f.wb.put('review_assignments',{...f.wb.get('review_assignments',a.review_id),status:'cancelled'},{run_id:t.rid});assert.throws(()=>recoverNativeReview(f.wb,{run_id:t.rid,job_id:job.id}));
+ fs.writeFileSync(job.files.stdout,JSON.stringify(wire));f.wb.put('review_assignments',{...f.wb.get('review_assignments',a.review_id),status:'cancelled'},{run_id:t.rid});const before=f.wb.get('tasks',t.tid).status;assert.equal(recoverNativeReview(f.wb,{run_id:t.rid,job_id:job.id}).review?.historical,true);assert.equal(f.wb.get('tasks',t.tid).status,before);
  }finally{f.wb.close();}
 });
 
@@ -39,6 +57,6 @@ test('old model-only mismatch recovers original changes_requested without a new 
  f.wb.put('agent_jobs',{...job,model_mismatch:true,actual_model:'grok-4.7-build',route:{...job.route,model:'grok-4.7'},reason:'old model mismatch'},{run_id:t.rid});
  const assignment=f.wb.get('review_assignments',a.review_id);assignment.actual_model='previous-display-name';f.wb.put('review_assignments',assignment,{run_id:t.rid});
  const findings=['first actual issue','second actual issue','third actual issue'];fs.writeFileSync(job.files.stdout,JSON.stringify({...wire,model:'grok-new-label',result:JSON.stringify({...payload,verdict:'changes_requested',findings})}));
- const r=recoverNativeReview(f.wb,{run_id:t.rid,job_id:job.id});assert.equal(r.review.verdict,'changes_requested');assert.equal(r.review.findings,findings.join('\n'));assert.equal(f.wb.all('agent_jobs').length,1);assert.equal(f.wb.get('agent_jobs',job.id).reason,'old model mismatch');assert.equal(isRecoveredReviewJob(f.wb,f.wb.get('agent_jobs',job.id)),true);
+ const r=recoverNativeReview(f.wb,{run_id:t.rid,job_id:job.id});assert(r.review);assert.equal(r.review.verdict,'changes_requested');assert.equal(r.review.findings,findings.join('\n'));assert.equal(f.wb.all('agent_jobs').length,1);assert.equal(f.wb.get('agent_jobs',job.id).reason,'old model mismatch');assert.equal(isRecoveredReviewJob(f.wb,f.wb.get('agent_jobs',job.id)),true);
  }finally{f.wb.close();}
 });

@@ -94,6 +94,15 @@ export function parseAgentOutput(kind: ClientKind, line: string): ParsedAgentOut
  * Messages wire format. These branches implement those public standards, not a claimed native
  * model-run verification. Unknown Grok wrappers/terminal events deliberately remain unsupported. */
 function parseGrokEvent(value: ObjectValue): ParsedAgentOutput {
+  // Observed Grok Build 1.0.41 streaming-json: flat events, no ACP envelope.
+  // Tool/thought payloads are never report text; usage is read only from the final total.
+  if (value.type === 'text' && text(value.data) !== undefined) return {recognized:true,terminal:false,eventType:'grok/text',textDelta:String(value.data)};
+  if (value.type === 'tool_call' && typeof value.toolCallId === 'string' && typeof value.toolName === 'string') return {recognized:true,terminal:false,eventType:'grok/tool_call',resetText:true};
+  if (value.type === 'end' && session(value.sessionId) && typeof value.stopReason === 'string') {
+    const models=Object.keys(object(value.modelUsage)||{}),reported=models.length===1?model(models[0]):undefined;
+    return withMetadata({recognized:true,terminal:true,eventType:'grok/end',sessionId:session(value.sessionId),success:value.stopReason==='end_turn',stopReason:value.stopReason}, {
+      usage:usage(value.usage,'reported_total',false,value.total_cost_usd),model:reported,...(reported?{modelFormat:'identifier'}:{})});
+  }
   const params = value.jsonrpc === '2.0' && value.method === 'session/update' ? object(value.params)
     : value.jsonrpc === undefined && value.type === undefined ? value : undefined;
   const update = object(params?.update);
@@ -166,7 +175,7 @@ export function createAgentOutputParser(kind: ClientKind) {
         anthropicMessage = false;
         return complete ? {...event, terminal: true, success: true, finalText: body} : {...event, ...(failed ? {success: false} : {})};
       }
-      if (event.eventType === 'acp/prompt_result' && event.success && currentSession && !failed) return {...event, sessionId: currentSession, finalText: body};
+      if (['acp/prompt_result','grok/end'].includes(event.eventType||'') && event.success && currentSession && !failed) return {...event, sessionId: currentSession, finalText: body};
       if (failed && event.finalText !== undefined) {const {finalText: _ignored, ...rest} = event; return {...rest, success: false};}
       return event;
     },

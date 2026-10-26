@@ -4,7 +4,7 @@ import {hash} from './security.ts';
 
 /** A revoked latest decision is not permission to restore an earlier approval. */
 export function latestReview(wb:Workbench,runId:string):Row|undefined{
-  const row=wb.db.prepare("SELECT data FROM reviews WHERE run_id=? ORDER BY json_extract(data,'$.created_at') DESC,rowid DESC LIMIT 1").get(runId) as any;
+  const row=wb.db.prepare("SELECT data FROM reviews WHERE run_id=? AND COALESCE(json_extract(data,'$.historical'),0)=0 ORDER BY json_extract(data,'$.created_at') DESC,rowid DESC LIMIT 1").get(runId) as any;
   if(!row)return undefined;
   const review:Row=JSON.parse(row.data);
   return review.revoked_at==null?review:undefined;

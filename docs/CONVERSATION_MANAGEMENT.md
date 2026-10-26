@@ -1,5 +1,7 @@
 # 在 Agent 会话里管理工作台
 
+工作台是 Agent 的引路人和收纳总结员。流程顺序、职责标签、资源快照、模型、阅读清单和预算均为建议，不是工作许可。当前会话按用户要求自主推进；工作台保存真实操作、交付版本、报告来源和未验证项。目录与凭据保护、客户端自身授权及真实身份仍由各自机制处理；不把未知记成通过，不代用户验收。
+
 你可以直接告诉当前 Agent：“记个备忘”“这个项目改名”“WorkBuddy 还有 500 积分”“换 Claude 审查”“这次不通过，请返工”“我试过了，通过”。当前会话负责找到对应记录、读取现状并办理授权范围内的项目资料、范围、执行与审查安排变更，保留变更前内容、来源和历史。普通管理无需反复切换角色或重复确认。审查成员可在任务任一阶段增删或替换。用户验收仍由用户本人试用并确认，Agent 不得猜测或代替。
 
 默认在当前项目办理；只有用户明确授权其他项目时才切换绑定 scope。新建项目同时授予当前会话该项目的工作范围，现有项目可用 `manage_projects` action `link_scope`（`project_id`、`reason`）追加当前会话范围，无需另开聊天。项目资料 `update` 支持只提交变更字段。项目、任务或数值有歧义时，Agent 只补问缺少的信息。常规交接两次复制：需求资料交给大脑规划，执行单交给用户自己启动的外部主执行；大脑本人执行时省去执行单这次复制。新的负责人或新的外部主执行仍由用户启动。已经开始工作的执行 Agent 可在当前 Run 授权内直接派审、等待、返修和收尾，不要求用户逐次转发。任务默认不自动启动新的外部主执行或自动续作，只有用户在“启动方式”中开启后工作台才自动续作。大脑本人承担执行时，你说“直接做”后可以自行接单。正常审查不需要你转发。
@@ -42,7 +44,7 @@
 | 新增/修改/隐藏/恢复额度、手填缓存和月积分 | manage_quotas：create / update / hide_source / delete / restore / cache / workbuddy_points |
 | 订阅和未来安排的新增、修改、删除、实际发生确认 | manage_subscriptions：create / update / delete / confirm |
 | 标记已转发、取消任务、回答问题、通过、退回、返工 | manage_tasks：dispatch / cancel / reply / accept / reject / rework |
-| 修订当前 Task/Run 范围 | `manage_tasks` action `amend`：传 `task_id`、`run_id`、`expected_revision`、`reason` 与 `changes`（可含 `goal`、`scope`、`acceptance`、`tests`、`required_files`）；运行中即时应用，交付内容变化则同一 Task 用 `continue` 开下一 Run；reviewer/model-only 修改留在当前 Run |
+| 修订当前 Task/Run 范围 | `manage_tasks` action `amend`：传 `task_id`、`run_id`、`expected_revision`、`reason` 与 `changes`（可含 `goal`、`scope`、`acceptance`、`tests`、`required_files`）；运行中即时应用，交付内容变化可同一 Run 再次 submitted，旧交付归档保留；reviewer/model-only 修改留在当前 Run |
 | 设置或建议执行安排 | `manage_tasks` action `set_arrangement`：传 `task_id` 与 `data.arrangement`、当前 revision，可选 `agent_id` 或 `execution_policy`；按现有同 Task 生命周期应用，不热启动。`propose_arrangement` 只用于用户要建议时 |
 | 设置审查安排 | `manage_reviews.set_arrangement`：按当前 Run 设置 `reviewer_id`，可选 `requested_model`、`route`，并提交版本与原因 |
 | 新增、移除或替换审查成员 | `manage_reviews.update_member`：`action=remove` 或 `replace`，使用当前 `review_id`、版本与原因；replace 时填写新 reviewer/model |
@@ -87,3 +89,11 @@ manager不提供 import_execution_receipt，旧HTTP/stdio/CLI调用也不可继�
 ## 模型建议
 
 模型与档位是可选建议，由各Agent按自身客户端规则与任务需要决定。无需自报或证明型号，缺失记为未知；型号差异不阻止接单、交付或审查回传。旧模型白名单与冻结型号要求不再生效。
+
+## 简短续接与真实报告
+
+RUN.md / REVIEW.md 默认只给目标、范围、产物位置和固定入口，完整要求按需取 full；同会话传 known_context_hash 取 delta，不重读手册或项目经验库。项目经验仅在与当前问题相关时补读。自动审查只发送一份简版资料，不重复附合同和完整模板。
+
+审查者可以提交简短 JSON：verdict、findings、limitations、evidence、report_markdown，工作台绑定编号。受审源码后来变化会附未验证提醒；原版本晚到报告可存档，不改变当前执行。已完成的原生报告不因未先 started、低额度或未披露型号而拒收。
+
+安装回执可在独立审查前登记，实际清单验证与审查结论分别记录。收尾也可记录尚未验证或未回报事项，不能据此声称已经通过审查或用户验收。

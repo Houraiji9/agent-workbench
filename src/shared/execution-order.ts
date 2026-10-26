@@ -13,8 +13,9 @@ export function resolveDependency(tasks: Map<string, Row>, id: string) {
 }
 
 const pending = new Set(['ready', 'awaiting_dispatch']);
-export function waitingForDependencies(t: Row): boolean {
-  return pending.has(t.status) && t.execution?.dependencies_ready === false;
+export function waitingForDependencies(_t: Row): boolean {
+  // Dependencies describe the recommended order, never disable a user's next action.
+  return false;
 }
 
 /** A read-only projection: planning order stays stable when receipts update timestamps. */
@@ -58,7 +59,7 @@ export function withExecutionOrder(tasks: Row[], runs: Row[], plans: Row[], agen
       active_work: [] as Row[], unlocks: tasks.filter(next => (next.dependencies || []).some((id: string) => id === t.id || resolveDependency(byId, id).task?.id === t.id)).map(reference) } };
   });
   const queues = new Map<string, Row[]>();
-  for (const t of projected.filter(t => pending.has(t.status) && t.execution.dependencies_ready && !t.request_withdrawn).sort(compare)) {
+  for (const t of projected.filter(t => pending.has(t.status) && !t.request_withdrawn).sort((a,b)=>(a.execution.step??Infinity)-(b.execution.step??Infinity)||compare(a,b))) {
     const who = t.execution.executor_id, queue = queues.get(who) || [];
     t.execution.queue_position = queue.length + 1;
     t.execution.ahead = queue.length ? reference(queue[queue.length - 1]) : null;

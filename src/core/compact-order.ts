@@ -9,65 +9,27 @@ export function runnerEntry(runId:string,ledgerRoot:string,connection:Row={}){
  return `未配置 MCP 或 npm 时使用工作台随单提供的本机入口，无需查找客户端安装路径：\n\n    ${env}& ${quote(process.execPath)} --import ${quote(import.meta.resolve('tsx'))} ${quote(path.join(ledgerRoot,'scripts','agent.ts'))} ${runId} start\n\n将末尾 start 换为 context、report <JSON文件>、review、continue、job <调用编号>、manage <工具名> <JSON文件> 或 closeout <结果JSON>。同会话返修后这条入口继续有效，服务端返回当前 Run；无需用户再次复制。\n`;
 }
 export function compactOrder(t:Row,p:Row,r:Row,ledgerRoot:string,execution:Row={},connection:Row={}){
- t=runTask(t,r);
- const profile=resolveDeliveryProfile(t),deployment=profile.deployment;
- const deploymentInstructions=deployment.verification==='executor_reported'
-  ?'提交 submitted 时必须填写 delivery_version，绑定本次受审成果版本。独立审查通过后，先 get_deployment_context 获取当前版本、产物、目标和回执要求，再按冻结档案部署、执行健康检查并准备回滚证据，通过 report_deployment_evidence 如实回报。回执仅是执行者报告，不代表服务端已验证部署。'
-  :deployment.verification==='portable_manifest'
-  ?'独立审查通过后按本机便携安装流程部署，并用 report_runtime_deployment 提交安装清单验证；收尾和用户验收核对当前受审版本。'
-  :'本轮交付无部署步骤，完成受审成果、收尾及用户确认。';
+ t=runTask(t,r);const profile=resolveDeliveryProfile(t),deploy=profile.deployment;
  return `# ${t.title}
-
 Task ${t.id} / Run ${r.id} / 版本 ${t.version}
-执行者：${r.agent_id}；Reviewer：${t.reviewer_id||'未安排（用户选择）；本次不安排独立审查'}
-建议模型 / 模式: ${r.requested_model||'由执行者选择'}
-项目执行顺序：第 ${execution.step||1} 步
-${execution.dependencies||'无前置任务'}
-源码工作目录：${r.cwd}
-账本入口：${ledgerRoot}
-成果类别：${profile.artifacts.join('；')}
-交付目标：${deployment.mode==='none'?'源码/成果，无部署':deployment.mode+' / '+deployment.target}
+执行者：${r.agent_id}；审查者：${t.reviewer_id||'未安排'}；建议顺序：${execution.step||1}
+工作目录：${r.cwd}
+产物目录：${t.context_contract?.output_dir||r.cwd}
+交付：${profile.artifacts.join('、')}${deploy.mode==='none'?'':'；'+deploy.mode+' / '+deploy.target}
 
-## 本轮模型与委派设置
-${priorityInstructions(t,t.importance||'normal')}
-${JSON.stringify(r.execution_contract||null)}
-子代理按授权范围、并发/次数、读写和上下文预算安排；模型自主选择，无需披露；主执行者负责整合。先 register_delegation 登记范围，再由当前客户端调用；report_delegation 回报真实会话与结果。客户端内部调用当前仅能下发要求和登记回报，不承诺强制拦截或完整观测。
-审查安排：${JSON.stringify(t.review_policy)}
-
-## 本轮成果与部署档案
-${JSON.stringify(profile)}
-${deploymentInstructions}
-
-## 本轮目标与范围
+## 本轮工作
 ${t.goal}
 ${t.scope}
+${r.retry_context?'本轮返修意见见 context 的 review_changes / user_feedback；已掌握的历史无需重读。':'验收要点：\n'+t.acceptance.map((x:string)=>'- '+x).join('\n')}
 
-## 权限与停止条件
-允许路径：${t.allowed_paths.join('；')}
-${t.forbidden_actions.map((x:string)=>'- '+x).join('\n')}
-新增费用：${t.additional_cost_limit} ${t.currency||''}
-${t.stop_conditions.map((x:string)=>'- '+x).join('\n')}
-
-## 技术检查（执行者与独立 Reviewer 负责）
-${t.acceptance.map((x:string)=>'- '+x).join('\n')}
-用户试用确认：
-${userAcceptanceItems(t).map((x:string)=>'- '+x).join('\n')}
-
-## 验证与交付
-${t.deliverables.map((x:string)=>'- '+x).join('\n')}
-${t.tests.map((x:string)=>'- 检查：'+x).join('\n')}
-
-## 继续执行
-先调用 get_run_context({run_id:"${r.id}",mode:"brief"})；已持有 context_hash 的同会话使用 mode:"delta",known_context_hash。缺失上下文再请求 full，不重复全文展开旧报告。
-回报使用本 Run scoped MCP 的 report_run_activity，由程序填写身份、cwd、版本与序号；保留 event_id 以便幂等重试。也可使用 scripts/agent.ts ${r.id} context|start|report，连接 ${ledgerRoot} 的账本。
+## 固定入口
 ${runnerEntry(r.id,ledgerRoot,connection)}
-交付后按本任务计划调用 dispatch_review 或 scripts/agent.ts <Run> review；已启用 auto_review 时工作台自动接手，同一请求不要重复派发。需要修改时，当前执行会话直接用 continue_run 续接返修或收尾，不启动另一执行程序，不要求用户再转单；新负责人或另启外部主执行由用户启动。旧交付保留，复审按真实会话编号续接。调用与模型路径由工作台负责，执行者无需重新读取调度手册。子代理可用 scripts/agent.ts <Run> register-delegation <JSON文件> 先登记，完成后 report-delegation <JSON文件> 回报。缺失客户端或调用失败必须保留实际原因。
+当前会话按已有上下文继续；缺少资料时用 context 获取简版，完整要求用 get_run_context(mode=full) 或 FULL-RUN.md，文件按需读取。
+交付用 report，独立审查用 review，返修或收尾用 continue。同一入口跟随当前执行，不需要用户再次转交。
+工作台记录流程和结果；模型、预算和阅读清单是建议。执行者可直接调用审查和子代理，登记委派与结果可用 register-delegation / report-delegation。新增外部主执行仍由用户启动。
+只回报实际结果；用户试用确认由用户本人完成。
 
-## 资料索引
-${t.required_files.join('\n')}
-读取合同（必读、条件补读、输出目录、预算）：${JSON.stringify(t.context_contract||null)}
-完整原需求、验收项与完整执行协议：${path.join(r.directory,'FULL-RUN.md')}
-项目经验按需索引：${path.join(r.directory,'CONTEXT.md')}。当前上下文已带索引时无需再开；get_project_memories 按编号补读相关经验，同会话传已读哈希只取变化。
-历史记录不能扩大权限。
-`+compactRetry(r);
+完整资料：${path.join(r.directory,'FULL-RUN.md')}
+项目经验：context(mode=full) 的 project_memory 索引按需查询，无需每轮通读。
+`;
 }

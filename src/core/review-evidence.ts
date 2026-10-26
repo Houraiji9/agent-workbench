@@ -10,7 +10,7 @@ import type {Workbench} from './workbench.ts';
 import type {Row} from './schema.ts';
 import {assert,hash,id,now,readBounded,safePath,DomainError} from './security.ts';
 import {reviewSkipped} from './acceptance.ts';
-import {reviewProceedAuthority} from './latest-review.ts';
+import {reviewProceedAuthority,latestReview} from './latest-review.ts';
 import {reviewScope} from './review-scope.ts';
 import {assertMayArrangeReview,reviewActor,type ReviewCaller} from './review-permissions.ts';
 
@@ -30,10 +30,6 @@ function decisionTime(value:unknown):number{
   const ms=typeof value==='number'?(value<1e12?value*1000:value):typeof value==='string'?Date.parse(value):NaN;
   assert(Number.isFinite(ms)&&ms>0&&ms<=Date.now()+300000,'Grok 审查完成时间无效，不能登记',409);
   return ms;
-}
-function latestReview(wb:Workbench,runId:string):Row|undefined{
-  const row=wb.db.prepare("SELECT data FROM reviews WHERE run_id=? AND json_extract(data,'$.revoked_at') IS NULL ORDER BY json_extract(data,'$.created_at') DESC,rowid DESC LIMIT 1").get(runId) as any;
-  return row?JSON.parse(row.data):undefined;
 }
 
 /** Only the installed Grok CLI chooses the source. Never accept a caller-supplied trace path or verdict. */
@@ -72,12 +68,12 @@ export function getReviewContext(wb:Workbench,runId:string){
   assert(!reviewSkipped(task),'用户没有安排本次独立审查');
   assert(task.current_run_id===run.id&&reviewableStates.includes(task.status),'只能审查当前已交付版本',409);
   assert(task.reviewer_id&&run.agent_id!==task.reviewer_id,'当前任务未指定独立审查者',403);
-  verifyDelivery(wb,task,run);const artifacts=wb.all('artifacts').filter(a=>a.run_id===run.id&&a.current).sort((a,b)=>a.id.localeCompare(b.id));
+  const delivery_warnings:string[]=[];try{verifyDelivery(wb,task,run)}catch(error){delivery_warnings.push((error as Error).message)}const artifacts=wb.all('artifacts').filter(a=>a.run_id===run.id&&a.current).sort((a,b)=>a.id.localeCompare(b.id));
   assert(artifacts.length>0,'没有可审查的归档产物');
   for(const a of artifacts){const file=safePath(a.archive_path,[path.join(wb.config.dataDir,'artifacts')]);assert(hash(readBounded(file,20*1024*1024))===a.sha256,'归档产物已变化，需重新交付',409)}
   const binding={task_id:task.id,run_id:run.id,task_version:task.version,...(run.scope_revision?{scope_revision:run.scope_revision}:{}),reviewer_id:task.reviewer_id,artifacts:artifacts.map(a=>({id:a.id,sha256:a.sha256})),review_files:run.review_files||[]};
   const {reviewer_id:_reviewer,...deliveryBinding}=binding;const digest=hash(JSON.stringify(deliveryBinding));
-  return {...binding,review_scope:reviewScope(task,run),title:task.title,revision:task.revision,review_digest:digest,cwd:run.cwd,run_directory:run.directory,
+  return {...binding,delivery_warnings,review_scope:reviewScope(task,run),title:task.title,revision:task.revision,review_digest:digest,cwd:run.cwd,run_directory:run.directory,
     artifacts:artifacts.map(a=>({id:a.id,label:a.label,sha256:a.sha256,archive_path:a.archive_path})),
     final_response:{task_id:task.id,run_id:run.id,review_digest:digest,verdict:'passed 或 changes_requested',findings:['实际发现的问题；没有则空数组'],limitations:['未验证的范围；没有则空数组']},
     instructions:task.reviewer_id==='grok-build'?'由独立 Grok Build 检查当前交付，以 final_response 返回 JSON；完成后 submit_grok_review 回传真实 session_id。若资源不足，先 get_review_candidates 再 export_review_order 改派。':'先 get_review_candidates 核对资源，再 export_review_order 生成可复制的审查单。审查者用独立审查 MCP 或执行单内的 review 命令接单、提交报告。'};
@@ -151,10 +147,11 @@ export function revokeReview(wb:Workbench,reviewId:string,input:unknown){
     assert(v.run_id===run.id&&task.current_run_id===run.id,'只能撤回当前执行的审查',409);
     assert(reviewableStates.includes(task.status),'已验收或已结束的历史记录不能改写',409);
     assert(task.revision===v.revision,'任务版本冲突，请重新打开',409);assert(!review.revoked_at,'这条审查已撤回',409);
-    const latest=wb.db.prepare("SELECT id FROM reviews WHERE run_id=? AND json_extract(data,'$.revoked_at') IS NULL ORDER BY json_extract(data,'$.created_at') DESC,rowid DESC LIMIT 1").get(run.id);
+    const latest=latestReview(wb,run.id);
     review.revoked_at=now();review.revoked_by='user';review.revocation_reason=v.reason;
     wb.put('reviews',review,{run_id:run.id});
     const assignment=review.review_id?wb.maybe('review_assignments',review.review_id):wb.all('review_assignments').find(a=>a.run_id===run.id&&a.result_id===review.id);if(assignment){assignment.status='revoked';wb.put('review_assignments',assignment,{run_id:run.id});}
+    if(review.historical){wb.audit('user','revoke_historical_review',review.id,{run_id:run.id,reason:v.reason});return review;}
     if(latest?.id===review.id||run.review_decision){run.review_decision=null;wb.put('runs',run,{task_id:task.id});invalidateCloseout(wb,run,'审查已撤回');}syncReviewCollaborationState(wb,task,run,{allowLegacyResult:latest?.id!==review.id});
     task.revision++;task.updated_at=now();wb.put('tasks',task,{project_id:task.project_id});
     wb.audit('user','revoke_review',review.id,{run_id:run.id,reason:v.reason});return review;

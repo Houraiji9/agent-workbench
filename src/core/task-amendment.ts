@@ -22,5 +22,5 @@ export function amendTask(wb:Workbench,input:unknown){const v=taskAmendmentInput
  const needsDelivery=['submitted','in_review','changes_requested','awaiting_closeout','closing','closeout_blocked','closeout_waiting_input','awaiting_confirmation'].includes(t.status);
  if(needsDelivery){t.status='changes_requested';t.review_stage='awaiting_delivery';}
  t.current_review_assignment_id=null;wb.put('runs',{...r,amendments,updated_at:now()},{task_id:t.id});wb.put('tasks',t,{project_id:t.project_id});wb.audit('conversation','amend_task',t.id,{run_id:r.id,amendment:change});
- return {task:t,run_id:r.id,amendment:change,changed:true,next:needsDelivery?'补充已保存在本任务；生成下一版执行后交付变更内容，旧成果和审查保留。':'本任务已更新；旧执行单保留，当前会话读取增量后继续。'};
+ return {task:t,run_id:r.id,amendment:change,changed:true,next:needsDelivery?'补充已保存在本任务；当前会话可直接修改并重新 submitted，旧成果和审查保留。':'本任务已更新；旧执行单保留，当前会话读取增量后继续。'};
 });}
