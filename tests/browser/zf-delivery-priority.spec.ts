@@ -34,7 +34,7 @@ test('主要安排直接可见，重点聊天规划保存重开后仍完整独�
   await expect(dialog.getByLabel('成果补充说明（可选）')).not.toBeVisible();
   await expect(dialog.getByLabel('此前填写的期望结果')).toHaveCount(0);
   await expect(dialog.getByLabel('需求重要程度')).toHaveValue('critical');
-  await expect(dialog.getByText('使用当前最佳能力，固定完整独立审查。')).toBeVisible();
+  await expect(dialog.getByText('建议优先高能力模型，完整独立审查。')).toBeVisible();
   await expect(dialog.getByLabel('成果与使用位置')).toHaveValue('project');
   await expect(dialog.locator('.request-delivery-summary')).toHaveText('源码、服务或接口 · 部署到远程环境（隔离远程环境）');
   await expect(dialog.locator('.request-delivery-summary')).not.toContainText('需要保留');

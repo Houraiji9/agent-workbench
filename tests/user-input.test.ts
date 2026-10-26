@@ -73,7 +73,9 @@ test('真实 stdio MCP 可查询用户回答；执行者只暴露本 Run 回报�
     const env=Object.fromEntries(Object.entries(process.env).filter((e):e is [string,string]=>typeof e[1]==='string'));
     Object.assign(env,{WORKBENCH_DATA_DIR:f.config.dataDir,WORKBENCH_PORT:String(f.config.port),WORKBENCH_RUN_ID:s.rid});
     await client.connect(new StdioClientTransport({command:process.execPath,args:['--import','tsx',path.join(ROOT,'src/mcp/index.ts')],cwd:ROOT,env,stderr:'pipe'}));
-    assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),['ack_run_context','complete_run_closeout','continue_run','dispatch_review','export_closeout_order','export_review_order','get_agent_job','get_closeout_context','get_deployment_context','get_review_candidates','get_review_context','get_run_context','get_run_feedback','read_run_context_file','register_delegation','report_delegation','report_deployment_evidence','report_review_handoff','report_run_activity','report_run_event','report_runtime_deployment','submit_grok_review','submit_run_result','wait_run_update']);
+    const names=(await client.listTools()).tools.map(t=>t.name);
+    for(const name of ['manage_requests','manage_tasks','manage_reviews','get_run_feedback','report_run_activity','recover_native_review'])assert(names.includes(name),name);
+    for(const name of ['submit_task_plan','dispatch_run','manage_settings','confirm_user_decision'])assert(!names.includes(name),name);
     const result=await client.callTool({name:'get_run_feedback',arguments:{run_id:s.rid}});assert(!result.isError);
     assert.equal(JSON.parse((result.content as any)[0].text).replies[0].message,'测试回答');
   }finally{await client.close();await app.close();}

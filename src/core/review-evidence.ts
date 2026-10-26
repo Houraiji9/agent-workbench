@@ -92,14 +92,13 @@ export function verifyGrokTrace(trace:GrokTrace,sessionId:string,context:ReturnT
   assert(summary.request_id&&terminal.params.update.prompt_id===summary.request_id,'Grok 会话仍在更新或完成记录不一致',409);
   const message=history.at(-1);
   assert(message?.type==='assistant'&&typeof message.content==='string','没有最终 Grok 回答');
-  assert(/^grok-/.test(message.model_id||'')&&message.model_id===summary.current_model_id,'无法核验独立 Grok 模型身份');
   const body=message.content.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/,'$1');
   let parsed:unknown;
   try{parsed=JSON.parse(body)}catch{throw new DomainError('Grok 最终回答没有结构化版本绑定，请提供 get_review_context 让 Grok 补审',409)}
   const conclusion=reviewConclusion.parse(parsed);
   assert(conclusion.task_id===context.task_id&&conclusion.run_id===context.run_id,'这份 Grok 审查属于其他任务或执行',409);
   assert(conclusion.review_digest===context.review_digest,'Grok 审查未绑定当前交付版本，请补审',409);
-  return {conclusion,model:message.model_id,request_id:summary.request_id,completed_at:new Date(decisionTime(terminal.timestamp)).toISOString(),session_id:sessionId};
+  return {conclusion,model:typeof message.model_id==='string'?message.model_id:null,selected_model:typeof summary.current_model_id==='string'?summary.current_model_id:null,request_id:summary.request_id,completed_at:new Date(decisionTime(terminal.timestamp)).toISOString(),session_id:sessionId};
 }
 
 export async function submitGrokReview(wb:Workbench,input:unknown,caller:ReviewCaller,reader:TraceReader){
@@ -128,7 +127,7 @@ export async function submitGrokReview(wb:Workbench,input:unknown,caller:ReviewC
     const review:Row={id:id('V'),...(assignment?{review_id:assignment.id}:{}),run_id:v.run_id,task_id:current.task_id,reviewer_id:'grok-build',verdict:conclusion.verdict,
       findings:conclusion.findings.join('\n'),limitations:conclusion.limitations,evidence:`由 Grok 官方会话导出核验：${v.session_id}；请求 ${verified.request_id}；${verified.model}；end_turn。`,
       artifact_hashes:current.artifacts.map(a=>a.sha256).sort(),created_at:now(),source:'grok_session_import',
-      evidence_level:'session_verified',independently_verified:true,verification_scope:'核验真实会话来源、正常完成、独立模型和交付绑定；审查内容的覆盖与限制见原结论，不等于用户验收。',
+      evidence_level:'session_verified',independently_verified:false,verification_scope:'核验真实会话来源、正常完成和交付绑定；模型仅记录客户端提供的信息，不核验后台型号；审查内容的覆盖与限制见原结论，不等于用户验收。',
       ...provenance,review_digest:current.review_digest,raw_conclusion:conclusion,recorded_by:actor};
     wb.put('reviews',review,{run_id:v.run_id});
     const task=wb.get('tasks',current.task_id);if(assignment){assignment.status='completed';assignment.result_id=review.id;wb.put('review_assignments',assignment,{run_id:v.run_id});}syncReviewCollaborationState(wb,task,wb.get('runs',v.run_id),{allowLegacyResult:true});task.revision++;task.updated_at=now();wb.put('tasks',task,{project_id:task.project_id});

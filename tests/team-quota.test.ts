@@ -6,11 +6,11 @@ const input=(version=0,n:number|null=38)=>({version,windows:[{label:'5 小时',k
 const raw=(at:string,providers:any[])=>({limits:{updatedAt:at,providers:providers.map(p=>({updatedAt:at,windows:[],status:'ok',...p}))}});
 const quota=(provider='antigravity',n=44)=>({provider,accountKey:'test-only-account',windows:[{kind:'session',label:'5 小时',remainingPercent:n}]});
 
-test('模型下线按工作台时区判断，Antigravity内Claude限轻量设计，独立Claude可做工程',()=>{
+test('目录退役日期按工作台时区显示，但型号建议不按退役日期或任务种类拒绝',()=>{
  const m={retire_at:'2026-11-02'},at=new Date('2026-11-01T17:00:00Z');assert(isModelRetired(m,'Asia/Shanghai',at));assert(!isModelRetired(m,'America/Los_Angeles',at));
- assert.throws(()=>validateModel('antigravity','GPT-OSS 120B',at,'Asia/Shanghai'),/已下线/);
+ assert.equal(validateModel('antigravity','GPT-OSS 120B',at,'Asia/Shanghai'),'GPT-OSS 120B');
  assert.equal(validateModel('antigravity','GPT-OSS 120B',at,'America/Los_Angeles'),'GPT-OSS 120B');
- assert.throws(()=>validateModel('antigravity','Claude Opus 5.5 Thinking',new Date(),'UTC','engineering'),/轻量前端/);
+ assert.equal(validateModel('antigravity','Claude Opus 5.5 Thinking',new Date(),'UTC','engineering'),'Claude Opus 5.5 Thinking');
  assert.equal(validateModel('antigravity','Claude Opus 5.5 Thinking',new Date(),'UTC','frontend_light'),'Claude Opus 5.5 Thinking');
  assert.equal(validateModel('claude','claude-opus-5-5',new Date(),'UTC','engineering'),'claude-opus-5-5');
 });
@@ -86,19 +86,20 @@ test('缓存编辑接口需要页面会话与 CSRF，保存后读接口和规划
   const s=(await app.inject({url:'/api/state',headers:{host,cookie}})).json();assert.equal(s.quota_windows.find((w:any)=>w.pool_id==='CACHE-claude').remaining_percent,38);
  }finally{await app.close()}
 });
-test('当前十一位成员都有带来源目录，Grok Bot仅自动、网页模式与型号分开，退役型号拒绝',()=>{
+test('当前十一位成员目录保留来源和模式分类，目录外或退役名称仍可作为建议',()=>{
  const {wb}=fixture();try{assert.equal(modelCatalog.length,11);for(const a of wb.dispatchContext().agents){const g=modelCatalog.find(x=>x.agent_id===a.id)!;assert(g&&g.models.length);assert(g.sources.every(s=>s.startsWith('https://')));assert.equal(new Set(g.models.map(m=>m.id)).size,g.models.length)}
-  assert.equal(validateModel('grok-bot','auto'),'auto');assert.throws(()=>validateModel('grok-bot','claude-opus-5-5'));assert(modelCatalog.find(x=>x.agent_id==='grok-search')!.models.every(m=>m.kind==='mode'));
-  assert.throws(()=>validateModel('antigravity','GPT-OSS 120B',new Date('2026-11-02')));assert.equal(wb.snapshot().model_catalog.length,11);
+  assert.equal(validateModel('grok-bot','auto'),'auto');assert.equal(validateModel('grok-bot','private-client-model'),'private-client-model');assert(modelCatalog.find(x=>x.agent_id==='grok-search')!.models.every(m=>m.kind==='mode'));
+  assert.equal(validateModel('antigravity','GPT-OSS 120B',new Date('2026-11-02')),'GPT-OSS 120B');assert.equal(wb.snapshot().model_catalog.length,11);
  }finally{wb.close()}
 });
-test('指定模型随计划和Run固化，实际回报独立；改派清除旧型号并保留旧包',()=>{
+test('模型建议允许目录外值和同Run修改，实际回报独立，旧包和改派历史保留',()=>{
  const {wb,root}=fixture();try{
-  const q=wb.request({project_id:'P-workbench',text:'测试：指定模型开发'}),plan={schema_version:1,plan_id:randomUUID(),request_id:q.id,expected_version:1,tasks:[{...taskInput(root),requested_model:'gpt-6.1-sol'}]};
-  assert.throws(()=>wb.submitPlan({...plan,tasks:[{...plan.tasks[0],requested_model:'wrong'}]}));assert.equal(wb.get('requests',q.id).status,'awaiting_planning');
-  const p=wb.submitPlan(plan),t=wb.get('tasks',p.task_ids[0]),r=wb.exportOrder(t.id,1),text=fs.readFileSync(r.path,'utf8');assert.match(text,/指定模型 \/ 模式: gpt-6.1-sol/);assert.equal(wb.get('runs',r.run_id).actual_model,null);
-  assert.throws(()=>wb.exportOrder(t.id,1,false,'deepseek'),/执行者已固定/);assert.throws(()=>wb.exportOrder(t.id,1,false,undefined,undefined,'gpt-6-luna'),/模型已固定/);assert.equal(wb.exportOrder(t.id,1).run_id,r.run_id);
-  wb.event(event(root,t.id,r.run_id,1,'started',{actual_model:'runtime-reported-model'}));assert.equal(wb.get('runs',r.run_id).requested_model,'gpt-6.1-sol');assert.equal(wb.get('runs',r.run_id).actual_model,'runtime-reported-model');
+  const q=wb.request({project_id:'P-workbench',text:'测试：可选模型建议'}),plan={schema_version:1,plan_id:randomUUID(),request_id:q.id,expected_version:1,tasks:[{...taskInput(root),requested_model:'private-client-model'}]};
+  assert.throws(()=>wb.submitPlan({...plan,tasks:[{...plan.tasks[0],requested_model:'invalid\u0000model'}]}));assert.equal(wb.get('requests',q.id).status,'awaiting_planning');
+  const p=wb.submitPlan(plan),t=wb.get('tasks',p.task_ids[0]),r=wb.exportOrder(t.id,1),text=fs.readFileSync(r.path,'utf8');assert.match(text,/建议模型 \/ 模式: private-client-model/);assert.equal(wb.get('runs',r.run_id).actual_model,null);
+  assert.throws(()=>wb.exportOrder(t.id,1,false,'deepseek'),/执行者已固定/);assert.equal(wb.exportOrder(t.id,1,false,undefined,undefined,'gpt-6-luna').run_id,r.run_id);assert.equal(wb.exportOrder(t.id,1).run_id,r.run_id);
+  assert.equal(wb.get('runs',r.run_id).model_advice_history[0].previous,'private-client-model');assert.equal(wb.get('runs',r.run_id).model_advice_history[0].model,'gpt-6-luna');
+  wb.event(event(root,t.id,r.run_id,1,'started',{actual_model:'runtime-reported-model'}));assert.equal(wb.get('runs',r.run_id).requested_model,'gpt-6-luna');assert.equal(wb.get('runs',r.run_id).actual_model,'runtime-reported-model');
   wb.event(event(root,t.id,r.run_id,2,'failed'));const current=wb.get('tasks',t.id);const retry=wb.exportOrder(t.id,1,true,'deepseek',current.revision);assert.equal(wb.get('runs',retry.run_id).requested_model,null);assert.equal(fs.readFileSync(r.path,'utf8'),text);
   const frozen=JSON.parse(fs.readFileSync(wb.get('runs',retry.run_id).directory+'/task.json','utf8'));assert.equal(frozen.agent_id,'deepseek');assert.equal(frozen.requested_model,null);
  }finally{wb.close()}

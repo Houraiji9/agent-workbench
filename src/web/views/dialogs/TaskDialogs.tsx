@@ -169,7 +169,7 @@ export function RetryDialog({ detail, onClose }: { detail: R; onClose(): void })
   const currentRun = detail.runs.find((r:R) => r.id === t.current_run_id);
   const [model, setModel] = useState(currentRun ? (currentRun.requested_model ?? '') : (t.requested_model ?? ''));
   const models = (s.data.model_catalog || []).find((g:R) => g.agent_id === agent)?.models.filter((m:R) => !isModelRetired(m,s.tz) && (agent !== 'antigravity' || !m.id.startsWith('Claude ') || t.work_kind === 'frontend_light')) || [];
-  const modelValue = models.some((m:R) => m.id === model) ? model : '';
+  const modelValue = model;
   const { error, saving, run } = useSubmit();
   const blocked = !!t.current_run_id && !['submitted', 'failed', 'cancelled'].includes(detail.runs.find((r: R) => r.id === t.current_run_id)?.status);
   return <Dialog title="换人或重新做一次" sub="会新开一次执行，之前的执行单、回执和成果都保留。" onClose={onClose} label="重新执行">
@@ -186,7 +186,7 @@ export function RetryDialog({ detail, onClose }: { detail: R; onClose(): void })
           <span><b>{a.name}</b><small>{a.scope}</small></span>
         </label>)}
       </fieldset>
-      {agent && <Field label="指定模型（可选）"><select value={modelValue} onChange={e=>setModel(e.target.value)}><option value="">由执行者选择</option>{models.map((m:R)=><option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>}
+      {agent && <Field label="模型建议（可留空）"><input list="retry-model-advice" maxLength={100} placeholder="由 Agent 决定" value={modelValue} onChange={e=>setModel(e.target.value)}/><datalist id="retry-model-advice">{models.map((m:R)=><option key={m.id} value={m.id}>{m.name}</option>)}</datalist></Field>}
       {blocked && <Notice tone="warn">当前执行还没结束。先取消这次执行，再重新打开这里派单。旧记录都会保留；如果对方仍在工作，也请在它的对话里告诉它停下。
         <span className="notice-actions"><button type="button" className="btn small" onClick={() => s.openDialog('cancel', { detail })}>先取消当前执行</button></span>
       </Notice>}

@@ -4,7 +4,7 @@
 
 ## 客户端调用与业务回执
 
-执行单固定本轮 `importance`、`model_selection`、`delivery_profile`。重点需求主执行、子代理与独审均遵守规划者已明确选择的最佳能力模型，资源不足或实际型号偏离时回报并重新规划，不静默换用默认型号。缺失真实模型身份时保留 unknown，不推测实际使用了指定型号。
+执行单保留本轮安排和交付要求的历史快照。模型与档位是可选建议，由各Agent按自身客户端规则与任务需要决定。无需自报或证明型号，缺失记为未知；型号差异不阻止接单、交付或审查回传。旧模型白名单与冻结型号要求不再生效。
 
 通用部署（远程服务、其他本机软件等）交付时在 submitted 的 data 填 `delivery_version`。审查通过或用户明确免审后，执行者调用 `get_deployment_context` 取得本 Run、目标档案指纹、版本、完整产物集合与审查绑定；实际部署后用 `report_deployment_evidence` 提交 `deployment_evidence/health_evidence/rollback_evidence`。CLI 对应 `agent.ts <Run> deployment-context` 与 `deployment-evidence <JSON文件>`。这类回执明确标注“执行者报告，服务端未验证实际部署”；不能冒充工作台已连接服务器。收尾与用户验收重新核对绑定。工作台便携安装继续使用 `report_runtime_deployment` 的清单、全部受管文件、版本和目录核验。
 
@@ -18,18 +18,18 @@ Harness 正常会话缓存按客户端机制保存；主动产物、报告、脚
 
 ## 子代理委派登记与回报
 
-主执行由用户启动；已经由用户启动的执行者可按本 Run 的授权直接安排独立审查和白名单子代理。只用 RUN.md 提供的固定 MCP 或 CLI 入口，不要求执行者查找所有客户端。`agent.ts <Run ID> start` 是当前会话接单回执，不是启动主执行程序；独立审查使用当前 Run 的 `review` 入口，由实际审查者按 RA 回传，执行者不能代写结论。
+主执行由用户启动；已经由用户启动的执行者可按本 Run 的授权直接安排独立审查和已授权子代理。只用 RUN.md 提供的固定 MCP 或 CLI 入口，不要求执行者查找所有客户端。`agent.ts <Run ID> start` 是当前会话接单回执，不是启动主执行程序；独立审查使用当前 Run 的 `review` 入口，由实际审查者按 RA 回传，执行者不能代写结论。
 
-执行者只能为当前正在运行的 Run 使用 `register_delegation` 登记委派。提交前确认用户允许子代理、模型在本 Run 的子模型名单内，并遵守并发、层数、次数、上下文预算、必读文件、授权路径和输出目录限制。每项委派需有独立请求编号、具体目标和有限材料范围。
+执行者只能为当前正在运行的 Run 使用 `register_delegation` 登记委派。提交前确认用户允许子代理，并遵守并发、层数、次数、上下文预算、必读文件、授权路径和输出目录限制。每项委派需有独立请求编号、具体目标和有限材料范围。
 
-当前 Run 的便捷命令为 `scripts/agent.ts <Run ID> register-delegation <JSON文件>` 与 `scripts/agent.ts <Run ID> report-delegation <JSON文件>`，沿用 RUN.md 指定的 Node/tsx 和 WORKBENCH_ROOT。帮助用 `--help`，无需读取执行凭据。JSON 不需填写 `run_id`；CLI 固定使用命令行 Run，不允许输入改换身份。CLI 只负责文件读取、固定 Run 与登记请求编号，模型、范围、预算、状态及额外字段由现有后端 schema 和权限规则校验。
+当前 Run 的便捷命令为 `scripts/agent.ts <Run ID> register-delegation <JSON文件>` 与 `scripts/agent.ts <Run ID> report-delegation <JSON文件>`，沿用 RUN.md 指定的 Node/tsx 和 WORKBENCH_ROOT。帮助用 `--help`，无需读取执行凭据。JSON 不需填写 `run_id`；CLI 固定使用命令行 Run，不允许输入改换身份。CLI 只负责文件读取、固定 Run 与登记请求编号，范围、预算、状态及额外字段由现有后端 schema 和权限规则校验。
 
-- 登记 JSON 必填 `model`、`goal`、`required_files`、`allowed_paths`、`output_dir`、`context_bytes`；可选 `parent_id`、UUID 格式的 `request_id`。未传请求编号时，CLI 按当前 Run 和内容生成稳定 UUID；相同内容重试仍指向同一委派，JSON 排版和字段顺序不影响编号。创建内容相同的新委派时显式给新 UUID；已指定的编号及内容冲突仍由后端拒绝。
+- 登记 JSON 可选 `model`；必填 `goal`、`required_files`、`allowed_paths`、`output_dir`、`context_bytes`；可选 `parent_id`、UUID 格式的 `request_id`。未传请求编号时，CLI 按当前 Run 和内容生成稳定 UUID；相同内容重试仍指向同一委派，JSON 排版和字段顺序不影响编号。创建内容相同的新委派时显式给新 UUID；已指定的编号及内容冲突仍由后端拒绝。
 - 回报 JSON 必填 `delegation_id`、`status`（`running`、`completed`、`failed`、`cancelled`）；可选 `session_id`、`actual_model`、`summary`、`artifacts`。此接口没有 `request_id`，重复相同回报沿用后端内容摘要幂等。无法确认的会话和实际模型省略，不借用主会话编号，也不将请求模型当作实际模型。
 
 登记只会创建一条授权与审计记录，不会启动子代理或客户端。客户端内部的原生子代理只能接收指令约束；工作台目前不能强制拦截其模型、权限或执行范围，也不能保证完整观测。不要声称工作台已自动启动或强制控制这些子代理。
 
-实际执行后调用 `report_delegation`，据实报告状态、真实会话编号、实际模型、简要结果和实际产物路径。不要虚构会话、模型、产物或完成状态。记录会标明来源为执行者报告，不能当成独立核验或审查结论；产物仍受本 Run 的允许路径检查。
+实际执行后调用 `report_delegation`，据实报告状态、可取得的会话编号、简要结果；型号可省略，和实际产物路径。不要虚构会话、模型、产物或完成状态。记录会标明来源为执行者报告，不能当成独立核验或审查结论；产物仍受本 Run 的允许路径检查。
 
 Token 预算仅为软提醒，不保证对客户端内部消耗硬性封顶。项目用量只归入明确关联的项目/任务/Run；没有可靠关联或来源指标缺失时保留未知与缺失，不按零推算。
 
@@ -115,7 +115,7 @@ RESULT 内容必须覆盖：完成内容、变更文件、测试命令及实际�
 
 人工拒绝保存Task.acceptance_feedback：id、run_id、note、artifact_hashes、created_at、verdict=rejected、source=user_entered，可选followup_task_id。没有新数据库表，沿用现有Task JSON与审计事务。旧Run、Review与归档保持。
 
-- acceptance_rejected：等待复制返工。页面生成新的Run，使用上次实际执行者及指定模型；新Run.retry_context.user_feedback和REWORK.json固化用户意见，复制后仍awaiting_dispatch。
+- acceptance_rejected：等待复制返工。页面生成新的Run，沿用上次执行者与模型建议；型号仍由 Agent 自主选择。新Run.retry_context.user_feedback和REWORK.json固化用户意见，复制后仍awaiting_dispatch。
 - rework_linked：由另一真实任务继续处理，Task.rework_task_id指向它，旧任务验收未通过。禁止导出和取消旧项，历史保留。不得把这种状态算作验收通过。
 - 关联后续任务前沿依赖和替代关系防止循环。依赖被替代任务时，沿替代链等待最终任务accepted才放行。
 
@@ -126,7 +126,7 @@ RESULT 内容必须覆盖：完成内容、变更文件、测试命令及实际�
 
 1. 执行者先通过 submit_run_result 归档交付。取得 get_review_context({run_id}) 的 Task/Run、review_digest、归档文件清单和 final_response。上下文返回的具体归档文件只用于本次审查，不授予读取同目录其他账本/密钥的权限。
 2. 由指定的独立 Grok Build 审查当前成果，以 final_response 的结构返回 JSON（verdict 仅 passed/changes_requested，findings 与 limitations 为字符串数组）。已有会话可以补审；产物或执行变了不能套用旧结果。
-3. 调用 submit_grok_review({run_id,session_id})。不传 verdict、路径或报告正文。服务端通过 grok trace --local 导出该会话，只读取 summary/chat_history/updates，不联网上传；无正常 end_turn、模型不符、任务/版本不符或结束期间状态变化时拒绝。
+3. 调用 submit_grok_review({run_id,session_id})。不传 verdict、路径或报告正文。服务端通过 grok trace --local 导出该会话，只读取 summary/chat_history/updates，不联网上传；无正常 end_turn、任务/版本不符或结束期间状态变化时拒绝。
 4. 后台保存原始结论、会话/请求/模型、版本绑定与调用来源。passed 进入“待执行者收尾”，changes_requested 进入“需要修改”，不生成用户验收。重复回传幂等。get_run_feedback 包含 review_status 可读回。
 
 本机需安装支持 trace 的 Grok CLI 及 tar。默认从 PATH 找 grok，可在本地 config/local.json 的 review.grokExecutable 设置绝对路径，或通过服务环境 WORKBENCH_GROK_EXECUTABLE 指定。没有该 CLI 的云端仍用手工登记；不能把未知来源冒充机器核验。此核验确认本机 Grok 会话来源和版本归属，不是对本机管理员篡改 Grok 存储的密码学防护，也不保证审查没有漏项。
@@ -162,7 +162,7 @@ RESULT 内容必须覆盖：完成内容、变更文件、测试命令及实际�
 
 用户可在页面任务详情的“执行安排”里修改执行者、主模型和子代理（`POST /api/tasks/:id/arrangement`，仅页面会话与 CSRF；Agent 凭据不能调用）。按阶段生效：未生成执行单直接采用；已生成但未接单（`awaiting_dispatch`/`dispatched` 且未 started）时旧 Run 标为 cancelled 并留档，按新安排生成新 Run，旧 Run 的回执被拒绝；执行中、审查中或待收尾时保存为 `task.pending_arrangement`，下一次生成 Run（返修、重试、停止后重新开始）时采用并清除；失败、取消或需要修改时直接生成下一版。
 
-每个 Run 的 `execution_contract` 在创建时冻结，历史包不改写。对当前 Task/Run 的范围修订作为追加变更记录保存，不覆盖旧合同。修订明确具体变更与原因，并只授权本次所需路径；任何实际内容变化均须重新验证受影响交付，并取得覆盖新内容的审查证据。旧 Review 保留为历史，不能把旧 passed 显示为新内容通过。纯 reviewer/model 调整保留当前 Task/Run，不生成假性范围修订。执行者看到执行单写明“用户选择，覆盖规划建议”时，按该模型执行，不得自行改回、升档或降档。
+每个 Run 的 `execution_contract` 在创建时冻结，历史包不改写。对当前 Task/Run 的范围修订作为追加变更记录保存，不覆盖旧合同。修订明确具体变更与原因，并只授权本次所需路径；任何实际内容变化均须重新验证受影响交付，并取得覆盖新内容的审查证据。旧 Review 保留为历史，不能把旧 passed 显示为新内容通过。纯 reviewer/model 调整保留当前 Task/Run，不生成假性范围修订。模型与档位是可选建议，由各Agent按自身客户端规则与任务需要决定。无需自报或证明型号，缺失记为未知；型号差异不阻止接单、交付或审查回传。旧模型白名单与冻结型号要求不再生效。
 
 ## 审查完成后的登记恢复
 

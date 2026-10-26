@@ -679,9 +679,9 @@ test('R3 closeout identity：收尾本身已有会话或模型冲突时保留两
       fake.launches[0].onLine(JSON.stringify({type: 'system', subtype: 'init', session_id: 'r3-closeout-session', model: 'synthetic-closeout'}));
       finishCloseout(f.wb, t.tid); fake.releases[0]();
       const ended = await terminal(f, job.job_id), current = f.wb.get('runs', t.rid);
-      assert.equal(ended.status, 'failed'); assert.equal(ended.session_mismatch, mismatch === 'session'); assert.equal(ended.model_mismatch, mismatch === 'model');
+      assert.equal(ended.status, mismatch === 'session'?'failed':'completed'); assert.equal(ended.session_mismatch, mismatch === 'session'); assert.equal(ended.model_mismatch, false);
       assert.equal(current.session_id, 'r3-execution-session'); assert.equal(current.actual_model, 'synthetic-execution');
-      assert.equal(current.closeout.session_id, closeoutIdentity.session_id); assert.equal(current.closeout.actual_model, closeoutIdentity.actual_model);
+      assert.equal(current.closeout.session_id, closeoutIdentity.session_id); assert.equal(current.closeout.actual_model, mismatch === 'session'?closeoutIdentity.actual_model:'synthetic-closeout');
       assert.equal(current.closeout.status, 'completed'); assert.equal(f.wb.get('tasks', t.tid).status, 'awaiting_confirmation');
     } finally {await o.close(); f.wb.close();}
   }
@@ -832,7 +832,8 @@ test('R4 F2：进程未知早退尚未标冲突时，恢复仍核对原生输出
       assert.equal(interrupted.status, 'interrupted'); assert.equal(!!interrupted.session_mismatch, false); assert.equal(!!interrupted.model_mismatch, false);
       o.confirmProcessEnded(t.tid, {...controlInput(f, t.tid, job.job_id), confirmed: true});
       await r4Ticks(f);
-      assert.equal(fake.launches.length, 1); assert.equal(f.wb.all('review_assignments').length, 0); assert.equal(f.wb.all('agent_jobs').length, 1);
+      if(conflict==='session'){assert.equal(fake.launches.length, 1); assert.equal(f.wb.all('review_assignments').length, 0); assert.equal(f.wb.all('agent_jobs').length, 1);}
+      else {await until(()=>fake.launches.length===2,'model differences must not block independent review');assert.equal(f.wb.all('review_assignments').length,1);}
       assert.deepEqual(f.wb.get('runs', t.rid), submitted); assert.equal(f.wb.get('tasks', t.tid).status, 'submitted');
       const recovered = f.wb.get('agent_jobs', job.job_id);
       assert.equal(recovered.status, 'interrupted'); assert.equal(recovered.process_end_evidence, 'user_attested'); assert.equal(recovered.session_id, interrupted.session_id); assert.equal(recovered.actual_model, interrupted.actual_model);

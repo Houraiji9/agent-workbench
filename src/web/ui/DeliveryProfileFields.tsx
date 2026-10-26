@@ -99,7 +99,7 @@ export function ImportanceField({ value, onChange, disabled = false }: {
   disabled?: boolean;
 }) {
   const hint = value === 'critical'
-    ? '使用当前最佳能力，固定完整独立审查。'
+    ? '建议优先高能力模型，完整独立审查。'
     : '优先使用够用的经济模型。';
   return <Field label="需求重要程度" hint={hint}>
     <select disabled={disabled} value={value} onChange={e => onChange(e.target.value as 'normal' | 'critical')}>

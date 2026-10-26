@@ -17,14 +17,13 @@ export function recoverNativeReview(wb:Workbench,input:unknown){
  assert(task.current_run_id===run.id&&!['accepted','cancelled'].includes(task.status),'只能补登记当前未结束的执行',409);
  assert(['failed','interrupted'].includes(job.status)&&!job.cancel_requested_at&&job.process_may_be_running===false&&job.process_end_evidence==='owned_child_exit','原调用尚未确认正常结束，不能从文件恢复',409);
  if(job.process_pid){try{process.kill(job.process_pid,0);assert(false,'原客户端进程仍存在，不能恢复',409);}catch(error){if((error as NodeJS.ErrnoException).code!=='ESRCH')throw error;}}
- assert(!job.session_mismatch&&!job.model_mismatch&&!job.output_failed,'原调用存在身份或模型冲突，不能自动恢复',409);
+ assert(!job.session_mismatch&&!job.output_failed,'原调用存在会话冲突或失败输出，不能自动恢复',409);
  // In 0.4.6 a JSON.parse exception happens only inside the exitCode===0 terminal
  // branch, before exit_code is saved. Preserve null; do not invent an exit code.
  const legacyParseFailure=job.exit_code==null&&job.route?.client==='cursor'&&/Unexpected token|Unexpected non-whitespace|JSON at position|JSON\.parse/.test(job.reason||'');
  assert(job.exit_code===0||legacyParseFailure,'没有成功退出的证据，不能自动恢复',409);
  const a=reviewAssignmentContext(wb,job.review_id).assignment;
  assert(!a.session_id||a.session_id===job.session_id,'审查单与原调用会话不一致',409);
- assert(!a.actual_model||!job.actual_model||a.actual_model===job.actual_model,'审查单与原调用模型不一致',409);
  const base=task.context_contract?.output_dir||path.join(run.cwd,'.agent-workbench-output',task.id,run.id);
  const expected=safePath(path.join(base,'calls',job.id,'stdout.jsonl'),task.allowed_paths);
  assert(job.files?.stdout&&path.resolve(job.files.stdout)===path.resolve(expected),'原生输出路径与正式调用不一致',409);
@@ -33,8 +32,6 @@ export function recoverNativeReview(wb:Workbench,input:unknown){
  let finalText:string|undefined,terminalCount=0,sessionId:string|undefined;
  for(const line of bytes.toString('utf8').split(/\r?\n/).filter(Boolean)){
   const event=parser.push(line);if(event.sessionId){assert(!sessionId||sessionId===event.sessionId,'原生输出包含多个会话',409);sessionId=event.sessionId;}
-  if(event.model&&event.modelFormat==='identifier')assert(event.model===(job.actual_model||job.route.model),'原生输出模型与正式调用不一致',409);
-  if(event.model&&event.modelFormat==='display_name'&&job.actual_model_display)assert(event.model===job.actual_model_display,'原生模型显示与正式调用不一致',409);
   assert(event.success!==false,'原生客户端返回失败，不能自动恢复',409);
   if(event.terminal){terminalCount++;finalText=event.finalText;}
  }

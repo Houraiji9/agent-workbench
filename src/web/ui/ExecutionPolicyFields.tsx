@@ -1,10 +1,10 @@
-import React from 'react';
+import React, {useId, useEffect, useState} from 'react';
 import type { R } from '../lib/flow.js';
-import { Field, Notice } from './kit.js';
+import { Field } from './kit.js';
 
 type ModelOption = { id: string; name?: string };
 
-export function ExecutionPolicyFields({ value, onChange, models = [], disabled = false, emptyLabel = '按规划建议' }: {
+export function ExecutionPolicyFields({ value, onChange, models = [], disabled = false, emptyLabel = '由 Agent 决定' }: {
   value: R;
   onChange(value: R): void;
   models?: ModelOption[];
@@ -15,7 +15,7 @@ export function ExecutionPolicyFields({ value, onChange, models = [], disabled =
     main_model: value.main_model ?? null,
     allow_subagents: value.allow_subagents ?? false,
     child_models: Array.isArray(value.child_models) ? value.child_models as string[] : [],
-    autonomy: value.autonomy ?? 'fixed',
+    autonomy: value.autonomy ?? 'agent_decides',
     max_concurrency: value.max_concurrency ?? 2,
     max_depth: value.max_depth ?? 1,
     max_calls: value.max_calls ?? 6,
@@ -24,13 +24,14 @@ export function ExecutionPolicyFields({ value, onChange, models = [], disabled =
     note: value.note ?? '',
   };
   const update = (changes: R) => onChange({ ...value, ...changes });
+  const modelListId=useId(), childKey=JSON.stringify(policy.child_models);
+  const [children,setChildren]=useState(policy.child_models.join(', '));
+  useEffect(()=>setChildren(policy.child_models.join(', ')),[childKey]);
 
   return <fieldset disabled={disabled} className="form" aria-label="执行权限与模型">
-    <Field label="主模型">
-      <select value={policy.main_model || ''} onChange={e => update({ main_model: e.target.value || null })}>
-        <option value="">{emptyLabel}</option>
-        {models.map(model => <option key={model.id} value={model.id}>{model.name || model.id}</option>)}
-      </select>
+    <Field label="主模型建议（可留空）">
+      <input list={modelListId} maxLength={100} placeholder={emptyLabel} value={policy.main_model || ''} onChange={e => update({ main_model: e.target.value || null })} />
+      <datalist id={modelListId}>{models.map(model => <option key={model.id} value={model.id}>{model.name || model.id}</option>)}</datalist>
     </Field>
 
     <label className="check">
@@ -38,23 +39,14 @@ export function ExecutionPolicyFields({ value, onChange, models = [], disabled =
       允许使用子代理
     </label>
 
-    <Field label="允许使用的子模型">
-      {models.length ? <select multiple size={Math.min(Math.max(models.length, 3), 8)} value={policy.child_models}
-        onChange={e => update({ child_models: Array.from(e.currentTarget.selectedOptions, option => option.value) })}>
-        {models.map(model => <option key={model.id} value={model.id}>{model.name || model.id}</option>)}
-      </select> : <Notice>未取得可选模型</Notice>}
+    <Field label="子模型建议（可留空，逗号分隔）">
+      <input value={children} placeholder="由 Agent 决定" onChange={e=>setChildren(e.target.value)} onBlur={()=>update({child_models:[...new Set(children.split(/[,，\n]/).map(s=>s.trim()).filter(Boolean))]})} />
     </Field>
 
-    <p className="muted small">客户端内部子代理仅能下发要求，工作台目前不能强制拦截；Token是软提醒。</p>
+    <p className="muted small">模型由 Agent 自主选择；这里的建议不限制执行，也不要求披露实际型号。</p>
 
     <details className="fold">
       <summary>高级设置</summary>
-      <Field label="自主模式">
-        <select value={policy.autonomy} onChange={e => update({ autonomy: e.target.value })}>
-          <option value="fixed">固定设置</option>
-          <option value="within_allowlist">允许名单内自主选择</option>
-        </select>
-      </Field>
       <Field label="最大并发（1–4）">
         <input type="number" min={1} max={4} step={1} value={policy.max_concurrency}
           onChange={e => update({ max_concurrency: Number(e.target.value) })} />

@@ -48,7 +48,8 @@ test('成员数据校验、模型去重、Grok职责和旧合并入口约束保�
   const g=wb.get('agents','grok-build');assert.throws(()=>saveAgent(wb,g.id,{...agent(),version:g.version}),/独立审查/);
   for(const aid of ['antigravity-flash','cursor-claude']){const archived=wb.get('agents',aid);assert(archived.archived);assert(!archived.managed_archived);assert.throws(()=>archiveAgent(wb,archived.id,{version:archived.version},true),/旧入口/);assert.throws(()=>wb.eligible(aid),/已移出/)}
   const a=saveAgent(wb,null,agent());assert.throws(()=>saveAgent(wb,null,agent()),/已有这个名称/);
-  const q=wb.request({project_id:'P-workbench',text:'测试未登记型号'});assert.throws(()=>wb.submitPlan({schema_version:1,plan_id:crypto.randomUUID(),request_id:q.id,expected_version:1,tasks:[{...taskInput(wb.config.root),agent_id:a.id,requested_model:'missing-model'}]}),/模型列表/);
+  const q=wb.request({project_id:'P-workbench',text:'测试未登记型号'});const p=wb.submitPlan({schema_version:1,plan_id:crypto.randomUUID(),request_id:q.id,expected_version:1,tasks:[{...taskInput(wb.config.root),agent_id:a.id,requested_model:'missing-model'}]});
+  assert.equal(wb.get('tasks',p.task_ids[0]).requested_model,'missing-model');
  }finally{wb.close()}
 });
 

@@ -8,14 +8,14 @@ const runStatusText:R={awaiting_dispatch:'待交给执行者',dispatched:'已转
 
 function Summary({s,agent,model,policy}:{s:R;agent:string;model?:string|null;policy?:R}){
   const children=policy?.allow_subagents?(policy.child_models||[]).join('、')||'未指定':'不使用';
-  return <dl className="arrangement-facts"><div><dt>执行者</dt><dd>{s.name(agent)}</dd></div><div><dt>主模型</dt><dd>{model||'未指定'}</dd></div><div><dt>子代理</dt><dd>{children}</dd></div></dl>;
+  return <dl className="arrangement-facts"><div><dt>执行者</dt><dd>{s.name(agent)}</dd></div><div><dt>模型建议</dt><dd>{model||'由 Agent 决定'}</dd></div><div><dt>子代理</dt><dd>{children}</dd></div></dl>;
 }
 
 export function TaskExecutionPolicy({task,run,runs=[],jobs=[]}:{task:R;run?:R|null;runs?:R[];jobs?:R[]}){
   const s=useStore(),contract=run?.execution_contract,phase=arrangementPhase(task,run,jobs),pending=task.pending_arrangement;
   const currentAgent=run?.agent_id||task.agent_id,currentModel=run?run.requested_model:task.requested_model;
   const [editing,setEditing]=useState(false),[agent,setAgent]=useState<string>(pending?.agent_id||currentAgent);
-  const [value,setValue]=useState<R>({...(pending?.execution_policy||contract?.execution_policy||task.execution_policy||{}),main_model:pending?.requested_model??currentModel??null});
+  const [value,setValue]=useState<R>({...(pending?.execution_policy||contract?.execution_policy||task.execution_policy||{}),main_model:pending?pending.requested_model:currentModel??null});
   const [error,setError]=useState(''),[savingControl,setSavingControl]=useState<boolean|null>(null);
   const saveControl=async(automatic:boolean)=>{setSavingControl(automatic);try{await s.act(()=>api('/tasks/'+task.id+'/main-execution-control',{expected_revision:task.revision,main_execution_control:automatic?'automatic':'user'}),'启动方式已保存')}finally{setSavingControl(null)}};
   const models=s.data.model_catalog.find((c:R)=>c.agent_id===agent)?.models||[];
@@ -50,7 +50,7 @@ export function TaskExecutionPolicy({task,run,runs=[],jobs=[]}:{task:R;run?:R|nu
     {phase==='closed'?<p className="muted small">{arrangementEffect.closed}</p>:!editing?<div className="tool-row"><button className="btn small" onClick={()=>setEditing(true)}>{pending?'重新调整':'修改执行安排'}</button></div>:<section aria-label="修改执行安排" className="arrangement-block edit">
       <Notice tone={phase==='replace_unstarted'||phase==='next_version'?'warn':'info'}>{arrangementEffect[phase]}</Notice>
       <Field label="执行负责人"><select value={agent} onChange={e=>{const next=e.target.value;setAgent(next);setValue({...value,main_model:next===currentAgent?currentModel??null:null,child_models:[]})}}>{agents.map((a:R)=><option key={a.id} value={a.id}>{a.name}</option>)}</select></Field>
-      <ExecutionPolicyFields value={value} onChange={setValue} models={models} emptyLabel={agent===currentAgent&&currentModel?`沿用当前（${currentModel}）`:'请选择主模型'}/>
+      <ExecutionPolicyFields value={value} onChange={setValue} models={models}/>
       {error&&<Notice tone="error">{error}</Notice>}
       <div className="tool-row"><button className="btn small primary" disabled={s.busy} onClick={submit}>{arrangementSave[phase]}</button><button className="btn small ghost" onClick={()=>setEditing(false)}>取消</button></div>
       <p className="muted small">你的选择优先于规划建议；审查者、任务范围和验收权限不随之改变。</p>

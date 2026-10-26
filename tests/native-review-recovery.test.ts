@@ -22,7 +22,7 @@ test('legacy parse error with recorded owned exit preserves unknown exit code wh
 });
 test('native recovery refuses uncertain/alive processes, mismatches, external paths and caller-authored reports',()=>{
  const {f,t,job}=prepared();try{
- for(const patch of [{process_may_be_running:true},{process_pid:process.pid},{model_mismatch:true},{session_mismatch:true},{exit_code:2},{exit_code:null,reason:'permission denied'},{files:{stdout:path.join(f.root,'other.json')}}]){f.wb.put('agent_jobs',{...job,...patch},{run_id:t.rid});assert.throws(()=>recoverNativeReview(f.wb,{run_id:t.rid,job_id:job.id}));assert.equal(f.wb.all('reviews').length,0);}
+ for(const patch of [{process_may_be_running:true},{process_pid:process.pid},{session_mismatch:true},{exit_code:2},{exit_code:null,reason:'permission denied'},{files:{stdout:path.join(f.root,'other.json')}}]){f.wb.put('agent_jobs',{...job,...patch},{run_id:t.rid});assert.throws(()=>recoverNativeReview(f.wb,{run_id:t.rid,job_id:job.id}));assert.equal(f.wb.all('reviews').length,0);}
  f.wb.put('agent_jobs',job,{run_id:t.rid});assert.throws(()=>recoverNativeReview(f.wb,{run_id:t.rid,job_id:job.id,verdict:'passed'}));
  }finally{f.wb.close();}
 });
@@ -31,5 +31,14 @@ test('native recovery refuses ambiguous terminal, tool-only output, foreign dige
  const invalid=[JSON.stringify(wire)+'\n'+JSON.stringify(wire),JSON.stringify({type:'tool_result',content:JSON.stringify(payload)}),JSON.stringify({...wire,session_id:'foreign'}),JSON.stringify({...wire,result:JSON.stringify({...payload,review_digest:'0'.repeat(64)})}),JSON.stringify({...wire,is_error:true})];
  for(const text of invalid){fs.writeFileSync(job.files.stdout,text);assert.throws(()=>recoverNativeReview(f.wb,{run_id:t.rid,job_id:job.id}));assert.equal(f.wb.all('reviews').length,0);}
  fs.writeFileSync(job.files.stdout,JSON.stringify(wire));f.wb.put('review_assignments',{...f.wb.get('review_assignments',a.review_id),status:'cancelled'},{run_id:t.rid});assert.throws(()=>recoverNativeReview(f.wb,{run_id:t.rid,job_id:job.id}));
+ }finally{f.wb.close();}
+});
+
+test('old model-only mismatch recovers original changes_requested without a new invocation',()=>{
+ const {f,t,a,job,wire,payload}=prepared();try{
+ f.wb.put('agent_jobs',{...job,model_mismatch:true,actual_model:'grok-4.7-build',route:{...job.route,model:'grok-4.7'},reason:'old model mismatch'},{run_id:t.rid});
+ const assignment=f.wb.get('review_assignments',a.review_id);assignment.actual_model='previous-display-name';f.wb.put('review_assignments',assignment,{run_id:t.rid});
+ const findings=['first actual issue','second actual issue','third actual issue'];fs.writeFileSync(job.files.stdout,JSON.stringify({...wire,model:'grok-new-label',result:JSON.stringify({...payload,verdict:'changes_requested',findings})}));
+ const r=recoverNativeReview(f.wb,{run_id:t.rid,job_id:job.id});assert.equal(r.review.verdict,'changes_requested');assert.equal(r.review.findings,findings.join('\n'));assert.equal(f.wb.all('agent_jobs').length,1);assert.equal(f.wb.get('agent_jobs',job.id).reason,'old model mismatch');assert.equal(isRecoveredReviewJob(f.wb,f.wb.get('agent_jobs',job.id)),true);
  }finally{f.wb.close();}
 });

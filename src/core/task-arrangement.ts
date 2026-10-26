@@ -33,7 +33,7 @@ function checkCandidate(wb:Workbench,t:Row,run:Row|null,agentId:string,policy:Ro
   assert(!a.archived&&a.allowed_kinds.includes(t.work_kind)&&agentId!==t.reviewer_id,'执行者不符合职责或独立审查要求');
   wb.eligible(agentId);
   const current=run?.agent_id===agentId?run.requested_model:agentId===t.agent_id?t.requested_model:null;
-  const catalog=currentModels(wb),model=validateModel(agentId,policy.main_model??current,new Date(),wb.config.timezone,t.work_kind,catalog);
+  const catalog=currentModels(wb),model=validateModel(agentId,policy.main_model,new Date(),wb.config.timezone,t.work_kind,catalog);
   for(const child of policy.child_models)validateModel(agentId,child,new Date(),wb.config.timezone,t.work_kind,catalog);
   // Same inputs exportOrder freezes: the Task's selection with the previous Run's review scope.
   const base=run?.execution_contract?{...t,review_policy:run.execution_contract.review_policy}:t;

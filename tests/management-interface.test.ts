@@ -37,12 +37,15 @@ test('真实 stdio 主会话发现管理工具并直接保存；独立执行和�
     for(const action of ['record','import_result'])assert((await changeCall('manage_reviews',{action,data:{...report,verdict:'passed'}})).isError);
     assert((await changeCall('import_grok_review_for_user',{run_id:s.rid,session_id:'fake'})).isError);
     assert((await changeCall('manage_tasks',{action:'accept',task_id:s.tid,run_id:s.rid,revision:before.revision})).isError);
-    const proposal=await changeCall('manage_reviews',{action:'assign',data:{run_id:s.rid,reviewer_id:'zcode',expected_revision:before.revision,reason:'准备改派，用户尚未确认'}});
-    assert(!proposal.isError,JSON.stringify(proposal));assert.equal(JSON.parse((proposal.content as any)[0].text).status,'awaiting_user_confirmation');
-    assert.equal(JSON.stringify(wb.get('reviews',review.id)),original);assert.deepEqual(wb.get('tasks',s.tid),before);
+    const proposal=await changeCall('manage_reviews',{action:'assign',data:{run_id:s.rid,reviewer_id:'zcode',expected_revision:before.revision,reason:'在当前会话安排独立复审'}});
+    assert(!proposal.isError,JSON.stringify(proposal));assert.equal(JSON.parse((proposal.content as any)[0].text).status,'completed');
+    assert.equal(JSON.stringify(wb.get('reviews',review.id)),original);assert(wb.get('tasks',s.tid).revision>before.revision);
+    assert(wb.all('review_assignments').some(a=>a.run_id===s.rid&&a.reviewer_id==='zcode'));
     for(const extra of [{WORKBENCH_RUN_ID:s.rid},{WORKBENCH_ROLE:'planner'}]){
-      const client=await connect(extra),tools=(await client.listTools()).tools;assert(!tools.some(t=>t.name==='manage_requests'));
-      const denied=await client.callTool({name:'manage_requests',arguments:body});assert(denied.isError);
+      const client=await connect(extra),tools=(await client.listTools()).tools;
+      const scoped=Boolean(extra.WORKBENCH_RUN_ID);assert.equal(tools.some(t=>t.name==='manage_requests'),scoped);
+      const response=await client.callTool({name:'manage_requests',arguments:{...body,request_id:crypto.randomUUID()}});assert.equal(Boolean(response.isError),!scoped);
+      if(scoped){const saved=JSON.parse((response.content as any)[0].text).result;assert.equal(wb.get('requests',saved.id).project_id,'P-workbench');}
     }
     for(const extra of [{WORKBENCH_ROLE:'admin'},{WORKBENCH_ROLE:'manager',WORKBENCH_RUN_ID:s.rid},{WORKBENCH_RUN_ID:s.rid,WORKBENCH_REVIEW_ID:'RA-'+crypto.randomUUID()}])await assert.rejects(connect(extra));
     // Execute the documented CLI from an unrelated working directory; no npm/PATH dependency.

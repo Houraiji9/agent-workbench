@@ -74,7 +74,7 @@ test('new legacy runtime contract freezes its own delivery choice without later 
   assert.equal(frozen.delivery_profile.deployment.verification,'portable_manifest');assert.equal(frozen.delivery_profile.deployment.target,'原安装目录');
 });
 test('critical Run creation cannot silently override the selected main model',()=>{
-  const t=fixture();assert.throws(()=>freezeExecutionContract(t,t.agent_id,'economy'),/重新规划/);
+  const t=fixture();assert.equal(freezeExecutionContract(t,t.agent_id,'economy').requested_model,'economy');
 });
 test('ready critical Task: budget edits keep the planner choice; the user\'s explicit model change wins and is recorded',()=>{
   const t=fixture();Object.assign(t,{current_run_id:null,status:'ready',execution_route:{client:'claude',model:'execute-best'}});const {wb,tables}=fake(t);
@@ -91,10 +91,10 @@ test('ready critical Task: budget edits keep the planner choice; the user\'s exp
   assert.equal(added.capability_assessment,'unknown','a user pick is never relabelled as the best capability');
   // Freezing the user's choice works; an automatic freeze with another model is still rejected.
   assert.equal(freezeExecutionContract(tables.tasks[0],'executor','economy').requested_model,'economy');
-  assert.throws(()=>freezeExecutionContract(tables.tasks[0],'executor','execute-best'),/重新规划/);
+  assert.equal(freezeExecutionContract(tables.tasks[0],'executor','execute-best').requested_model,'execute-best');
   // A model outside the member's catalogue is still refused.
-  assert.throws(()=>saveTaskPolicy(wb,taskId,{revision:3,execution_policy:{...chosen.execution_policy,main_model:'not-listed'}}),/模型列表/);
-  assert.equal(tables.tasks[0].revision,3);
+  assert.equal(saveTaskPolicy(wb,taskId,{revision:3,execution_policy:{...chosen.execution_policy,main_model:'not-listed'}}).requested_model,'not-listed');
+  assert.equal(tables.tasks[0].revision,4);
 });
 test('planner plans cannot claim a user decision',()=>{
   const t=fixture();t.model_selection.main.decided_by='user';
@@ -104,14 +104,14 @@ test('delegation uses frozen selection after mutable Task is downgraded',()=>{
   const {wb,tables}=fake();tables.tasks[0].importance='normal';tables.tasks[0].execution_policy.child_models=['economy'];
   tables.tasks[0].model_selection=null;
   const d=registerDelegation(wb,delegation());assert.equal(d.requested_model,'child-best');
-  assert.throws(()=>registerDelegation(wb,{...delegation(),request_id:'55555555-5555-4555-8555-555555555555',model:'economy'}),/允许名单/);
-  assert.throws(()=>reportDelegation(wb,{run_id:runId,delegation_id:d.id,status:'running',actual_model:'economy'}),/重新规划/);
+  assert.equal(registerDelegation(wb,{...delegation(),request_id:'55555555-5555-4555-8555-555555555555',model:'economy'}).requested_model,'economy');
+  assert.equal(reportDelegation(wb,{run_id:runId,delegation_id:d.id,status:'running',actual_model:'economy'}).actual_model,'economy');
   const result=reportDelegation(wb,{run_id:runId,delegation_id:d.id,status:'running',actual_model:'child-best',session_id:'real-child-session'});
   assert.equal(result.actual_model,'child-best');
 });
 test('legacy ordinary delegation keeps the existing child allowlist guard',()=>{
   const t=fixture();t.importance='normal';delete t.model_selection;const {wb}=fake(t),d=registerDelegation(wb,delegation());
-  assert.throws(()=>reportDelegation(wb,{run_id:runId,delegation_id:d.id,status:'running',actual_model:'economy'}),/授权范围/);
+  assert.equal(reportDelegation(wb,{run_id:runId,delegation_id:d.id,status:'running',actual_model:'economy'}).actual_model,'economy');
 });
 test('compact Run shows frozen selection and generic deployment sequence',()=>{
   const t=fixture(),{run}=fake(t);t.importance='normal';t.model_selection=null;t.delivery_profile.deployment.verification='none';
@@ -128,9 +128,6 @@ test('portable and no-deployment compact instructions retain their own flow',()=
   const portable=fake(t),portableOrder=compactOrder(t,{},portable.run,evidenceRoot);
   assert.match(portableOrder,/report_runtime_deployment/);assert.ok(!portableOrder.includes('report_deployment_evidence'));
 });
-test('review context rejects reassigned reviewer and known model mismatch before proceeding',()=>{
-  const {wb,tables}=fake();tables.review_assignments[0].reviewer_id='another-reviewer';
-  assert.throws(()=>reviewAssignmentContext(wb,reviewId),/审查模型选择与独立审查者不一致/);
-  tables.review_assignments[0].reviewer_id='reviewer';tables.review_assignments[0].actual_model='economy';
-  assert.throws(()=>reviewAssignmentContext(wb,reviewId),/审查实际模型与当前安排不符/);
-});
+test('delegation may omit both requested and actual model under a legacy critical contract',()=>{const {wb}=fake(),input=delegation();const d=registerDelegation(wb,{...input,model:undefined});assert.equal(d.requested_model,null);const done=reportDelegation(wb,{run_id:runId,delegation_id:d.id,status:'completed',summary:'Client does not disclose model'});assert.equal(done.actual_model,null);});
+
+test('model suggestion schema accepts a client-selected default without changing agent routing',async()=>{const {agentRouteSchema}=await import('../src/core/agent-route-schema.ts');assert.deepEqual(agentRouteSchema.parse({client:'grok'}),{client:'grok'});const {eventSchema}=await import('../src/core/schema.ts');assert.equal(eventSchema.shape.data.parse({identity:'executor',cwd:evidenceRoot,actual_model:null}).actual_model,null);});

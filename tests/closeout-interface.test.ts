@@ -26,11 +26,12 @@ test('手动派审轮到用户；直接调用先由执行者安排，审查者�
   }finally{wb.close()}
 });
 
-test('直接调用失败回到轮到用户，撤销旧审查权限；人工重新选人可继续',()=>{
+test('直接调用失败留给执行者处理并保留原因，撤销旧审查权限；人工重新选人可继续',()=>{
   const f=delivered(),{wb}=f;try{
     const o=exportReviewOrder(wb,{run_id:f.rid,reviewer_id:'claude',expected_revision:wb.get('tasks',f.tid).revision,reason:'测试直接调用',delivery_mode:'agent'},{role:'runner'});startReview(wb,{review_id:o.review_id,identity:'claude'});
     const before=wb.get('tasks',f.tid);reportReviewHandoff(wb,{run_id:f.rid,review_id:o.review_id,expected_revision:before.revision,reason:'Claude CLI 登录过期，需要用户重新登录'});
-    const t=wb.get('tasks',f.tid);assert(isYourTurn(t));assert(!isTheirTurn(t));assert.equal(wb.all('reviews').length,0);
+    const t=wb.get('tasks',f.tid);assert(!isYourTurn(t));assert(isTheirTurn(t));assert.equal(wb.all('reviews').length,0);
+    assert.match(JSON.stringify(wb.get('review_assignments',o.review_id)),/Claude CLI 登录过期/);
     assert.throws(()=>submitReviewResult(wb,{...o.context.final_response,review_id:o.review_id,verdict:'passed',findings:[],limitations:[],evidence:['晚到的回执'],report_markdown:'隔离测试：这份迟到的回执已被失败交接撤销，不能再推进。'},'reviewer:'+o.review_id),/失效/);
     const manual=exportReviewOrder(wb,{run_id:f.rid,reviewer_id:'zcode',expected_revision:t.revision,reason:'由用户手动转发',delivery_mode:'manual'},{role:'user'});assert.notEqual(o.review_id,manual.review_id);assert(isYourTurn(wb.get('tasks',f.tid)));
   }finally{wb.close()}
@@ -43,7 +44,7 @@ test('收尾的真实 stdio MCP：planner与reviewer不能代回报，runner不�
     await client.connect(new StdioClientTransport({command:process.execPath,args:['--import',import.meta.resolve('tsx'),path.join(ROOT,'src/mcp/index.ts')],cwd:ROOT,env:env as Record<string,string>,stderr:'pipe'}));
     const call=async(name:string,args:any)=>{const r=await client.callTool({name,arguments:args});return {error:r.isError,data:JSON.parse((r.content as any)[0].text)}};
     const ctx=(await call('get_closeout_context',{run_id:f.rid})).data;assert.equal(ctx.closeout.status,'awaiting_dispatch');
-    assert.equal((await call('get_closeout_context',{run_id:other.rid})).error,true);
+    const scoped=await call('get_closeout_context',{run_id:other.rid});assert.equal(scoped.error,false);assert.equal(scoped.data.run_id,f.rid);assert.notEqual(scoped.data.run_id,other.rid);
     const e=event(f.root,f.tid,f.rid,ctx.next_seq,'closeout_started',{closeout_id:ctx.closeout.id});
     const denied=await app.inject({method:'POST',url:'/api/mcp/report_run_event',headers:{host:`127.0.0.1:${port}`,authorization:'Bearer '+wb.keys.planner},payload:e});assert.equal(denied.statusCode,403);
     const reviewToken=JSON.parse(fs.readFileSync(path.join(f.config.dataDir,'review-keys',assigned.review_id+'.json'),'utf8')).token;const reviewerDenied=await app.inject({method:'POST',url:'/api/mcp/report_run_event',headers:{host:`127.0.0.1:${port}`,authorization:'Bearer '+reviewToken},payload:{...e,review_id:assigned.review_id}});assert.equal(reviewerDenied.statusCode,403);

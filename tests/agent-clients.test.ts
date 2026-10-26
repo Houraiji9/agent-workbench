@@ -395,3 +395,7 @@ test('Cursor entry ancestors and same-root PowerShell symlinks are rejected', as
   try {await assert.rejects(resolveClientLauncher(layout.wrapper));}
   finally {Object.assign(fs, {lstat});}
 });
+
+test('all clients may use their configured default without a model argument or model override',async t=>{
+ const {dir,promptFile}=await fixture(t);for(const kind of ['claude','cursor','grok','dsh'] as const){const client=await record(dir,kind);const call=await buildAgentInvocation(client,{...options(dir,promptFile),role:'review',model:undefined});assert(!call.args.includes('--model'));assert(!call.args.includes('undefined'));if(kind==='dsh'){const overlay=JSON.parse(await fs.readFile(call.args[call.args.indexOf('--patch')+1],'utf8'));assert(!overlay.some((p:any)=>p.id==='agent-default-model'));assert(!overlay.some((p:any)=>p.id==='deepseek-account'));}}
+});

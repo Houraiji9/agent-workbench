@@ -71,7 +71,7 @@ test('清空指定模型后再次重派保持由执行者选择，同入口和�
   const cancel=async()=>{const d=await get('/tasks/'+tid);await post('/tasks/'+tid+'/action',{action:'cancel',revision:d.task.revision});};
   await cancel();const first=await get('/tasks/'+tid);await post('/tasks/'+tid+'/export',{version:1,new_run:true,agent_id:agent,requested_model:null,expected_revision:first.task.revision});await cancel();
   await page.goto('/#/today?task='+tid);await drawer(page).getByRole('button',{name:'更多信息与操作'}).click();await drawer(page).getByRole('button',{name:'换人或重新做一次'}).click();
-  const dialog=page.getByRole('dialog',{name:'换人或重新做一次'});await expect(dialog.getByRole('combobox',{name:'指定模型（可选）'})).toHaveValue('');
+  const dialog=page.getByRole('dialog',{name:'换人或重新做一次'});await expect(dialog.getByLabel('模型建议（可留空）')).toHaveValue('');
   await dialog.getByRole('button',{name:'新开一次并复制执行单'}).click();await expect(dialog).toHaveCount(0);
   const d=await get('/tasks/'+tid),run=d.runs.find((r:any)=>r.id===d.task.current_run_id);expect(run.agent_id).toBe(agent);expect(run.requested_model).toBeNull();expect(d.task.requested_model).toBe('GLM-5.3');expect(d.runs).toHaveLength(3);
  }

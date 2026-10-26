@@ -1,5 +1,4 @@
 import { assert } from './security.ts';
-import { isModelRetired } from '../shared/model-policy.ts';
 
 // 产品入口与模型目录分开；日期与官方来源随目录一起交给规划者。
 export type ModelChoice = { id:string; name:string; purpose:string; access?:string; retire_at?:string; kind?:'mode' };
@@ -33,10 +32,8 @@ export const modelCatalog:ModelGroup[] = [
 export function validateModel(agent:string, value:unknown, at=new Date(), timezone='UTC', workKind?:string,catalog:ModelGroup[]=modelCatalog):string|null {
   if(value==null||value==='')return null;
   assert(typeof value==='string'&&value.length<=100,'指定模型格式无效');
-  const choice=catalog.find(g=>g.agent_id===agent)?.models.find(m=>m.id===value);
-  assert(choice,'请从此成员的模型列表选择');
-  assert(!isModelRetired(choice,timezone,at),'此模型已下线，请重新选择');
-  assert(!workKind||agent!=='antigravity'||!value.startsWith('Claude ')||workKind==='frontend_light','Antigravity 内的 Claude 用于轻量前端设计，请选择独立 Claude 执行工程任务');
-  return value;
+  // The catalogue is a convenience list, not an authorization or identity boundary.
+  assert(!/[\x00-\x1f\x7f]/.test(value),'指定模型格式无效');
+  return value.trim()||null;
 }
 

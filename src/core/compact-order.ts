@@ -20,7 +20,7 @@ export function compactOrder(t:Row,p:Row,r:Row,ledgerRoot:string,execution:Row={
 
 Task ${t.id} / Run ${r.id} / 版本 ${t.version}
 执行者：${r.agent_id}；Reviewer：${t.reviewer_id||'未安排（用户选择）；本次不安排独立审查'}
-指定模型 / 模式: ${r.requested_model||'由执行者选择'}
+建议模型 / 模式: ${r.requested_model||'由执行者选择'}
 项目执行顺序：第 ${execution.step||1} 步
 ${execution.dependencies||'无前置任务'}
 源码工作目录：${r.cwd}
@@ -31,7 +31,7 @@ ${execution.dependencies||'无前置任务'}
 ## 本轮模型与委派设置
 ${priorityInstructions(t,t.importance||'normal')}
 ${JSON.stringify(r.execution_contract||null)}
-子代理仅可在白名单、并发/次数、读写和上下文预算内安排；主执行者负责整合。先 register_delegation 登记范围，再由当前客户端调用；report_delegation 回报真实会话与结果。客户端内部调用当前仅能下发要求和登记回报，不承诺强制拦截或完整观测。
+子代理按授权范围、并发/次数、读写和上下文预算安排；模型自主选择，无需披露；主执行者负责整合。先 register_delegation 登记范围，再由当前客户端调用；report_delegation 回报真实会话与结果。客户端内部调用当前仅能下发要求和登记回报，不承诺强制拦截或完整观测。
 审查安排：${JSON.stringify(t.review_policy)}
 
 ## 本轮成果与部署档案

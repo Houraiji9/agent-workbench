@@ -3,7 +3,7 @@ import {z} from 'zod';
 export const clientKindSchema=z.enum(['dsh','claude','cursor','grok']);
 export const agentRouteSchema=z.object({
   client:clientKindSchema,
-  model:z.string().trim().min(1).max(100),
+  model:z.string().trim().min(1).max(100).nullable().optional(),
   provider:z.string().trim().min(1).max(100).optional(),
 }).strict();
 export const automationPolicySchema=z.object({

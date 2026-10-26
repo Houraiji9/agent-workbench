@@ -342,7 +342,7 @@ function MoreInfo({ detail, run }: { detail: R; run?: R }) {
         <dt>工作范围</dt><dd>{t.scope}</dd>
         {t.non_goals?.length > 0 && <><dt>不做的事</dt><dd>{t.non_goals.join('；')}</dd></>}
         <dt>允许修改的位置</dt><dd>{t.allowed_paths.map((p: string) => <code key={p}>{p}</code>)}</dd>
-        {run?.requested_model && <><dt>指定模型 / 模式</dt><dd>{run.requested_model}</dd></>}
+        {run?.requested_model && <><dt>建议模型 / 模式</dt><dd>{run.requested_model}</dd></>}
         {run?.actual_model && <><dt>执行回报模型</dt><dd>{run.actual_model}</dd></>}
         <dt>资源安排</dt><dd>{t.resource_expectation}</dd>
         <dt>原始需求</dt><dd>{t.original_request}</dd>

@@ -29,23 +29,26 @@ test('Claude复现反向回归 HTTP：manager 不能伪造通过、导入报告�
       const r=await post(tool,input(change));assert.equal(r.statusCode,403,r.body);
     }
     assert.equal((await post('manage_tasks',input({action:'accept',task_id:s.tid,run_id:s.rid,revision:before.revision}))).statusCode,409);
-    const assign=input({action:'assign',data:{run_id:s.rid,reviewer_id:'zcode',expected_revision:before.revision,reason:'测试伪造用户同意改派'}});
-    const proposal=await post('manage_reviews',assign);assert.equal(proposal.statusCode,200,proposal.body);assert.equal(proposal.json().status,'awaiting_user_confirmation');
+    const assign=input({action:'assign',data:{run_id:s.rid,reviewer_id:'zcode',expected_revision:before.revision,reason:'当前会话直接安排独立复审'}});
+    const proposal=await post('manage_reviews',assign);assert.equal(proposal.statusCode,200,proposal.body);assert.equal(proposal.json().status,'completed');
     assert.deepEqual((await post('manage_reviews',assign)).json(),proposal.json());
-    assert.equal(JSON.stringify(wb.get('reviews',s.review.id)),original);assert.deepEqual(wb.get('tasks',s.tid),before);
-    const decisionId=proposal.json().result.decision_id,url='/api/user-decisions/'+decisionId+'/confirm';
+    assert.equal(JSON.stringify(wb.get('reviews',s.review.id)),original);assert(wb.get('tasks',s.tid).revision>before.revision);
+    assert(wb.all('review_assignments').some(a=>a.run_id===s.rid&&a.reviewer_id==='zcode'));
+    const accepted=reviewed(wb,f.root,'passed');finishCloseout(wb,accepted.tid);
+    const acceptance=input({action:'accept',task_id:accepted.tid,run_id:accepted.rid,revision:wb.get('tasks',accepted.tid).revision});
+    const pending=await post('manage_tasks',acceptance);assert.equal(pending.statusCode,200,pending.body);assert.equal(pending.json().status,'awaiting_user_confirmation');
+    const decisionId=pending.json().result.decision_id,url='/api/user-decisions/'+decisionId+'/confirm';
     assert.equal((await app.inject({method:'POST',url,headers,payload:{}})).statusCode,401);
     const boot=await app.inject({url:'/api/bootstrap',headers:{host:headers.host}}),page={host:headers.host,cookie:String(boot.headers['set-cookie']).split(';')[0]};
     assert.equal((await app.inject({method:'POST',url,headers:page,payload:{}})).statusCode,403);
     assert.equal((await app.inject({method:'POST',url,headers:{...page,'x-workbench-csrf':boot.json().csrf,authorization:headers.authorization},payload:{}})).statusCode,403);
     assert.equal((await post('confirm_user_decision',{decision_id:decisionId})).statusCode,403);
     const confirmed=await app.inject({method:'POST',url,headers:{...page,'x-workbench-csrf':boot.json().csrf},payload:{}});assert.equal(confirmed.statusCode,200,confirmed.body);
-    assert.equal(confirmed.json().status,'confirmed');assert(wb.get('reviews',s.review.id).revoked_at);
-    assert.equal(wb.get('reviews',s.review.id).report_markdown,s.review.report_markdown);
-    assert.equal(wb.get('tasks',s.tid).status,'submitted');
-    assert.equal((await post('manage_reviews',assign)).json().status,'confirmed');
+    assert.equal(confirmed.json().status,'confirmed');assert.equal(wb.get('tasks',accepted.tid).status,'accepted');
+    assert.equal(JSON.stringify(wb.get('reviews',s.review.id)),original);
+    assert.equal((await post('manage_tasks',acceptance)).json().status,'confirmed');
     const audits=wb.db.prepare("SELECT actor,data FROM audit WHERE action='confirm_user_decision'").all() as any[];
-    assert.equal(audits.length,1);assert.equal(audits[0].actor,'user');assert.equal(JSON.parse(audits[0].data).request_id,assign.request_id);
+    assert.equal(audits.length,1);assert.equal(audits[0].actor,'user');assert.equal(JSON.parse(audits[0].data).request_id,acceptance.request_id);
   }finally{await app.close()}
 });
 test('验收提案：收尾前拒绝；重启持久化；重复确认一次；用户确认才解锁',async()=>{
@@ -66,13 +69,13 @@ test('验收提案：收尾前拒绝；重启持久化；重复确认一次；�
 });
 test('过期、取消、替换、版本变化、新Run、产物变化和旧权限缓存均不推进任务',async()=>{
   const f=fixture(),wb=f.wb;try{
-    const s=reviewed(wb,f.root),before=JSON.stringify(wb.get('reviews',s.review.id));
-    const body=()=>input({action:'revoke',run_id:s.rid,review_id:s.review.id,revision:wb.get('tasks',s.tid).revision,reason:'隔离用户要求重新检查报告'});
-    const proposal=async()=>{const b=body(),r=await manage(wb,{} as any,'manage_reviews',b);return {b,id:r.result.decision_id}};
+    const s=reviewed(wb,f.root,'passed'),before=JSON.stringify(wb.get('reviews',s.review.id));finishCloseout(wb,s.tid);
+    const body=()=>input({action:'accept',run_id:s.rid,task_id:s.tid,revision:wb.get('tasks',s.tid).revision});
+    const proposal=async()=>{const b=body(),r=await manage(wb,{} as any,'manage_tasks',b);return {b,id:r.result.decision_id}};
     let p=await proposal();let d=wb.get('user_decisions',p.id);wb.put('user_decisions',{...d,expires_at:new Date(Date.now()-1).toISOString()});
-    assert.throws(()=>resolveDecision(wb,p.id,'confirm'),/过期/);assert.equal((await manage(wb,{} as any,'manage_reviews',p.b)).status,'expired');
+    assert.throws(()=>resolveDecision(wb,p.id,'confirm'),/过期/);assert.equal((await manage(wb,{} as any,'manage_tasks',p.b)).status,'expired');
     p=await proposal();assert.equal(resolveDecision(wb,p.id,'cancel').status,'cancelled');assert.throws(()=>resolveDecision(wb,p.id,'confirm'),/已处理/);
-    p=await proposal();const next=await proposal();assert.equal((await manage(wb,{} as any,'manage_reviews',p.b)).status,'superseded');
+    p=await proposal();const next=await proposal();assert.equal((await manage(wb,{} as any,'manage_tasks',p.b)).status,'superseded');
     const task=wb.get('tasks',s.tid);wb.put('tasks',{...task,revision:task.revision+1},{project_id:task.project_id});assert.throws(()=>resolveDecision(wb,next.id,'confirm'),/变化/);
     p=await proposal();const newer=wb.exportOrder(s.tid,task.version,true,'codex',task.revision+1);assert.notEqual(newer.run_id,s.rid);assert.throws(()=>resolveDecision(wb,p.id,'confirm'),/变化/);
     assert.equal(JSON.stringify(wb.get('reviews',s.review.id)),before);

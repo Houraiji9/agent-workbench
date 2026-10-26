@@ -21,12 +21,13 @@ test('会话建议只准备安排；页面采用后才生成新版本并保留�
  }finally{f.wb.close()}
 });
 
-test('安排建议仍验证独立性、当前版本和模型目录',async()=>{
+test('安排建议验证独立性和当前版本，型号不受目录限制',async()=>{
  const f=fixture();try{
   const {tid}=setup(f.wb,f.root),revision=f.wb.get('tasks',tid).revision;
   const call=(agent_id:string,model:string)=>manage(f.wb,{} as any,'manage_tasks',{request_id:crypto.randomUUID(),user_instruction:'准备后续执行安排，仅作隔离测试。',change:{action:'propose_arrangement',task_id:tid,data:{revision,agent_id,execution_policy:{main_model:model}}}});
   await assert.rejects(call('grok-build','grok-4.7'),/职责|审查/);
-  await assert.rejects(call('codex','not-a-real-model'),/模型/);
-  assert(!f.wb.get('tasks',tid).proposed_arrangement);
+  await call('codex','not-a-real-model');
+  assert.equal(f.wb.get('tasks',tid).proposed_arrangement.execution_policy.main_model,'not-a-real-model');
+  await assert.rejects(call('codex','another-advice'),/变化/);
  }finally{f.wb.close()}
 });

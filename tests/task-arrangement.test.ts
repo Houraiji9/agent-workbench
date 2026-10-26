@@ -37,7 +37,7 @@ test('not started: the user choice replaces the planner selection and the first 
     const rid=f.wb.exportOrder(tid,1).run_id,c=f.wb.get('runs',rid).execution_contract;
     assert.equal(c.requested_model,'gpt-6-sol');assert.deepEqual(c.execution_policy.child_models,['gpt-6-astra']);
     assert.equal(c.model_selection.main.decided_by,'user');assert.equal(c.model_selection.review.model,'grok-4.7-build-fast','review choice is not touched');
-    assert.match(priorityInstructions(runTask(f.wb.get('tasks',tid),f.wb.get('runs',rid)),'normal'),/用户选择，覆盖规划建议/);
+    assert.match(priorityInstructions(runTask(f.wb.get('tasks',tid),f.wb.get('runs',rid)),'normal'),/用户选择的模型建议/);
   }finally{f.wb.close();}
 });
 
@@ -78,8 +78,8 @@ test('a saved next version can be withdrawn; stale revisions and reviewer as exe
     assert.throws(()=>changeTaskArrangement(f.wb,tid,userChoice(t.revision)),/刷新/);
     const after=f.wb.get('tasks',tid);
     assert.throws(()=>changeTaskArrangement(f.wb,tid,{revision:after.revision,agent_id:'grok-build',execution_policy:policy({main_model:'grok-4.7-build-fast',child_models:[],allow_subagents:false})}),/独立审查/);
-    assert.throws(()=>changeTaskArrangement(f.wb,tid,userChoice(after.revision,{main_model:'not-in-catalog'})),/模型列表/);
-    changeTaskArrangement(f.wb,tid,{revision:after.revision,clear_pending:true});assert.equal(f.wb.get('tasks',tid).pending_arrangement,undefined);
+    assert.equal(changeTaskArrangement(f.wb,tid,userChoice(after.revision,{main_model:'not-in-catalog'})).task.pending_arrangement.requested_model,'not-in-catalog');
+    changeTaskArrangement(f.wb,tid,{revision:f.wb.get('tasks',tid).revision,clear_pending:true});assert.equal(f.wb.get('tasks',tid).pending_arrangement,undefined);
   }finally{f.wb.close();}
 });
 
@@ -125,9 +125,9 @@ for(const availability of ['unavailable','unknown'])test(`old planner assessment
     const saved:any=changeTaskArrangement(f.wb,tid,userChoice(1)).task;
     assert.equal(saved.requested_model,'gpt-6-sol');
     const now=saved.model_selection.evaluation.considered.filter((c:any)=>['gpt-6-sol','gpt-6-astra'].includes(c.model));
-    assert.equal(now.length,2);assert.ok(now.every((c:any)=>c.availability==='available'&&c.capability_assessment==='unknown'&&c.availability_reason.includes('规划时记录为 '+availability)));
-    assert.deepEqual(saved.model_selection.user_decision.previous_assessments.map((c:any)=>[c.model,c.availability]),[['gpt-6-sol',availability],['gpt-6-astra',availability]]);
-    assert.throws(()=>changeTaskArrangement(f.wb,tid,userChoice(saved.revision,{main_model:'not-in-catalog'})),/模型列表/,'the current catalogue is still the gate');
+    assert.equal(now.length,2);assert.ok(now.every((c:any)=>c.availability===availability),'a model suggestion must not rewrite past availability as verified');
+    assert.equal(saved.model_selection.user_decision.previous_assessments,undefined);
+    assert.equal(changeTaskArrangement(f.wb,tid,userChoice(saved.revision,{main_model:'not-in-catalog'})).task.requested_model,'not-in-catalog');
   }finally{f.wb.close();}
 });
 

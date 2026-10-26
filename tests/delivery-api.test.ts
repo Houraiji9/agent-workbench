@@ -46,7 +46,8 @@ test('critical remains independent of size and rejects weakened review or missin
   assert.throws(()=>f.wb.request({project_id:p.id,text:'合成重点需求',workflow_kind:'small',review_mode:'light',review_focus:['合成检查']}),/完整独立审查/);
   const q=f.wb.request({project_id:p.id,text:'合成重点小需求',workflow_kind:'small'});assert.equal(q.importance,'critical');assert.equal(q.workflow_kind,'small');
   const proposal=plan(f.root,q);proposal.tasks[0]={...proposal.tasks[0],importance:'critical',reviewer_id:'grok-build'} as any;
-  assert.throws(()=>f.wb.submitPlan(proposal),/明确模型选择/);assert.equal(f.wb.all('tasks').length,0);assert.equal(f.wb.get('requests',q.id).status,'awaiting_planning');
+  const defaultPlan=f.wb.submitPlan(proposal);assert.equal(f.wb.get('tasks',defaultPlan.task_ids[0]).requested_model,null);
+  const q2=f.wb.request({project_id:p.id,text:'合成重点需求带模型建议'});proposal.request_id=q2.id;proposal.plan_id+='-advice';
   const choices=[{agent_id:'codex',model:'gpt-6-astra',reason:'仅合成测试的最佳模型声明'},{agent_id:'grok-build',model:'grok-4.7-build-fast',reason:'仅合成测试的独立审查声明'}];
   Object.assign(proposal.tasks[0],{requested_model:choices[0].model,model_selection:{strategy:'best_capability',main:choices[0],review:choices[1],children:[],fallback_policy:'stop_and_replan',evaluation:{criteria:'仅验证模型选择合同，不代表实际能力测评',catalog_as_of:'2026-10-25',considered:choices.map(c=>({...c,reason:undefined,capability_assessment:'best_capability',capability_reason:'合成能力比较依据',availability:'available',availability_reason:'合成隔离测试资源'}))}}});
   for(const c of (proposal.tasks[0] as any).model_selection.evaluation.considered)delete c.reason;

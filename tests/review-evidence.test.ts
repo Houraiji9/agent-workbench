@@ -18,7 +18,7 @@ test('真实来源适配后的审查绑定本次成果，幂等登记只进入�
  const f=delivered(),sid=crypto.randomUUID();try{
   const c=getReviewContext(f.wb,f.rid),trace=traceFor(c,sid);
   const r=await submitGrokReview(f.wb,{run_id:f.rid,session_id:sid},{role:'user',id:'test_fixture'},async()=>trace);
-  assert.equal(r.source,'grok_session_import');assert.equal(r.independently_verified,true);assert.equal(r.recorded_by,'test_fixture');
+  assert.equal(r.source,'grok_session_import');assert.equal(r.independently_verified,false);assert.equal(r.recorded_by,'test_fixture');
   assert.equal(f.wb.get('tasks',f.tid).status,'awaiting_closeout');assert.equal(f.wb.get('tasks',f.tid).acceptance_record,undefined);
   const revision=f.wb.get('tasks',f.tid).revision;
   assert.equal((await submitGrokReview(f.wb,{run_id:f.rid,session_id:sid},{role:'user',id:'test_fixture'},async()=>trace)).id,r.id);
@@ -31,7 +31,6 @@ test('错误任务、旧版本、伪造身份、失败及未完成会话都不�
   const mutations=[
     (t:GrokTrace)=>{t.summary.info.id=crypto.randomUUID()},
     (t:GrokTrace)=>{t.summary.info.cwd=f.config.dataDir+'-outside'},
-    (t:GrokTrace)=>{t.history.at(-1)!.model_id='author-model'},
     (t:GrokTrace)=>{t.history.at(-1)!.type='user'},
     (t:GrokTrace)=>{t.history.push({type:'user',content:'继续执行'})},
     (t:GrokTrace)=>{t.updates.at(-1)!.params.update.stop_reason='cancelled'},
@@ -163,4 +162,14 @@ test('手工登记复核归档字节，验收拒绝根目录外同内容路径�
   const accepted=f.wb.accept(f.tid,{revision:f.wb.get('tasks',f.tid).revision,checks:[true]});
   assert.deepEqual(accepted.acceptance_record.checks,[true]);
  }finally{f.wb.close()}
+});
+
+test('official selected/answered model differences or missing identity preserve all three findings',async()=>{
+ for(const model of ['grok-4.7-build','another-client-label',undefined]){const f=delivered(),sid=crypto.randomUUID();try{
+ const c=getReviewContext(f.wb,f.rid),findings=['修改项一：交互问题','修改项二：数据显示问题','修改项三：边界处理问题'],trace=traceFor(c,sid,{verdict:'changes_requested',findings});
+ trace.summary.current_model_id='grok-4.7';trace.history.at(-1)!.model_id=model;
+ const result=await submitGrokReview(f.wb,{run_id:f.rid,session_id:sid},{role:'runner',id:'fixture'},async()=>trace);
+ assert.equal(result.model,model??null);assert.equal(result.selected_model,'grok-4.7');assert.deepEqual(result.raw_conclusion.findings,findings);assert.equal(result.verdict,'changes_requested');assert.equal(result.independently_verified,false);assert.equal(f.wb.get('tasks',f.tid).status,'changes_requested');
+ assert.equal((await submitGrokReview(f.wb,{run_id:f.rid,session_id:sid},{role:'runner',id:'fixture'},async()=>trace)).id,result.id);
+ }finally{f.wb.close();}}
 });
