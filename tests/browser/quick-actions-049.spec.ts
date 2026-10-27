@@ -17,7 +17,7 @@ test.afterEach(async({page})=>{await page.unrouteAll({behavior:'wait'})});
 
 test('首页待试用直达最新详情确认弹窗，长内容与窄窗下三个操作常驻且默认不勾选',async({page})=>{
  const m=await makeTask(page,{title:'测试快捷试用 '+randomUUID(),stage:'reviewed',userAcceptance:Array.from({length:8},(_,i)=>`第${i+1}项：${'我已亲自打开成果试用，并确认实际效果符合需求。'.repeat(4)}`)});
- await onlyTask(page,m.tid);let detailReads=0;page.on('request',r=>{if(r.method()==='GET'&&r.url().endsWith('/api/tasks/'+m.tid))detailReads++});
+ await onlyTask(page,m.tid);let detailReads=0;page.on('request',r=>{if(r.method()==='GET'&&r.url().endsWith('/api/tasks/'+m.tid+'/trial'))detailReads++});
  await page.goto('/#/today');await page.getByRole('article',{name:m.title,exact:true}).getByRole('button',{name:'去试用确认',exact:true}).click();
  const d=trial(page);await expect(d).toBeVisible();expect(detailReads).toBeGreaterThan(0);await expect(drawer(page)).toHaveCount(0);
  await expect(d).toContainText(m.project.name);await expect(d).toContainText(m.title);
@@ -61,7 +61,7 @@ test('首次复制失败仍提供新单完整文本',async({page})=>{
 
 for(const field of ['revision','hash'] as const)test(`试用弹窗保留 API ${field} 保护，失效快照不能完成验收`,async({page})=>{
  const m=await makeTask(page,{title:'测试失效试用快照 '+field+' '+randomUUID(),stage:'reviewed'});await onlyTask(page,m.tid);
- await page.route('**/api/tasks/'+m.tid,async route=>{const response=await route.fetch(),detail=await response.json();if(field==='revision')detail.task.revision--;else for(const a of detail.artifacts)a.sha256='0'.repeat(64);await route.fulfill({response,json:detail})});
+ await page.route('**/api/tasks/'+m.tid+'/trial',async route=>{const response=await route.fetch(),detail=await response.json();if(field==='revision')detail.task.revision--;else for(const a of detail.artifacts)a.sha256='0'.repeat(64);await route.fulfill({response,json:detail})});
  await page.goto('/#/today');await page.getByRole('article',{name:m.title,exact:true}).getByRole('button',{name:'去试用确认'}).click();await checkAll(page);
  const response=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/api/tasks/'+m.tid+'/accept'));await trial(page).getByRole('button',{name:'确认结果符合需求'}).click();expect((await response).ok()).toBe(false);
  await expect(trial(page).getByRole('alert')).toBeVisible();expect((await m.get('/tasks/'+m.tid)).task.status).toBe('awaiting_confirmation');

@@ -17,7 +17,7 @@ export const closeoutStates=['awaiting_closeout','closing','closeout_waiting_inp
 export const reviewableStates=['submitted','in_review','changes_requested',...closeoutStates,'awaiting_confirmation'];
 export const closeoutInput=z.object({detail:z.enum(['brief','full']).optional(),run_id:z.string().regex(/^R-[a-f0-9-]{36}$/)}).strict();
 export const closeoutOrderInput=closeoutInput.extend({expected_revision:z.number().int()}).strict();
-function artifacts(wb:Workbench,rid:string){return wb.all('artifacts').filter(a=>a.run_id===rid&&a.current).sort((a,b)=>a.id.localeCompare(b.id))}
+function artifacts(wb:Workbench,rid:string){return wb.runRows('artifacts',rid).filter(a=>a.current).sort((a,b)=>a.id.localeCompare(b.id))}
 function binding(wb:Workbench,t:Row,r:Row){
   const task=runTask(t,r);
   const authority=reviewProceedAuthority(wb,r.id),review=authority.review,files=artifacts(wb,r.id);
@@ -64,9 +64,9 @@ export function getCloseoutContext(wb:Workbench,rid:string){
 export function assertCloseoutComplete(wb:Workbench,t:Row,r:Row){
   const b=binding(wb,t,r);
   assert(t.status==='awaiting_confirmation'&&r.closeout?.status==='completed'&&r.closeout.digest===b.digest,'请先由执行者完成收尾，再确认验收',409);
-  const source=verifyDelivery(wb,t,r,{allowSuccessor:true}),runtime=verifyRuntime(wb,t,r,{allowSuccessor:true});
-  assert(hash(readBounded(safePath(r.closeout.report_path,[r.directory])))===r.closeout.report_sha256,'收尾报告已变化，请重新核对',409);
-  if(source.length||runtime.length){r.closeout.successor_evidence={source,runtime};wb.put('runs',r,{task_id:t.id});}
+  // User confirmation records the experienced result of this delivery. Source and
+  // installation verification belong to their recorded checks, not this click.
+  // A later project edit must not invalidate the user's ability to confirm an old task.
 }
 function quote(s:string){return "'"+s.replaceAll("'","''")+"'"}
 /** Exporting or copying never starts work. Safe to repeat for the same closeout. */

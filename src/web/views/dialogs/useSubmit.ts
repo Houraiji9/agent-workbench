@@ -10,9 +10,9 @@ export function useSubmit() {
     setError(''); setSaving(true);
     try {
       const r = await fn();
-      try { await s.refresh(); if (ok) s.toast(ok); }
-      catch { s.toast('操作已保存，但页面暂未更新，正在重试同步。请不要重复提交。', 'error'); }
       if (close) s.closeDialog();
+      if (ok) s.toast(ok);
+      void s.refresh().catch(()=>s.toast('操作已保存，页面正在重新同步。', 'error'));
       return r;
     } catch (e) {
       setError((e as Error).message || '没有保存成功');

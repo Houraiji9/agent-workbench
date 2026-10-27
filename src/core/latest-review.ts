@@ -11,16 +11,16 @@ export function latestReview(wb:Workbench,runId:string):Row|undefined{
 }
 
 export function reviewDeliveryDigest(wb:Workbench,runId:string){
- const r=wb.get('runs',runId),t=wb.get('tasks',r.task_id),artifacts=wb.all('artifacts').filter(a=>a.run_id===runId&&a.current).sort((a,b)=>a.id.localeCompare(b.id));
+ const r=wb.get('runs',runId),t=wb.get('tasks',r.task_id),artifacts=wb.runRows('artifacts',runId).filter(a=>a.current).sort((a,b)=>a.id.localeCompare(b.id));
  return hash(JSON.stringify({task_id:t.id,run_id:r.id,task_version:t.version,...(r.scope_revision?{scope_revision:r.scope_revision}:{}),artifacts:artifacts.map(a=>({id:a.id,sha256:a.sha256})),review_files:r.review_files||[]}));
 }
 export function reviewProceedAuthority(wb:Workbench,runId:string){
  const r=wb.get('runs',runId),review=latestReview(wb,runId),digest=reviewDeliveryDigest(wb,runId);
  const decision=r.review_decision?.review_digest===digest?r.review_decision:null;
- const assignments=wb.all('review_assignments').filter(a=>a.run_id===runId);
+ const assignments=wb.runRows('review_assignments',runId);
  const members=assignments.filter(a=>!['cancelled','revoked','superseded'].includes(a.status));
- const reports=wb.all('reviews').filter(v=>v.run_id===runId&&!v.revoked_at&&(v.review_id?members.some(a=>a.id===v.review_id):assignments.length===0||members.some(a=>a.status==='completed'&&a.result_id===v.id)));
- const hashes=wb.all('artifacts').filter(a=>a.run_id===runId&&a.current).map(a=>a.sha256).sort();
+ const reports=wb.runRows('reviews',runId).filter(v=>!v.revoked_at&&(v.review_id?members.some(a=>a.id===v.review_id):assignments.length===0||members.some(a=>a.status==='completed'&&a.result_id===v.id)));
+ const hashes=wb.runRows('artifacts',runId).filter(a=>a.current).map(a=>a.sha256).sort();
  const matched=review&&JSON.stringify([...(review.artifact_hashes||[])].sort())===JSON.stringify(hashes);
  // Pre-assignment Runs used the latest SQL decision, including timestamp ties.
  // A Run with cancelled assignments must never fall back to that legacy rule.
@@ -31,7 +31,7 @@ export function reviewProceedAuthority(wb:Workbench,runId:string){
 /** User trial is independent of review permission. Capture facts, never manufacture a pass. */
 export function acceptanceReviewSnapshot(wb:Workbench,runId:string,skipped:boolean){
  const authority=reviewProceedAuthority(wb,runId),digest=reviewDeliveryDigest(wb,runId),review=authority.review;
- const hashes=wb.all('artifacts').filter(a=>a.run_id===runId&&a.current).map(a=>a.sha256).sort();
+ const hashes=wb.runRows('artifacts',runId).filter(a=>a.current).map(a=>a.sha256).sort();
  const applicable=!!review&&JSON.stringify([...(review.artifact_hashes||[])].sort())===JSON.stringify(hashes)&&(!review.review_digest||review.review_digest===digest)&&(!wb.get('runs',runId).scope_revision||review.review_digest===digest);
  return {review_status:skipped?'not_requested':authority.decision?.decision==='continue'?'continue_recorded':authority.can_proceed&&applicable?'passed':'unconfirmed',
    review_id:!skipped&&applicable?review!.id:null,

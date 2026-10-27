@@ -6,10 +6,10 @@ import {hasSameSessionContinuation} from '../../shared/workflow-view.js';
 
 /** 从最新详情打开试用；弹窗继续冻结 revision 与成果 hash，由后端校验。 */
 export async function openTrial(s:Store,t:R,reject=false){return s.act(async()=>{
- const detail=await api('/tasks/'+t.id);
+ const detail=await api('/tasks/'+t.id+'/trial');
  if(detail.task.status!=='awaiting_confirmation')throw new Error('任务状态已更新，请刷新后查看当前进展');
  s.openDialog(reject?'reject':'accept',{detail});return detail;
-})}
+},undefined,{refresh:false})}
 
 export async function copyOrderText(s:Store,text:string,message:string,t:R){
  const copied=await s.copy(text,message);

@@ -155,8 +155,8 @@ export {reviewCandidates};
 export const reviewDecisionInput=z.object({run_id:z.string().regex(/^R-[a-f0-9-]{36}$/),expected_revision:z.number().int(),decision:z.enum(['continue','rework','add_review']),reason:z.string().trim().min(5).max(4000)}).strict();
 export const reviewMemberInput=z.object({run_id:z.string().regex(/^R-[a-f0-9-]{36}$/),review_id:reviewId,expected_revision:z.number().int(),action:z.enum(['remove','replace']),reason:z.string().trim().min(5).max(4000),reviewer_id:z.string().min(1).max(100).optional(),requested_model:z.string().trim().min(1).max(100).nullable().optional(),delivery_mode:z.enum(['manual','agent']).optional()}).strict();
 export function reviewCollaboration(wb:Workbench,runId:string){
- const authority=reviewProceedAuthority(wb,runId),reports=wb.all('reviews').filter(v=>v.run_id===runId);
- const members:Row[]=wb.all('review_assignments').filter(a=>a.run_id===runId).map(a=>({...a,report:reports.find(v=>v.id===a.result_id)||null}));
+ const authority=reviewProceedAuthority(wb,runId),reports=wb.runRows('reviews',runId);
+ const members:Row[]=wb.runRows('review_assignments',runId).map(a=>({...a,report:reports.find(v=>v.id===a.result_id)||null}));
  const active=members.filter(a=>!['cancelled','superseded','revoked'].includes(a.status));
  const valid=reports.filter(v=>!v.revoked_at&&(v.review_id?active.some(a=>a.id===v.review_id):members.length===0||active.some(a=>a.status==='completed'&&a.result_id===v.id)));
  const counts={total:members.length,active:active.length,pending:active.filter(a=>a.status==='awaiting_dispatch').length,running:active.filter(a=>a.status==='running').length,completed:active.filter(a=>a.status==='completed').length,cancelled:members.length-active.length,passed:valid.filter(v=>v.verdict==='passed').length,changes_requested:valid.filter(v=>v.verdict==='changes_requested').length};

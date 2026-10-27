@@ -72,15 +72,14 @@ test('补审/改派后旧收尾失效；新的通过必须新收尾，迟到旧�
   }finally{wb.close()}
 });
 
-test('收尾中受审源码变化拦截完成，收尾后变化也拦截验收',()=>{
+test('源码变化保存为收尾核验记录，用户确认不要求重新开执行',()=>{
   const f=delivered(),{wb}=f;try{
-    f.pass();f.send('closeout_started');fs.appendFileSync(f.file,'//changed');
-    const c=getCloseoutContext(wb,f.rid);assert.equal(f.send('closeout_completed',{result:'隔离测试收尾结果：源码已经改变，因此不能沿用审查放行。',closeout_results:c.closeout.items.map((i:any)=>({item_id:i.id,outcome:'done',evidence:'隔离测试证据已填写完整'}))}).disposition,'rejected');
-    fs.writeFileSync(f.file,'export const value=1;');f.send('closeout_blocked',{message:'隔离测试已恢复原始受审文件'});finishCloseout(wb,f.tid);
-    fs.appendFileSync(f.file,'//changed after closeout');assert.throws(f.accept,/受审文件已变化/);
+    f.pass();const review=JSON.stringify(wb.runRows('reviews',f.rid));f.send('closeout_started');fs.appendFileSync(f.file,'//changed');
+    const c=getCloseoutContext(wb,f.rid);assert.equal(f.send('closeout_completed',{result:'隔离测试收尾结果：源码后续变化单独记录，不把它写成重新审查通过。',closeout_results:c.closeout.items.map((i:any)=>({item_id:i.id,outcome:'done',evidence:'隔离测试记录实际收尾情况'}))}).disposition,'applied');
+    assert(wb.get('runs',f.rid).closeout.verification_warnings.some((text:string)=>text.includes('受审文件已变化')));
+    fs.appendFileSync(f.file,'//changed again');const accepted=f.accept();assert.equal(accepted.status,'accepted');assert.equal(accepted.acceptance_record.technical_verification.rechecked_on_confirmation,false);assert.equal(JSON.stringify(wb.runRows('reviews',f.rid)),review);
   }finally{wb.close()}
 });
-
 test('取消与旧 Run 的迟到收尾不能复活任务',()=>{
   const f=delivered(),{wb}=f;try{
     f.pass();wb.manualAction(f.tid,'cancel',wb.get('tasks',f.tid).revision);assert.equal(f.send('closeout_started').disposition,'rejected');assert.equal(wb.get('tasks',f.tid).status,'cancelled');

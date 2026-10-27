@@ -124,6 +124,7 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
     return agents.continueRun(input,{role:'user',source:'page'});
   });
   app.get<{Params:{id:string}}>('/api/tasks/:id',async req=>({...wb.taskDetail(req.params.id),agent_jobs:agents.taskJobs(req.params.id)}));
+  app.get<{Params:{id:string}}>('/api/tasks/:id/trial',async req=>wb.trialDetail(req.params.id));
   app.post<{Params:{id:string}}>('/api/tasks/:id/agent-cancel',async req=>{assert(!req.headers.authorization,'此操作仅供用户页面使用',403);return agents.cancelJob(req.params.id,req.body)});
   // Deliberately UI-only: runner/reviewer/manager MCP cannot attest that a user inspected an orphan.
   app.post<{Params:{id:string}}>('/api/tasks/:id/agent-recovery',async req=>{assert(!req.headers.authorization,'进程恢复须由用户确认，Agent不能代为声明',403);return agents.confirmProcessEnded(req.params.id,req.body)});

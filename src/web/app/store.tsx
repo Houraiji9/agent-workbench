@@ -38,7 +38,7 @@ export interface Store {
   openDialog(name: string, props?: R): void;
   closeDialog(): void;
   busy: boolean;
-  act<T>(fn: () => Promise<T>, ok?: string): Promise<T | null>;
+  act<T>(fn: () => Promise<T>, ok?: string, options?: {refresh?:boolean}): Promise<T | null>;
   refresh(): Promise<void>;
   toast(text: string, kind?: 'ok' | 'error'): void;
   copy(text: string, ok?: string): Promise<boolean>;
@@ -184,12 +184,12 @@ export function StoreProvider({ children, fallback }: { children: (ready: boolea
       openDialog: (name, props) => setDialog({ name, props }),
       closeDialog: () => setDialog(null),
       busy,
-      act: async (fn, ok) => {
+      act: async (fn, ok, options) => {
         setBusy(true);
         try {
           const r = await fn();
-          try { await refresh(); if (ok) toast(ok); }
-          catch { toast('操作已保存，但页面暂未更新，正在重试同步。请不要重复提交。', 'error'); }
+          if (ok) toast(ok);
+          if(options?.refresh!==false)void refresh().catch(()=>toast('操作已保存，页面正在重新同步。', 'error'));
           return r;
         } catch (e) {
           toast((e as Error).message || '操作没有完成', 'error');
