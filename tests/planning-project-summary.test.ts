@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type {Workbench} from '../src/core/workbench.ts';
 import {planningProjectSummary,planningSummaryLimits} from '../src/core/planning-project-summary.ts';
-import {chatPlanningContext} from '../src/core/chat-planning.ts';
-import {fixture} from './helpers.ts';
+import {chatPlanningContext,chatPlanningCopy} from '../src/core/chat-planning.ts';
+import {fixture,taskInput} from './helpers.ts';
 
 function records(tasks:any[]=[],runs:any[]=[],events:any[]=[],project:any={}){
   const p={id:'P-current',name:'当前项目',goal:'项目真实目标',stage:'待规划',next_step:'旧登记下一步',updated_at:'2026-01-01T00:00:00Z',...project};
@@ -73,15 +73,17 @@ test('搁置项目阻止普通聊天与标准复制入口，恢复后可生成�
   }finally{f.wb.close();}
 });
 
-test('普通聊天和标准复制资料包含相同项目摘要，保留新需求与设置来源',()=>{
+test('MCP 复制保留完整新需求并按需读取，离线聊天只复制精简背景和必要设置',()=>{
   const f=fixture();try{
-    const q=f.wb.request({project_id:'P-workbench',text:'本轮新增需求：让中途新增功能得到项目背景'});
+    const q=f.wb.request({project_id:'P-workbench',text:'本轮新增需求：让中途新增功能得到项目背景\n用户原文逐字保留。'});
     f.wb.put('requests',{...q,importance_source:'project',delivery_profile_source:'planner',planning_preferences:{delivery:'planner'}},{project_id:q.project_id});
-    const chat=chatPlanningContext(f.wb,q.id),entry=f.wb.planningEntry(q.id);
-    const marker='当前项目历史事实摘要（有界；来源与时间见记录）：\n',copied=JSON.parse(entry.text.split(marker)[1].split('\n网页本身')[0]);
-    const {as_of:a,...chatSummary}=chat.project_summary,{as_of:b,...copySummary}=copied;
-    assert.deepEqual(chatSummary,copySummary);assert.equal(chat.request.text,q.text);assert(!JSON.stringify(chat.project_summary).includes(q.text));
-    assert.equal(chat.request.importance_source,'project');assert.equal(chat.request.delivery_profile_source,'planner');assert.deepEqual(chat.request.planning_preferences,{delivery:'planner'});
-    assert.match(chat.instructions,/默认或继承值不是用户明确限制/);assert.match(chat.instructions,/source\/none/);assert.match(chat.instructions,/delivery_profile 与 delivery_target 仅为结构示例，必须由模型按本轮需求填写/);assert.match(entry.text,/本轮用户新需求/);assert.match(entry.text,/expected_version=1/);assert.equal(entry.context.project_id,q.project_id);
+    const chat=chatPlanningContext(f.wb,q.id),entry=f.wb.planningEntry(q.id),copied=JSON.parse(chatPlanningCopy(chat).split('\n').slice(1).join('\n'));
+    assert(entry.text.includes(q.text));assert(entry.text.length-q.text.length<550);
+    assert(!entry.text.includes('active_tasks'));assert(!entry.text.includes('delivery_profile'));assert.match(entry.text,/get_chat_planning_context/);
+    assert.equal(chat.request.text,q.text);assert.equal(copied.request.text,q.text);assert(!JSON.stringify(chat.project_summary).includes(q.text));
+    assert.equal(copied.request.importance_source,'project');assert.equal(copied.request.delivery_profile_source,'planner');assert.deepEqual(copied.request.planning_preferences,{delivery:'planner'});
+    assert.equal(copied.project_summary.source,'workbench_project_records');assert(copied.project_summary.tasks.length<=5);assert.equal(copied.project_memory,undefined);assert.equal(copied.recent_tasks,undefined);assert.equal(copied.plan_template.planner.name,null);
+    assert.match(chat.instructions,/默认或继承值不是用户明确限制/);assert.match(entry.text,/expected_version=1/);assert.equal(entry.context.project_id,q.project_id);
+    const saved=f.wb.submitPlan({...chat.plan_template,planner:{name:'Claude',model:null},tasks:[{...taskInput(f.root),delivery_profile:chat.plan_template.tasks[0].delivery_profile,delivery_target:chat.plan_template.tasks[0].delivery_target}]},'chat_paste','user');assert.equal(saved.planning_origin.reported_name,'Claude');
   }finally{f.wb.close();}
 });

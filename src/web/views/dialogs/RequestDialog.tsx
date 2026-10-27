@@ -42,7 +42,7 @@ export function RequestDialog({projectId,request:q,onClose}:{projectId?:string;r
    <Field label="你想完成什么？"><textarea data-autofocus required rows={4} maxLength={20000} placeholder="想改什么、最后怎么用？对模型、审查或成果有要求，也写在这里。" value={text} onChange={e=>setText(e.target.value)}/></Field>
    <div className="request-options">
     <ImportanceField value={importance} onChange={value=>{setImportance(value);setImportanceChanged(true);setReviewError('')}}/>
-    <Field label="交给谁规划"><select value={workflowKind} onChange={e=>setWorkflowKind(e.target.value)}><option value="standard">Codex / 已连接工作台的 Agent</option><option value="small">GPT 普通聊天</option></select></Field>
+    <Field label="交给谁规划"><select value={workflowKind} onChange={e=>setWorkflowKind(e.target.value)}><option value="standard">已连接工作台的 Agent</option><option value="small">普通聊天（无需连接）</option></select></Field>
    </div>
    <Field label="成果与使用位置"><select value={deliveryChoice} onChange={e=>setDeliveryChoice(e.target.value as DeliveryChoice)}><option value="project">沿用项目设置</option><option value="planner">根据这次需求，由大脑安排</option><option value="custom">这次由我指定</option></select></Field>
    {deliveryChoice==='project'&&<p className="request-delivery-summary">{deliverySummary(deliveryForView({},selectedProject))}</p>}
@@ -74,6 +74,6 @@ export function RequestActionDialog({request:q,action,onClose}:{request:R;action
 
 export function RequestHandoffDialog({request:q,fallbackText='',onClose}:{request:R;fallbackText?:string;onClose():void}){
  const s=useStore(),{error,saving,run}=useSubmit(),[fallback,setFallback]=useState(fallbackText),[copied,setCopied]=useState(false);
- const copy=()=>void run(async()=>{const r=await api('/requests/'+q.id+'/entry');const ok=await s.copy(r.text,'已复制，粘贴给 Codex 即可');setCopied(ok);setFallback(ok?'':r.text);return r},undefined,false);
- return <Dialog title="下一步：发给 Codex" onClose={onClose} footer={<button className="btn ghost" onClick={onClose}>关闭</button>}><p className="lead">让 Codex 读取项目资料，拆分任务并选好执行者。</p><p className="request-text">{q.text}</p><button className="btn primary" disabled={saving} onClick={copy}><Copy size={16}/>{saving?'正在准备…':copied?'再次复制':'复制给 Codex'}</button>{copied&&<p className="muted small">已复制。切换到 Codex 会话，粘贴后发送。</p>}{fallback&&<CopyBox text={fallback} label="手动复制给 Codex"/>}{error&&<Notice tone="error">{error}</Notice>}</Dialog>;
+ const copy=()=>void run(async()=>{const r=await api('/requests/'+q.id+'/entry');const ok=await s.copy(r.text,'已复制，粘贴给规划 Agent 即可');setCopied(ok);setFallback(ok?'':r.text);return r},undefined,false);
+ return <Dialog title="下一步：发给规划 Agent" onClose={onClose} footer={<button className="btn ghost" onClick={onClose}>关闭</button>}><p className="lead">让规划 Agent 读取项目资料，拆分任务并选好执行者。</p><p className="request-text">{q.text}</p><button className="btn primary" disabled={saving} onClick={copy}><Copy size={16}/>{saving?'正在准备…':copied?'再次复制':'复制给规划 Agent'}</button>{copied&&<p className="muted small">已复制。切换到你选用的 Agent 会话，粘贴后发送。</p>}{fallback&&<CopyBox text={fallback} label="手动复制给规划 Agent"/>}{error&&<Notice tone="error">{error}</Notice>}</Dialog>;
 }

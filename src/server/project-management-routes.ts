@@ -7,7 +7,7 @@ import {assert,readBounded} from '../core/security.ts';
 import {projectHold} from '../core/project-hold.ts';
 import {saveProjectPolicy,saveTaskPolicy,taskPolicyInput} from '../core/workflow-policy.ts';
 import {changeTaskArrangement} from '../core/task-arrangement.ts';
-import {chatPlanningContext,previewChatPlan,parseChatPlan} from '../core/chat-planning.ts';
+import {chatPlanningContext,chatPlanningCopy,previewChatPlan,parseChatPlan} from '../core/chat-planning.ts';
 import {scanProjectFiles,saveProjectFile,projectFilePath,moveProjectFiles,restoreProjectFile} from '../core/project-files.ts';
 import {nativeFileOperations} from '../core/project-native-files.ts';
 import {aggregateProjectUsage,withLegacyJobUsage,type UsageEvent,type UsageJob} from '../core/project-usage.ts';
@@ -34,7 +34,7 @@ export function registerProjectManagementRoutes(app:FastifyInstance,wb:Workbench
   app.post<{Params:{id:string}}>('/api/tasks/:id/execution-policy',async req=>saveTaskPolicy(wb,req.params.id,req.body));
   app.post<{Params:{id:string}}>('/api/tasks/:id/new-policy-run',async req=>{const v=taskPolicyInput.parse(req.body),t=wb.get('tasks',req.params.id);assert(t.current_run_id&&['failed','cancelled','changes_requested','submitted'].includes(t.status),'请先结束本次执行；审查通过或待验收的交付不能在这里替换',409);assert(!wb.all('agent_jobs').some(j=>j.task_id===t.id&&(j.process_may_be_running||['queued','launching','running'].includes(j.status))),'仍有调用未结束，请核对当前进程后再生成新执行单',409);return wb.exportOrder(t.id,t.version,true,v.agent_id,v.revision,v.execution_policy.main_model||wb.get('runs',t.current_run_id).requested_model,v.execution_policy);});
   app.post<{Params:{id:string}}>('/api/tasks/:id/arrangement',async req=>changeTaskArrangement(wb,req.params.id,req.body));
-  app.get<{Params:{id:string}}>('/api/requests/:id/chat-context',async req=>chatPlanningContext(wb,req.params.id));
+  app.get<{Params:{id:string}}>('/api/requests/:id/chat-context',async req=>({copy_text:chatPlanningCopy(chatPlanningContext(wb,req.params.id))}));
   app.post('/api/plans/chat-preview',async req=>previewChatPlan(wb,req.body));
   app.post('/api/plans/chat-import',async req=>{const plan=parseChatPlan(req.body);const q=wb.get('requests',plan.request_id);assert(q.workflow_kind!=='small'||plan.tasks.length<=3,'小需求最多三项');return wb.submitPlan(plan,'chat_paste','user')});
   app.get<{Params:{id:string};Querystring:Row}>('/api/projects/:id/insights',async req=>projectInsights(wb,req.params.id,req.query));

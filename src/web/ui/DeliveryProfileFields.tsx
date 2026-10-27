@@ -116,5 +116,5 @@ export function deliverySummary(profile: DeliveryProfile): string {
   const artifacts = profile.artifacts.map(item => artifactLabels.get(item) || item).filter(Boolean);
   const mode = deploymentLabels.get(profile.deployment.mode) || profile.deployment.mode;
   const target = profile.deployment.mode !== 'none' && profile.deployment.target.trim();
-  return `${artifacts.length ? artifacts.join('、') : '由 Codex 补充成果'} · ${mode}${target ? `（${target}）` : ''}`;
+  return `${artifacts.length ? artifacts.join('、') : '由规划 Agent 补充成果'} · ${mode}${target ? `（${target}）` : ''}`;
 }

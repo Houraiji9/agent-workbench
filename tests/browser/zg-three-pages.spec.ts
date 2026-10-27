@@ -26,7 +26,7 @@ test('今天：待安排的复制入口无需展开，需求卡片名称与需�
   await expect(group).toBeVisible();await expect(group.locator('summary')).toHaveCount(0);
   const card=group.getByRole('article',{name:text,exact:true});
   await expect(card.getByRole('button',{name:'复制规划请求',exact:true})).toBeVisible();
-  await expect(card.getByRole('button',{name:'粘贴 Codex 的计划'})).toBeVisible();
+  await expect(card.getByRole('button',{name:'粘贴规划 Agent 的计划'})).toBeVisible();
   await expect(card.locator('.pill')).toHaveText('待规划');
   const order=group.getByRole('article',{name:'三页任务 0',exact:true});
   await expect(order.getByRole('button',{name:/复制执行单/})).toBeVisible();
@@ -59,10 +59,10 @@ test('需求箱：每条需求一个主操作，次要操作低调可见；页�
   await full.getByRole('button',{name:'复制全文'}).click();expect(await page.evaluate(()=>navigator.clipboard.readText())).toBe(long);await page.keyboard.press('Escape');
   await page.getByRole('tab',{name:/^待规划/}).click();
   const card=page.getByRole('article',{name:waiting.text,exact:true});
-  await expect(card.getByRole('button',{name:'复制规划请求',exact:true})).toBeVisible();await expect(card.getByRole('button',{name:'在 GPT 聊天里规划'})).toBeVisible();
+  await expect(card.getByRole('button',{name:'复制规划请求',exact:true})).toBeVisible();await expect(card.getByRole('button',{name:'在聊天里规划'})).toBeVisible();
   const more=card.getByRole('group',{name:'其他操作'});
   for(const label of ['编辑需求','暂时不做','删除'])await expect(more.getByRole('button',{name:label,exact:true})).toBeVisible();
-  await card.getByRole('button',{name:'在 GPT 聊天里规划'}).click();await expect(page.getByRole('dialog',{name:'在 GPT 聊天里规划'})).toBeVisible();await page.keyboard.press('Escape');
+  await card.getByRole('button',{name:'在聊天里规划'}).click();await expect(page.getByRole('dialog',{name:'在聊天里规划'})).toBeVisible();await page.keyboard.press('Escape');
   await page.getByRole('tab',{name:/^已生成计划/}).click();
   await expect(page.getByRole('button',{name:'查看执行顺序'}).first()).toBeVisible();
   for(const width of [1360,880]){await page.setViewportSize({width,height:width===880?600:900});expect(await noHorizontalScroll(page)).toBe(true);}

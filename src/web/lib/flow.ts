@@ -129,7 +129,7 @@ export function requestRelay(): Relay {
     ],
     at: 1, holder: 'you', tone: 'you', skippedReview: false,
     headline: '需求已记下，等待规划',
-    next: '选择规划连接，或在 GPT 聊天里规划并粘贴回传；保存计划后任务会出现在这里',
+    next: '选择规划连接，或在聊天里规划并粘贴回传；保存计划后任务会出现在这里',
   };
 }
 

@@ -127,7 +127,7 @@ function Progress({ project, tasks }: { project: R; tasks: R[] }) {
   const active = tasks.filter(t => !['accepted', 'cancelled', 'rework_linked'].includes(t.status)).sort(byUrgency);
   const finished = tasks.filter(t => ['accepted', 'cancelled', 'rework_linked'].includes(t.status)).sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
   const [showAll, setShowAll] = useState(false),[activeLimit,setActiveLimit]=useState(20);
-  if (!tasks.length && !requests.length) return <Empty icon={<Lightbulb size={28} />} title="这个项目还没有任务" action={!project.archived&&<button className="btn primary" onClick={() => s.openDialog('request', { projectId: project.id })}>提第一个需求</button>}>提一个需求，Codex 会把它拆成任务。</Empty>;
+  if (!tasks.length && !requests.length) return <Empty icon={<Lightbulb size={28} />} title="这个项目还没有任务" action={!project.archived&&<button className="btn primary" onClick={() => s.openDialog('request', { projectId: project.id })}>提第一个需求</button>}>提一个需求，规划 Agent 会把它拆成任务。</Empty>;
   const ordered=[...active].sort(byExecutionOrder);
   return <>
     {requests.length > 0 && <Section title="需求" aside={<button className="link" onClick={()=>s.go({page:'requests',id:project.id,tab:requests.some(q=>q.status==='awaiting_planning')?'waiting':'drafts'})}>在需求箱管理</button>}>
@@ -200,7 +200,7 @@ function Diagrams({ project, diagrams }: { project: R; diagrams: R[] }) {
       <button className="btn primary" disabled={busy} onClick={() => void generate()}>{busy ? '正在生成并检查…' : '生成项目总览'}</button>
     </div>
     {list.length ? <div className="diagram-grid">{list.map(d => <button key={d.id} className="diagram-card" onClick={() => s.openDialog('diagram', { diagram: d })}>
-      <Network size={20} /><strong>{d.title}</strong><small>{d.source === 'ledger_snapshot' ? '任务总览' : 'Codex 绘制'} · {fullDate(d.created_at, s.tz)}</small>
+      <Network size={20} /><strong>{d.title}</strong><small>{d.source === 'ledger_snapshot' ? '任务总览' : 'Agent 绘制'} · {fullDate(d.created_at, s.tz)}</small>
     </button>)}</div> : <Empty title="还没有图解">点上面的按钮生成第一张。</Empty>}
   </>;
 }

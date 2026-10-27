@@ -23,7 +23,7 @@ export {RequestDialog} from './RequestDialog.js';
 export function ImportPlanDialog({ onClose }: { onClose(): void }) {
   const [text, setText] = useState('');
   const { error, saving, run } = useSubmit();
-  return <Dialog title="粘贴 Codex 的计划" sub="通常 Codex 会通过工作台接口直接提交；只有它把计划发给你时才需要粘贴。" onClose={onClose} label="导入计划">
+  return <Dialog title="粘贴规划 Agent 的计划" sub="规划 Agent 通常会通过工作台接口直接提交；只有它把计划发给你时才需要粘贴。" onClose={onClose} label="导入计划">
     <form className="form" onSubmit={e => { e.preventDefault(); void run(() => api('/plans', parseJson(text)), '计划已收下，任务已经排好'); }}>
       <Field label="计划内容（JSON）" hint="工作台会检查执行者职责、依赖、路径和预算，不符合要求会说明原因。">
         <textarea data-autofocus className="mono" required rows={14} value={text} onChange={e => setText(e.target.value)} />

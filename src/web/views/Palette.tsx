@@ -17,7 +17,7 @@ export function Palette({ onClose }: { onClose(): void }) {
     const base: Item[] = [
       { id: 'a-req', group: '操作', label: '提一个需求', hint: 'N', run: dlg('request') },
       { id: 'a-proj', group: '操作', label: '添加项目', run: dlg('project-register') },
-      { id: 'a-plan', group: '操作', label: '粘贴 Codex 的计划', run: dlg('import-plan') },
+      { id: 'a-plan', group: '操作', label: '粘贴规划 Agent 的计划', run: dlg('import-plan') },
       { id: 'a-rec', group: '操作', label: '导入执行回执', run: dlg('receipt') },
       { id: 'a-theme', group: '操作', label: s.theme === 'dark' ? '切换到浅色外观' : '切换到深色外观', run: () => { s.setTheme(s.theme === 'dark' ? 'light' : 'dark'); onClose(); } },
       { id: 'p-today', group: '页面', label: '今天', run: go('today') },

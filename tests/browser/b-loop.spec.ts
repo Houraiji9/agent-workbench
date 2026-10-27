@@ -12,14 +12,14 @@ test('完整闭环：粘贴计划 → 生成执行单 → 确认已发出 → �
   const req = await post('/requests', { project_id: project.id, text: '测试：完整界面闭环' });
   await page.goto('/');
   const reqCard = page.getByRole('article', { name: '测试：完整界面闭环' });
-  await reqCard.getByRole('button', { name: '粘贴 Codex 的计划' }).click();
-  const planDialog = page.getByRole('dialog', { name: '粘贴 Codex 的计划' });
+  await reqCard.getByRole('button', { name: '粘贴规划 Agent 的计划' }).click();
+  const planDialog = page.getByRole('dialog', { name: '粘贴规划 Agent 的计划' });
   await planDialog.getByLabel('计划内容（JSON）').fill('这不是 JSON');
   await planDialog.getByRole('button', { name: '导入计划' }).click();
   await expect(planDialog.getByRole('alert')).toContainText('不是完整的 JSON');
   await planDialog.getByLabel('计划内容（JSON）').fill(JSON.stringify({ schema_version: 1, plan_id: 'browser-loop-' + randomUUID(), request_id: req.id, expected_version: 1, tasks: [{ ...taskInput(root), title: '闭环测试交付', user_acceptance: ['我能打开测试成果', '结果符合测试需求'] }] }));
   await planDialog.getByRole('button', { name: '导入计划' }).click();
-  await expect(page.getByRole('dialog', { name: '粘贴 Codex 的计划' })).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: '粘贴规划 Agent 的计划' })).toHaveCount(0);
 
   const card = page.getByRole('article', { name: '闭环测试交付' });
   await expect(card.getByText('待生成执行单')).toBeVisible();

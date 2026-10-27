@@ -124,7 +124,7 @@ function Welcome() {
     <h2>从一句话开始</h2>
     <ol className="welcome-steps">
       <li><b>说出你想做的事</b>不用选模型、难度或执行者。</li>
-      <li><b>交给 Codex 规划</b>复制规划请求给 Codex，它会拆成任务并选好执行者。</li>
+      <li><b>交给规划 Agent 规划</b>复制规划请求给规划 Agent，它会拆成任务并选好执行者。</li>
       <li><b>把执行单发给 Agent</b>做完后，成果会回到这里，由你试用确认。</li>
     </ol>
     <button className="btn primary" onClick={() => s.openDialog('request')}>提第一个需求</button>
@@ -196,7 +196,7 @@ function RequestTurn({ q }: { q: R }) {
     <p className="turn-next">{relay.next}</p>
     <div className="turn-actions">
       <button className="btn primary" disabled={s.busy} onClick={() => void copyPlanning(s, q)}><Copy size={16} />复制规划请求</button>
-      <button className="btn" onClick={() => s.openDialog('import-plan')}><ClipboardPaste size={16} />粘贴 Codex 的计划</button>
+      <button className="btn" onClick={() => s.openDialog('import-plan')}><ClipboardPaste size={16} />粘贴规划 Agent 的计划</button>
       <RequestMoreActions q={q}/>
     </div>
   </article>;

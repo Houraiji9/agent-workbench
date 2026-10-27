@@ -38,7 +38,7 @@ export function Team() {
   const routeId = (s.data.agents as R[]).find(a => a.id === s.route.id)?.merged_into || s.route.id;
   const selected = agents.find(a => a.id === routeId);
   return <div className="page-wrap">
-    <header className="page-head"><div><h1>团队</h1><p>谁擅长什么、手里有什么。规划时 Codex 会按这些分工选人。</p></div><button className="btn primary" onClick={()=>s.openDialog('agent-add')}><Plus size={16}/>新增团队</button></header>
+    <header className="page-head"><div><h1>团队</h1><p>谁擅长什么、手里有什么。规划 Agent 会按这些分工选人。</p></div><button className="btn primary" onClick={()=>s.openDialog('agent-add')}><Plus size={16}/>新增团队</button></header>
     <Tabs label="团队管理" value={s.route.tab||'mine'} onChange={tab=>s.go({page:'team',tab})} tabs={[[ 'mine','我的团队'],['presets','预设库'],['removed','已移除']]}/>
     {s.route.tab==='presets'?<PresetLibrary/>:s.route.tab==='removed'?<RemovedAgents/>:<>
     <div className={'team' + (selected ? ' has-pick' : '')}>
@@ -87,12 +87,12 @@ function AgentPanel({ a }: { a: R }) {
       <dt>使用的账号</dt><dd>{accounts.join('、') || '未登记'}</dd>
       <dt>最近会话</dt><dd>{st.last ? `${relative(st.last, s.tz)} · 共 ${st.sessions} 个` : '暂无记录'}</dd>
     </dl>
-    <button className="btn" onClick={() => void s.copy(`请使用工作台 MCP 的 get_dispatch_context，查看 ${a.name} 的分工、任务队列、额度和模型列表，判断它现在适合接什么工作。`, `评估请求已复制，发给 Codex 即可`)}><Copy size={16} />问 Codex：它现在适合接什么</button>
+    <button className="btn" onClick={() => void s.copy(`请使用工作台 MCP 的 get_dispatch_context，查看 ${a.name} 的分工、任务队列、额度和模型列表，判断它现在适合接什么工作。`, `评估请求已复制，发给规划 Agent 即可`)}><Copy size={16} />问规划 Agent：它现在适合接什么</button>
     {catalog && <Section title="模型与建议用途" aside={<button className="link" onClick={()=>s.openDialog('agent-edit',{agent:a,modelsOpen:true})}><PencilLine size={14}/>编辑模型</button>}>
       <div className="model-list">{catalog.models.map((m:R) => {
         const retired = isModelRetired(m,s.tz);
         return <div className="model-row" key={m.id}><div><strong>{m.name}{m.kind === 'mode' && <small> · 模式</small>}</strong><p>{m.purpose}</p>{m.access && <small className="muted">{retired ? '已下线' : m.access}</small>}</div>
-          <button className="icon-btn" disabled={!!retired} title={`复制 ${m.name} 派单要求`} aria-label={`复制 ${m.name} 派单要求`} onClick={() => void s.copy(`请使用工作台 MCP 规划我的下一项需求。执行者：${a.name}（${a.id}）；指定${m.kind === 'mode' ? '模式' : '模型'}：${m.name}；submit_task_plan 的 requested_model 填写 ${JSON.stringify(m.id)}。先读取 get_dispatch_context 和项目上下文，再结合任务、职责和资源规划。`, '派单要求已复制，发给 Codex 并补充需求即可')}><Copy size={15}/></button></div>;
+          <button className="icon-btn" disabled={!!retired} title={`复制 ${m.name} 派单要求`} aria-label={`复制 ${m.name} 派单要求`} onClick={() => void s.copy(`请使用工作台 MCP 规划我的下一项需求。执行者：${a.name}（${a.id}）；指定${m.kind === 'mode' ? '模式' : '模型'}：${m.name}；submit_task_plan 的 requested_model 填写 ${JSON.stringify(m.id)}。先读取 get_dispatch_context 和项目上下文，再结合任务、职责和资源规划。`, '派单要求已复制，发给规划 Agent 并补充需求即可')}><Copy size={15}/></button></div>;
       })}</div>
       {!catalog.models.length&&<p className="muted small">由执行者选择。你也可以添加常用模型。</p>}
       {!!catalog.sources.length&&<details className="model-source"><summary>资料来源 · {catalog.as_of} 更新</summary>{catalog.sources.map((url:string,i:number)=><a key={url} href={url} target="_blank" rel="noreferrer">官方资料 {i+1}</a>)}</details>}

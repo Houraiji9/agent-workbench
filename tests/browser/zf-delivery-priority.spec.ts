@@ -134,7 +134,7 @@ test('审查条件直接可见且说明错误，已保存免审原因编辑可�
   await expect(edit.getByLabel('不安排审查的原因')).toBeVisible();
   await edit.getByLabel('不安排审查的原因').fill('这次由我自己试用确认');
   await edit.getByRole('button', { name: '现在开始', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: '下一步：发给 Codex' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: '下一步：发给规划 Agent' })).toBeVisible();
   expect((await ctx.get('/state')).requests.find((q: any) => q.text === text)).toMatchObject({ status: 'awaiting_planning', review_policy: { mode: 'not_requested', note: '这次由我自己试用确认' } });
 });
 

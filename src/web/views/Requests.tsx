@@ -15,12 +15,12 @@ export function Requests(){
    <Tabs label="需求状态" value={tab} onChange={s.setTab} tabs={[[ 'drafts','待开始',count('drafts')],['waiting','待规划',count('waiting')],['planned','已生成计划',count('planned')]]}/>
    <div className="library-tools"><input className="filter-input" aria-label="搜索需求" placeholder="搜索内容或项目" value={query} onChange={e=>setQuery(e.target.value)}/><select aria-label="筛选需求项目" value={project} onChange={e=>setProject(e.target.value)}><option value="">全部项目</option>{s.data.projects.map((p:R)=><option key={p.id} value={p.id}>{p.name}{p.archived?' · 已归档':''}</option>)}</select>
      {project&&<button className="btn small ghost" onClick={()=>setProject('')}><X size={14}/>看全部项目</button>}</div>
-   {!items.length?<Empty title={query||project?'没有符合筛选的需求':'这里还没有内容'}>{query||project?'换个关键词或项目试试。':tab==='drafts'?'点右上角“提需求”记下一个想法。':tab==='waiting'?'提需求时点“现在开始”，需求就会出现在这里。':'Codex 提交计划后，可以在这里查看。'}</Empty>:<div className="request-list">{items.map(q=>{const projectRecord=projectById.get(q.project_id)||{},archived=projectRecord.archived,editable=!archived&&canEditRequest(q,s.data.tasks,s.data.runs);return <article className="request-card" key={q.id} aria-label={q.text}>
+   {!items.length?<Empty title={query||project?'没有符合筛选的需求':'这里还没有内容'}>{query||project?'换个关键词或项目试试。':tab==='drafts'?'点右上角“提需求”记下一个想法。':tab==='waiting'?'提需求时点“现在开始”，需求就会出现在这里。':'规划 Agent 提交计划后，可以在这里查看。'}</Empty>:<div className="request-list">{items.map(q=>{const projectRecord=projectById.get(q.project_id)||{},archived=projectRecord.archived,editable=!archived&&canEditRequest(q,s.data.tasks,s.data.runs);return <article className="request-card" key={q.id} aria-label={q.text}>
      <div className="request-card-head">
        <div className="turn-top"><Pill tone={q.status==='awaiting_planning'?'you':'quiet'}>{requestStatusText[q.status]}</Pill><small>{s.pname(q.project_id)}{archived?' · 已归档':''} · {relative(q.updated_at||q.created_at,s.tz)}</small></div>
        <div className="now-actions">
          {!archived&&q.status==='draft'&&<button className="btn small primary" disabled={s.busy} onClick={()=>void startPlanning(s,q)}>现在开始</button>}
-         {!archived&&q.status==='awaiting_planning'&&<><button className="btn small primary" disabled={s.busy} onClick={()=>void copyPlanning(s,q)}><Copy size={14}/>复制规划请求</button><button className="btn small" onClick={()=>setChatRequest(q.id)}><MessagesSquare size={14}/>在 GPT 聊天里规划</button></>}
+         {!archived&&q.status==='awaiting_planning'&&<><button className="btn small primary" disabled={s.busy} onClick={()=>void copyPlanning(s,q)}><Copy size={14}/>复制规划请求</button><button className="btn small" onClick={()=>setChatRequest(q.id)}><MessagesSquare size={14}/>在聊天里规划</button></>}
          {q.status==='planned'&&<button className="btn small" onClick={()=>s.go({page:'projects',id:q.project_id})}>查看执行顺序</button>}
        </div>
      </div>

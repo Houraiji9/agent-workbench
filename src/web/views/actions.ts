@@ -25,7 +25,7 @@ export async function startPlanning(s:Store,q:R){return s.act(async()=>{
 export async function copyPlanning(s: Store, q: R) {
   return s.act(async () => {
     const r = await api('/requests/' + q.id + '/entry');
-    const copied=await s.copy(r.text, '规划请求已复制，粘贴给 Codex 即可');
+    const copied=await s.copy(r.text, '规划请求已复制，粘贴给规划 Agent 即可');
     if(!copied)s.openDialog('request-handoff',{request:q,fallbackText:r.text});
     return r;
   });

@@ -27,3 +27,14 @@ export function reviewProceedAuthority(wb:Workbench,runId:string){
  const eligible=assignments.length===0||(!r.review_collaboration_multi&&members.length<=1&&reports.length<=1&&reports.some(v=>v.id===review?.id));
  return {can_proceed:decision?decision.decision==='continue':!!(eligible&&review?.verdict==='passed'&&matched&&(!r.scope_revision||review.review_digest===digest)),decision,review};
 }
+
+/** User trial is independent of review permission. Capture facts, never manufacture a pass. */
+export function acceptanceReviewSnapshot(wb:Workbench,runId:string,skipped:boolean){
+ const authority=reviewProceedAuthority(wb,runId),digest=reviewDeliveryDigest(wb,runId),review=authority.review;
+ const hashes=wb.all('artifacts').filter(a=>a.run_id===runId&&a.current).map(a=>a.sha256).sort();
+ const applicable=!!review&&JSON.stringify([...(review.artifact_hashes||[])].sort())===JSON.stringify(hashes)&&(!review.review_digest||review.review_digest===digest)&&(!wb.get('runs',runId).scope_revision||review.review_digest===digest);
+ return {review_status:skipped?'not_requested':authority.decision?.decision==='continue'?'continue_recorded':authority.can_proceed&&applicable?'passed':'unconfirmed',
+   review_id:!skipped&&applicable?review!.id:null,
+   review_decision_id:skipped?null:authority.decision?.id||null,
+   review_snapshot:{delivery_digest:digest,observed_review_id:review?.id||null,verdict:review?.verdict||null,applicable,can_proceed:authority.can_proceed}};
+}

@@ -2,6 +2,13 @@ import type {Workbench} from './workbench.ts';
 import type {Row} from './schema.ts';
 
 export const planningSummaryLimits={active:5,blockers:3,delivered:3,accepted:3,text:240,title:120,id:100,max_characters:16000} as const;
+
+/** Clipboard background for chats without MCP: one entry per task, bounded history. */
+export function compactPlanningSummary(summary:ReturnType<typeof planningProjectSummary>){
+  const seen=new Set<string>();
+  const tasks=[...summary.blockers,...summary.active_tasks,...summary.recent_acceptances,...summary.recent_deliveries].filter(t=>!seen.has(t.task_id)&&!!seen.add(t.task_id)).slice(0,5).map(t=>({id:t.task_id,title:clip(t.title,80),status:t.status,at:t.occurred_at,detail:clip(t.detail,100)}));
+  return {as_of:summary.as_of,source:summary.source,goal:clip(summary.project.goal,240),recorded_stage:summary.project.recorded_stage,counts:summary.status_counts,tasks,omitted_tasks:Math.max(0,summary.status_counts.total-tasks.length),note:'项目记录摘要，可能滞后；交付与用户验收分开。'};
+}
 const closed=new Set(['accepted','cancelled','rework_linked']);
 const blocking=new Set(['waiting_input','blocked','failed','closeout_waiting_input','closeout_blocked','changes_requested']);
 const delivered=new Set(['submitted','in_review','changes_requested','awaiting_closeout','closing','closeout_waiting_input','closeout_blocked','awaiting_confirmation','accepted']);

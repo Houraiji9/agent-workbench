@@ -41,7 +41,7 @@ export function prepareDecision(wb:Workbench,action:DecisionAction,v:Row){
   assert(!['accepted','cancelled','rework_linked'].includes(t.status),'任务已结束',409);
   let details:string[]=[],checks:string[]=[];
   if(action==='accept'){
-    assertCloseoutComplete(wb,t,r);checks=userAcceptanceItems(t);details=['独立审查与执行收尾已完成。请确认以下使用结果：'];
+    assertCloseoutComplete(wb,t,r);checks=userAcceptanceItems(t);details=['执行者已完成收尾。请按实际试用确认以下使用结果；审查情况另行记录。'];
   }else if(action==='reject'){
     assert(['submitted','in_review','awaiting_confirmation'].includes(t.status)&&r.status==='submitted','当前任务不在试用确认阶段',409);
     const hashes=wb.all('artifacts').filter(a=>a.run_id===r.id&&a.current).map(a=>a.sha256).sort();

@@ -193,7 +193,7 @@ function NowCard({ detail, relay, run, who, current, lastMessage }: { detail: R;
     case 'blocked': case 'failed':
       body = <>{lastMessage && <blockquote className="agent-says"><b>{s.name(who)} 说：</b>{lastMessage}</blockquote>}
         <div className="now-actions">
-          <button className="btn primary" onClick={() => void s.copy(`任务“${t.title}”（Task ${t.id} / Run ${t.current_run_id}）${t.status === 'blocked' ? '遇到阻碍' : '没有完成'}。执行者 ${s.name(who)} 的说明：${lastMessage || '未填写'}。\n请用工作台 MCP 查看这项任务的上下文，判断怎么继续：协助解除阻碍，或建议换一位执行者重做。`, '求助说明已复制，粘贴给 Codex 即可')}><Copy size={16} />复制给 Codex 求助</button>
+          <button className="btn primary" onClick={() => void s.copy(`任务“${t.title}”（Task ${t.id} / Run ${t.current_run_id}）${t.status === 'blocked' ? '遇到阻碍' : '没有完成'}。执行者 ${s.name(who)} 的说明：${lastMessage || '未填写'}。\n请用工作台 MCP 查看这项任务的上下文，判断怎么继续：协助解除阻碍，或建议换一位执行者重做。`, '求助说明已复制，粘贴给规划 Agent 即可')}><Copy size={16} />复制给规划 Agent 求助</button>
           <button className="btn" onClick={() => s.openDialog('retry', { detail })}><Repeat size={16} />换人或重新做一次</button>
         </div></>;
       break;

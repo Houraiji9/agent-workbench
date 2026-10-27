@@ -15,7 +15,7 @@ test('项目浮层不改变弹窗尺寸；低窗口、搜索、Escape及取消�
 test('旧三种分类统一为待开始；明确开始、暂存、删除与刷新一致',async({page})=>{
  const {get,post}=await api(page);await page.goto('/#/requests');
  for(const kind of ['idea','plan','memo'])await post('/requests',{project_id:'P-workbench',text:'测试归类 '+kind,status:'draft',kind});
- await page.reload();const card=page.getByRole('article',{name:'测试归类 plan',exact:true});await card.getByRole('button',{name:'现在开始'}).click();await page.getByRole('dialog',{name:'下一步：发给 Codex'}).getByRole('button',{name:'关闭',exact:true}).first().click();await expect(page.getByRole('tab',{name:'待规划'})).toHaveAttribute('aria-selected','true');await expect(card).toBeVisible();
+ await page.reload();const card=page.getByRole('article',{name:'测试归类 plan',exact:true});await card.getByRole('button',{name:'现在开始'}).click();await page.getByRole('dialog',{name:'下一步：发给规划 Agent'}).getByRole('button',{name:'关闭',exact:true}).first().click();await expect(page.getByRole('tab',{name:'待规划'})).toHaveAttribute('aria-selected','true');await expect(card).toBeVisible();
  await card.getByRole('button',{name:'暂时不做'}).click();await page.getByRole('dialog',{name:'暂时不做'}).getByRole('button',{name:'暂时不做'}).click();await expect(page.getByRole('tab',{name:'待开始'})).toHaveAttribute('aria-selected','true');await expect(card).toBeVisible();await shot(page,'需求箱-分类与操作');
  await card.getByRole('button',{name:'删除',exact:true}).click();await page.getByRole('dialog',{name:'删除需求'}).getByRole('button',{name:'取消'}).click();await expect(card).toBeVisible();await card.getByRole('button',{name:'删除',exact:true}).click();await page.getByRole('button',{name:'确认删除'}).click();await expect(card).toHaveCount(0);await page.reload();await expect(card).toHaveCount(0);
 });

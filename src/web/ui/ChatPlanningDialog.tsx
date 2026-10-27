@@ -8,14 +8,14 @@ export function ChatPlanningDialog({requestId,onClose}:{requestId:string;onClose
   useEffect(()=>{const ctl=new AbortController();api('/requests/'+requestId+'/chat-context',undefined,ctl.signal).then(setContext).catch(e=>{if(!ctl.signal.aborted)setError(e.message)});return()=>ctl.abort()},[requestId]);
   async function check(){setBusy(true);setError('');try{setPreview(await api('/plans/chat-preview',{text}))}catch(e){setError((e as Error).message)}finally{setBusy(false)}}
   async function save(){setBusy(true);setError('');try{const result=await api('/plans/chat-import',{text});setSaved(result);await s.refresh()}catch(e){setError((e as Error).message)}finally{setBusy(false)}}
-  return <Dialog title="在 GPT 聊天里规划" sub="GPT 负责理解和分工，工作台保存计划、安排执行并记录结果。" onClose={onClose} label="聊天规划">
+  return <Dialog title="在聊天里规划" sub="规划 Agent 负责理解和分工，工作台保存计划、安排执行并记录结果。" onClose={onClose} label="聊天规划">
     {error&&<Notice tone="error">{error}</Notice>}
     {saved?<><Notice>计划已保存，尚未启动执行。</Notice>{saved.task_ids.map((id:string)=><button key={id} className="btn" onClick={()=>{onClose();s.openTask(id)}}>查看任务与下一步</button>)}</>:<>
-      <p>聊天已经连接工作台 MCP 时，让 GPT 读取本需求并提交计划即可。没有连接时，用下面两步完成。</p>
-      <section className="form"><h3>1. 把需求资料交给 GPT</h3><p className="muted small">包含本次需求、项目当前进展、团队和资源摘要。</p>
-        <button className="btn" disabled={!context} onClick={async()=>{const content='请作为真实规划模型，按以下资料规划；只返回完整JSON计划，不调用执行者。\n'+JSON.stringify(context,null,2);const copied=await s.copy(content,'需求资料已复制');setFallback(copied?'':content)}}>复制给 GPT</button>
-        {fallback&&<CopyBox text={fallback} label="手动复制给 GPT" rows={8}/>}
-        <h3>2. 粘贴 GPT 返回的计划</h3><Field label="GPT 的完整回复"><textarea rows={7} value={text} maxLength={300000} placeholder="把 GPT 给你的计划直接粘贴到这里，不需要自己修改格式。" onChange={e=>{setText(e.target.value);setPreview(null)}}/></Field>
+      <p>聊天已经连接工作台 MCP 时，让规划 Agent 读取本需求并提交计划即可。没有连接时，用下面两步完成。</p>
+      <section className="form"><h3>1. 把需求资料交给规划 Agent</h3><p className="muted small">包含本次需求、项目当前进展、团队和资源摘要。</p>
+        <button className="btn" disabled={!context} onClick={async()=>{const content=context!.copy_text;const copied=await s.copy(content,'需求资料已复制');setFallback(copied?'':content)}}>复制给规划 Agent</button>
+        {fallback&&<CopyBox text={fallback} label="手动复制给规划 Agent" rows={8}/>}
+        <h3>2. 粘贴规划 Agent 返回的计划</h3><Field label="规划 Agent 的完整回复"><textarea rows={7} value={text} maxLength={300000} placeholder="把规划 Agent 给你的计划直接粘贴到这里，不需要自己修改格式。" onChange={e=>{setText(e.target.value);setPreview(null)}}/></Field>
         <button className="btn" disabled={busy||!text.trim()} onClick={()=>void check()}>{busy?'正在核对…':'查看分工预览'}</button>
       </section>
       {preview&&<section aria-label="计划预览"><h3>这次准备怎么做</h3>

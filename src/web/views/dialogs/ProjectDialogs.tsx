@@ -73,7 +73,7 @@ export function EditProjectDialog({ project, onClose }: { project: R; onClose():
   const { error, saving, run } = useSubmit();
   const set = (k: keyof typeof v) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setV({ ...v, [k]: e.target.value });
   const portable = profile.deployment.mode === 'local' && profile.deployment.verification === 'portable_manifest';
-  return <Dialog title="编辑项目资料" sub="用自己的话写就行，Codex 规划时会读到。" onClose={onClose} label="编辑项目资料">
+  return <Dialog title="编辑项目资料" sub="用自己的话写就行，规划 Agent 规划时会读到。" onClose={onClose} label="编辑项目资料">
     <form className="form delivery-form" onInvalidCapture={e=>{
       // Native validation must reveal a required field before the browser focuses it.
       let ancestor=(e.target as HTMLElement).parentElement;
@@ -169,7 +169,7 @@ export function MemoryDialog({ projectId, onClose }: { projectId: string; onClos
 
 export function DiagramDialog({ diagram: d, onClose }: { diagram: R; onClose(): void }) {
   const s = useStore();
-  return <Dialog wide title={d.title} sub={`${fullDate(d.created_at, s.tz)} 生成 · ${d.source === 'ledger_snapshot' ? '根据当时的任务记录' : 'Codex 绘制'}。图解保留生成那一刻的内容。`} onClose={onClose} label="项目图解"
+  return <Dialog wide title={d.title} sub={`${fullDate(d.created_at, s.tz)} 生成 · ${d.source === 'ledger_snapshot' ? '根据当时的任务记录' : 'Agent 绘制'}。图解保留生成那一刻的内容。`} onClose={onClose} label="项目图解"
     footer={<a className="btn" href={'/api/diagrams/' + d.id + '/content?download=1'} download><Download size={16} />下载图解</a>}>
     <iframe className="preview-frame tall" sandbox="allow-scripts" title={d.title} src={'/api/diagrams/' + d.id + '/content'} />
   </Dialog>;

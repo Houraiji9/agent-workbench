@@ -1,11 +1,17 @@
 import {parseAgentOutput} from './agent-output.ts';
 
+/** Clients may emit structured findings. Preserve every field without changing the verdict. */
+function compatibleReport(value:unknown):unknown{
+ if(!value||typeof value!=='object'||Array.isArray(value)||!('findings' in value)||!Array.isArray(value.findings))return value;
+ return {...value,findings:value.findings.map((item:unknown)=>item&&typeof item==='object'&&!Array.isArray(item)?JSON.stringify(item):item)};
+}
+
 /** The caller must supply only the launched client's successful terminal response.
  * Some clients concatenate pre-tool narration with the final JSON. Retain one exact
  * trailing object; never guess between reports, repair JSON, or inspect tool output. */
 export function nativeReviewResult(text:string):unknown{
  const input=text.trim();if(input.length>2*1024*1024)throw Error('原生审查结果超过大小限制');
- try{return JSON.parse(input)}catch{}
+ try{return compatibleReport(JSON.parse(input))}catch{}
  const start=input.indexOf('{');if(start<0||/[\[\]}]/.test(input.slice(0,start)))throw Error('原生审查结果没有唯一完整报告');
  let depth=0,quoted=false,escaped=false,end=-1;
  for(let i=start;i<input.length;i++){
@@ -13,7 +19,7 @@ export function nativeReviewResult(text:string):unknown{
   if(c==='"')quoted=true;else if(c==='{')depth++;else if(c==='}'&&--depth===0){end=i+1;break;}
  }
  if(end<0||!/^\s*(?:```\s*)?$/.test(input.slice(end)))throw Error('原生审查结果不完整或包含多个候选报告');
- return JSON.parse(input.slice(start,end));
+ return compatibleReport(JSON.parse(input.slice(start,end)));
 }
 
 /** A file submitted by the authenticated reviewer remains a reviewer-authored report.
