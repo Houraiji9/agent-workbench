@@ -79,6 +79,50 @@ function dshFinal(launch: Launch, sessionId: string, result: Row) {
   launch.onLine(JSON.stringify({ type: 'final', text: JSON.stringify(result) }));
 }
 
+test('session fallback: stopped review without a usable session retries automatically and preserves history',async()=>{
+ for(const scenario of ['missing','started_missing','mismatch','cancelled','prelaunch']){
+  const f=fixture(),fake=fakeClients();let attempts=0;
+  const clients={...fake.clients,async resolve(...args:Parameters<typeof fake.clients.resolve>){if(scenario==='prelaunch'&&attempts++===0)throw Error('synthetic prelaunch failure');return fake.clients.resolve(...args);}};
+  const o=new AgentOrchestrator(f.wb,fake.launcher,clients);
+  try{const t=planned(f);deliver(f,t.tid,t.rid);const first=o.dispatchReview(input(f,t.tid));
+   if(scenario!=='prelaunch'){
+    await until(()=>fake.launches.length===1,'first review should start');
+    if(scenario==='started_missing')startReview(f.wb,{review_id:first.review_id!,identity:'grok-build'});
+    if(scenario==='mismatch'||scenario==='cancelled')grokSession(fake.launches[0],'unusable-session');
+    fake.releases[0]();await terminal(f,first.job_id);
+    if(scenario==='mismatch'||scenario==='cancelled'){const row=f.wb.get('agent_jobs',first.job_id);Object.assign(row,scenario==='mismatch'?{session_mismatch:true}:{cancel_requested_at:new Date().toISOString()});f.wb.put('agent_jobs',row,{run_id:t.rid});}
+   }else await terminal(f,first.job_id);
+   const original=structuredClone(f.wb.get('agent_jobs',first.job_id));
+   // An older successful conversation must not be selected across the unusable latest attempt.
+   f.wb.put('agent_jobs',{...original,id:'AJ-'+crypto.randomUUID(),request_id:crypto.randomUUID(),status:'completed',created_at:'2000-01-01T00:00:00.000Z',session_id:'older-context',session_mismatch:false,cancel_requested_at:null},{run_id:t.rid});
+   const request=input(f,t.tid),next=o.dispatchReview(request),again=o.dispatchReview(request);
+   assert.equal(next.job_id,again.job_id);assert.equal(next.session_mode,'new');assert.equal(next.previous_job_id,first.job_id);assert.match(next.session_reason,/自动新开/);assert.notEqual(next.review_id,first.review_id);
+   assert.equal(f.wb.get('review_assignments',first.review_id!).status,'cancelled');assert.deepEqual(f.wb.get('agent_jobs',first.job_id),original);
+   const index=scenario==='prelaunch'?0:1;await until(()=>fake.launches.length===index+1,'fallback should launch once').catch(()=>{throw Error(scenario+': '+f.wb.get('agent_jobs',next.job_id).reason);});assert.equal(fake.builds[index].sessionId,undefined);
+   const report=nativeReviewResult(f,next.review_id!);grokSession(fake.launches[index],'new-review-session');finishReview(f,next.review_id!,'passed','new-review-session');fake.releases[index]();assert.equal((await terminal(f,next.job_id)).status,'completed');assert.equal(report.run_id,t.rid);
+  }finally{await o.close();f.wb.close();}
+ }
+});
+
+test('session fallback: usable latest review resumes while active and unresolved processes never duplicate',async()=>{
+ const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
+ try{const t=planned(f);deliver(f,t.tid,t.rid);const first=o.dispatchReview(input(f,t.tid));await until(()=>fake.launches.length===1,'first review should launch');
+  assert.equal(o.dispatchReview(input(f,t.tid)).job_id,first.job_id);grokSession(fake.launches[0],'usable-session');startReview(f.wb,{review_id:first.review_id!,identity:'grok-build',session_id:'usable-session'});fake.releases[0]();await terminal(f,first.job_id);
+  const next=o.dispatchReview(input(f,t.tid));assert.equal(next.session_mode,'resume');assert.equal(next.review_id,first.review_id);await until(()=>fake.launches.length===2,'review should resume');assert.equal(fake.builds[1].sessionId,'usable-session');fake.releases[1]();await terminal(f,next.job_id);
+  const unresolved=f.wb.get('agent_jobs',next.job_id);Object.assign(unresolved,{process_may_be_running:true,process_pid:process.pid});f.wb.put('agent_jobs',unresolved,{run_id:t.rid});
+  assert.throws(()=>o.dispatchReview({...input(f,t.tid),fresh_session:true}),/仍存在/);assert.equal(fake.launches.length,2);
+ }finally{await o.close();f.wb.close();}
+});
+
+test('session fallback: Claude delivery can be handed manually to Codex after automatic review fails',async()=>{
+ const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
+ try{const t=planned(f,executionRoute(f));deliver(f,t.tid,t.rid);const first=o.dispatchReview(input(f,t.tid));await until(()=>fake.launches.length===1,'automatic review should launch');fake.releases[0]();const failed=await terminal(f,first.job_id);assert.equal(failed.session_id,null);
+  const order=exportReviewOrder(f.wb,{run_id:t.rid,reviewer_id:'codex',expected_revision:f.wb.get('tasks',t.tid).revision,reason:'用户决定执行者交付后停止，手动交给Codex审查',delivery_mode:'manual',new_review:true},{role:'user'});
+  const context=reviewAssignmentContext(f.wb,order.review_id);assert.equal(context.assignment.reviewer_id,'codex');assert.equal(context.assignment.delivery_mode,'manual');
+  finishReview(f,order.review_id);assert.equal(f.wb.get('review_assignments',order.review_id).status,'completed');assert.equal(fake.launches.length,1);assert.deepEqual(f.wb.get('agent_jobs',first.job_id),failed);
+ }finally{await o.close();f.wb.close();}
+});
+
 test('Cursor successful terminal narration preserves the unique genuine report and rejects ambiguous reports',async()=>{
  for(const scenario of ['passed','changes_requested','ambiguous']){const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);try{
   f.wb.put('agents',{...f.wb.get('agents','cursor'),preset_id:'cursor',archived:false});
@@ -521,8 +565,8 @@ test('R2 恢复：缺PID遗留记录必须明确确认并审计，仅解除进�
     const saved = f.wb.get('agent_jobs', old.id); assert.equal(saved.process_recovery.actor, 'user'); assert.equal(saved.process_recovery.confirmed, true);
     const audits = recoveryAudits(f, old.id, 'confirm_agent_process_ended'); assert.equal(audits.length, 1); assert.equal(audits[0].actor, 'user'); assert.equal(JSON.parse(audits[0].data).previous_pid, null);
     assert.equal(f.wb.all('reviews').length, 0); assert.equal(f.wb.get('runs', t.rid).has_started, false); assert.equal(fake.launches.length, 0);
-    assert.throws(() => o.dispatchRun(input(f, t.tid), {role:'user',source:'page'}), /fresh_session|未确认完成/);
-    const retried = o.dispatchRun({...input(f, t.tid), fresh_session: true}, {role:'user',source:'page'}); await until(() => fake.launches.length === 1, '明确恢复后仍需显式fresh_session重试');
+    const retried = o.dispatchRun(input(f, t.tid), {role:'user',source:'page'}); await until(() => fake.launches.length === 1, '已确认结束后缺少会话编号应直接新开');
+    assert.equal(retried.session_mode,'new');assert.equal(retried.previous_job_id,old.id);
     fake.releases[0](); await terminal(f, retried.job_id); assert.equal(f.wb.get('agent_jobs', old.id).status, 'interrupted');
   } finally {await o.close(); f.wb.close();}
 });
@@ -732,7 +776,7 @@ test('R3 closeout identity：失败S1之后显式fresh S2可正式完成且旧jo
       assert.equal(failed.status, 'failed'); assert.equal(failed.process_may_be_running, false);
       const previous = f.wb.get('runs', t.rid).closeout;
       assert.equal(previous.status, 'awaiting_dispatch'); assert.equal(previous.session_id, 'r3-closeout-S1'); assert.equal(previous.client_job_id, first.job_id);
-      assert.throws(() => o.dispatchRun(input(f, t.tid), {role:'user',source:'page'}), /fresh_session/);
+      assert.equal((o as any).priorSession(f.wb.get('tasks',t.tid),'execution',failed.route).session_id,'r3-closeout-S1');
       const second = o.dispatchRun({...input(f, t.tid), fresh_session: true}, {role:'user',source:'page'});
       await until(() => fake.launches.length === 2, 'R3 显式fresh收尾重试应启动');
       assert.equal(second.session_mode, 'new'); assert.equal(fake.builds[1].sessionId, undefined);
