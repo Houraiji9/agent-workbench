@@ -1,4 +1,5 @@
 import {preview} from './workflow-guidance.ts';
+import {handoffText} from './compact-order.ts';
 import {agentRouteSchema} from './agent-route-schema.ts';
 import {agentClientKind} from './agent-client-kind.ts';
 import {userReviewSelection} from './priority-policy.ts';
@@ -55,8 +56,9 @@ Review ${a.id} / Task ${t.id} / Run ${a.run_id}
 目标：${preview(t.goal)}
 范围：${preview(t.scope)}
 ${scope.acceptance.slice(0,8).map((x:string)=>'- '+preview(x,300)).join('\n')}
+${handoffText(t,'reviewer')}
 
-已有上下文按本轮变化继续；首次或缺失资料时运行 context。长项和完整文件清单用 get_review_assignment(mode=full) 按需展开，项目经验无需每轮通读。
+已有上下文按本轮变化继续；首次或缺失资料时运行 context。单项展开用 context-section plan / files / requirements / history，MCP 对应 get_review_assignment(section=...)。只检查本轮变化及直接影响，项目经验无需每轮通读。
 接单：${command} started ${a.reviewer_id}
 简版：${command} context
 回传：${command} submit "${path.join(dir,'result.json')}"

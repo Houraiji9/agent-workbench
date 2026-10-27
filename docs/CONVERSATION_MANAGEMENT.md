@@ -44,7 +44,7 @@
 | 新增/修改/隐藏/恢复额度、手填缓存和月积分 | manage_quotas：create / update / hide_source / delete / restore / cache / workbuddy_points |
 | 订阅和未来安排的新增、修改、删除、实际发生确认 | manage_subscriptions：create / update / delete / confirm |
 | 标记已转发、取消任务、回答问题、通过、退回、返工 | manage_tasks：dispatch / cancel / reply / accept / reject / rework |
-| 修订当前 Task/Run 范围 | `manage_tasks` action `amend`：传 `task_id`、`run_id`、`expected_revision`、`reason` 与 `changes`（可含 `goal`、`scope`、`acceptance`、`tests`、`required_files`）；运行中即时应用，交付内容变化可同一 Run 再次 submitted，旧交付归档保留；reviewer/model-only 修改留在当前 Run |
+| 修订当前 Task/Run 范围 | `manage_tasks` action `amend`：传 `task_id`、`run_id`、`expected_revision`、`reason` 与 `changes`（可含 `goal`、`scope`、`acceptance`、`tests`、`required_files`、`context_contract`）；运行中即时应用，交付内容变化可同一 Run 再次 submitted，旧交付归档保留；reviewer/model-only 修改留在当前 Run |
 | 设置或建议执行安排 | `manage_tasks` action `set_arrangement`：传 `task_id` 与 `data.arrangement`、当前 revision，可选 `agent_id` 或 `execution_policy`；按现有同 Task 生命周期应用，不热启动。`propose_arrangement` 只用于用户要建议时 |
 | 设置审查安排 | `manage_reviews.set_arrangement`：按当前 Run 设置 `reviewer_id`，可选 `requested_model`、`route`，并提交版本与原因 |
 | 新增、移除或替换审查成员 | `manage_reviews.update_member`：`action=remove` 或 `replace`，使用当前 `review_id`、版本与原因；replace 时填写新 reviewer/model |
@@ -63,7 +63,7 @@
 
 ## 通过、退回和审查
 
-用户说“我试过了，通过”，主会话用 `manage_tasks.accept` 准备确认卡。程序先核对当前交付、独立审查和执行者收尾；未完成时返回具体待办。用户在首页或任务详情看到项目、任务和使用结果清单，点击“确认验收通过”后才完成验收。
+用户说“我试过了，通过”，主会话用 `manage_tasks.accept` 准备确认卡。程序核对当前交付与执行者收尾，审查状态另行记录，不把缺少审查继续授权当作试用门槛。用户在首页或任务详情看到项目、任务和使用结果清单，点击“确认验收通过”后才完成验收。
 
 用户说“这版不行”，`reject` 把意见预填到确认卡；用户点“确认退回修改”后，`rework` 可生成新执行单。审查者要求修改时，`manage_reviews.return_to_executor` 按原报告生成新 Run，不需要重新登记审查结论。当前执行 Agent 在其 Run 权限内可直接接续返修和收尾；仅需新的负责人或外部主执行时，才由用户启动新执行。原成果和报告保留。
 

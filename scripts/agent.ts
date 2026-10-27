@@ -1,8 +1,8 @@
 // Run-scoped convenience client: credentials never appear in prompts or output.
 import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';import {loadConfig} from '../src/core/config.ts';import {safePath,readBounded} from '../src/core/security.ts';
 const [run,action,arg,extra]=process.argv.slice(2);
-const usage='用法：agent.ts <Run ID> context [known_hash] | read <JSON文件> | start | report <JSON文件> | register-delegation <JSON文件> | report-delegation <JSON文件> | review | continue | job <Job ID> | wait <revision> | closeout <JSON文件> | deployment <manifest_sha256> | deployment-context | deployment-evidence <JSON文件>；--help 查看帮助';
-const actions=new Set(['context','read','start','report','register-delegation','report-delegation','review','continue','job','wait','closeout','deployment','deployment-context','deployment-evidence','manage','recover-review']);
+const usage='用法：agent.ts <Run ID> context [known_hash] | context-section <plan|files|requirements|history> | read <JSON文件> | start | report <JSON文件> | register-delegation <JSON文件> | report-delegation <JSON文件> | review | continue | job <Job ID> | wait <revision> | closeout <JSON文件> | deployment <manifest_sha256> | deployment-context | deployment-evidence <JSON文件>；--help 查看帮助';
+const actions=new Set(['context-section','context','read','start','report','register-delegation','report-delegation','review','continue','job','wait','closeout','deployment','deployment-context','deployment-evidence','manage','recover-review']);
 let token='';
 const redact=(text:string)=>token?text.replaceAll(token,'[redacted]'):text;
 // UUIDv5 gives retries of the same scoped registration a stable request ID.
@@ -19,7 +19,8 @@ async function main(){
   if(action==='manage'){
     if(!arg||!extra)throw Error('用法：agent.ts <Run ID> manage <管理或读取工具名> <JSON文件>');
     result=await call(arg,JSON.parse(readBounded(path.resolve(extra),1024*1024).toString('utf8')));
-  }else if(action==='context')result=await call('get_run_context',{mode:arg?'delta':'brief',...(arg?{known_context_hash:arg}:{})});
+  }else if(action==='context-section')result=await call('get_run_context',{section:arg});
+  else if(action==='context')result=await call('get_run_context',{mode:arg?'delta':'brief',...(arg?{known_context_hash:arg}:{})});
   else if(action==='start'){
     const context=await call('get_run_context',{mode:'brief'}),session=process.env.CODEX_THREAD_ID||process.env.CODEX_SESSION_ID;
     await call('ack_run_context',{context_hash:context.context_hash,...(session?{session_id:session}:{})});

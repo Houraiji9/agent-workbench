@@ -1,4 +1,5 @@
-import {briefContext,workflowGuidance} from './workflow-guidance.ts';
+import {taskHandoff} from '../shared/task-handoff.ts';
+import {briefContext,workflowGuidance,contextChanges,contextSection} from './workflow-guidance.ts';
 import {taskMemoryContext} from './project-memory.ts';
 import {z} from 'zod';
 import type {Workbench} from './workbench.ts';
@@ -11,7 +12,7 @@ import {priorityInstructions,validatePriorityPlan,userReviewSelection} from './p
 import {resolveDeliveryProfile} from './delivery-profile.ts';
 
 const assignmentId=z.string().regex(/^RA-[a-f0-9-]{36}$/);
-export const reviewContextInput=z.object({review_id:assignmentId,mode:z.enum(['brief','delta','full']).default('brief'),known_context_hash:z.string().max(64).optional(),session_id:z.string().min(1).max(300).optional()}).strict();
+export const reviewContextInput=z.object({review_id:assignmentId,mode:z.enum(['brief','delta','full']).default('brief'),section:z.enum(['plan','files','requirements','history']).optional(),known_context_hash:z.string().max(64).optional(),session_id:z.string().min(1).max(300).optional()}).strict();
 export const reviewContextAckInput=z.object({review_id:assignmentId,context_hash:z.string().length(64),session_id:z.string().min(1).max(300).optional()}).strict();
 export const reviewContextReadInput=contextFileReadInput.extend({review_id:assignmentId}).strict();
 
@@ -39,7 +40,7 @@ function binding(wb:Workbench,id:string,base:Row){
 }
 function current(wb:Workbench,id:string,base:Row){
   const {a,r,t}=binding(wb,id,base),scope=reviewScope(t,r);
-  const context={project_memory:taskMemoryContext(wb,t),task_id:t.id,run_id:r.id,review_id:a.id,reviewer_id:a.reviewer_id,task_version:t.version,review_digest:base.review_digest,title:t.title,goal:t.goal,scope:t.scope,review_scope:scope,acceptance:scope.acceptance,tests:scope.tests,cwd:r.cwd,
+  const context={handoff:taskHandoff(t,'reviewer'),project_memory:taskMemoryContext(wb,t),task_id:t.id,run_id:r.id,review_id:a.id,reviewer_id:a.reviewer_id,task_version:t.version,review_digest:base.review_digest,title:t.title,goal:t.goal,scope:t.scope,review_scope:scope,acceptance:scope.acceptance,tests:scope.tests,cwd:r.cwd,
     importance:t.importance||'normal',model_selection:t.model_selection||null,requested_model:a.requested_model||null,
     delivery_profile:resolveDeliveryProfile(t),delivery_target:t.delivery_target||'source',runtime_root:t.runtime_root??null,
     artifacts:(base.artifacts||[]).map((x:Row)=>({id:x.id,label:x.label,sha256:x.sha256,archive_path:x.archive_path})),review_files:base.review_files||[],
@@ -66,16 +67,17 @@ export function reviewContext(wb:Workbench,value:unknown,base:Row,dispatchJobId?
   const owners=[a,...wb.all('review_assignments').filter(x=>x.id!==a.id&&x.reviewer_id===a.reviewer_id&&x.session_id===sid&&wb.maybe('runs',x.run_id)?.task_id===t.id)];
   const old=sid?owners.flatMap(x=>x.context_cache||[]).find((x:Row)=>x.hash===v.known_context_hash&&x.task_id===t.id&&x.reviewer_id===a.reviewer_id&&x.session_id===sid):undefined;
   const delta=v.mode==='delta'&&!!old;
-  const changes=delta?Object.fromEntries(Object.entries(context).filter(([key,val])=>JSON.stringify(old.context[key])!==JSON.stringify(val))):context;
+  const changes=contextChanges(context,delta?old.context:undefined);
   const response:Row={review_id:a.id,task_id:t.id,run_id:r.id,review_digest:context.review_digest,mode:v.mode==='full'?'full':delta?'delta':'brief',context_hash:fingerprint,reset_required:v.mode==='delta'&&!old,continuation_pending:continuationPending,
     assignment:{id:a.id,task_id:t.id,run_id:r.id,reviewer_id:a.reviewer_id,status:a.status,review_digest:a.review_digest,session_id:a.session_id||null,actual_model:a.actual_model||null,model_status:a.actual_model?'reported':'unknown',delivery_mode:a.delivery_mode||'manual',result_id:a.result_id||null},report_template:base.compact_report_template||base.report_template,
-    context:v.mode==='full'?{...context,original_request:t.original_request,report_template:base.report_template}:briefContext(changes),
+    context:v.section?contextSection(context,v.section,'reviewer'):v.mode==='full'?{...context,original_request:t.original_request,report_template:base.report_template}:briefContext(changes,'reviewer'),
     authority:{task_id:t.id,run_id:r.id,review_id:a.id,reviewer_id:a.reviewer_id,cwd:r.cwd,read_contract:t.context_contract||null,source_write_allowed:false,output_dir:t.context_contract?.output_dir||null,forbidden_actions:t.forbidden_actions,additional_cost_limit:0},
     file_changes:context.file_context.files.filter((file:Row)=>!old?.context?.file_context?.files?.some((prior:Row)=>prior.key===file.key&&JSON.stringify(prior)===JSON.stringify(file))),
     reading:{context_delivery:'delivered',acknowledgement:!continuationPending&&a.context_ack?.hash===fingerprint&&a.context_ack?.session_id===sid?'acknowledged':'not_acknowledged',files_delivered:(a.context_reads||[]).filter((x:Row)=>x.task_id===t.id&&(x.budget_key?x.budget_key===context.file_context.budget_key&&context.file_context.files.some((file:Row)=>file.key===x.contract_entry_key&&file.file_sha256===x.file_sha256):x.scope_hash===context.file_context.scope_hash)),model_reading:'unknown'},
     references:{full:{tool:'get_review_assignment',arguments:{review_id:a.id,mode:'full'}},artifacts:'归档仍通过本次交付的具体引用读取；文件读取工具不开放账本目录'},
-    instructions:'本人完成真实检查后可用 submit_review_report 提交简短报告，连接绑定审查单和交付版本；完整旧格式仍可用。当前项目管理操作使用已有管理工具并写明用户要求，无需重读规划手册。\n首次审查独立建立上下文；只在同任务、同审查者和已登记同一会话内请求增量。摘要、回执和相同模型均不证明已读源码；补读须满足合同条件。\n'+priorityInstructions(t,t.importance||'normal','review')};
+    instructions:'本人完成真实检查后可用 submit_review_report 提交简短报告，连接绑定审查单和交付版本；完整旧格式仍可用。当前项目管理操作使用已有管理工具并写明用户要求，无需重读规划手册。\n首次审查独立建立上下文；只在同任务、同审查者和已登记同一会话内请求增量。摘要、回执和相同模型均不证明已读源码；补读按实际需要进行，清单只作导航。\n'+priorityInstructions(t,t.importance||'normal','review')};
   if(v.mode!=='full'){
+    response.references.sections=Object.fromEntries(['plan','files','requirements','history'].map(section=>[section,{tool:'get_review_assignment',arguments:{review_id:a.id,section}}]));
     response.authority={cwd:r.cwd,output_dir:t.context_contract?.output_dir||null};
     delete response.file_changes;
     response.reading={context_delivery:'delivered',acknowledgement:response.reading.acknowledgement,files_delivered_count:(a.context_reads||[]).length,model_reading:'unknown'};

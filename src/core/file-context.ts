@@ -8,10 +8,13 @@ import {assert,hash,inside,now,protectedName,safePath} from './security.ts';
 export const lineRangeSchema=z.object({start_line:z.number().int().min(1).max(1000000),end_line:z.number().int().min(1).max(1000000)}).strict().refine(v=>v.end_line>=v.start_line,'结束行不得小于起始行');
 const contextPath=z.string().trim().min(1).max(2000).refine(v=>!/[\x00-\x1f*?]/.test(v),'需要明确的文件路径，不接受通配符');
 const fileEntry=z.object({path:contextPath,range:lineRangeSchema.optional()}).strict();
+const suggestedFile=fileEntry.extend({roles:z.array(z.enum(['planner','executor','reviewer'])).max(3).optional(),reason:z.string().trim().max(1000).optional()});
 export const contextContractSchema=z.object({
+  plan:z.object({content:z.string().max(20000).optional(),path:contextPath.optional(),range:lineRangeSchema.optional()}).strict().optional(),
+  review_focus:z.array(z.string().trim().min(1).max(1000)).max(20).optional(),
   memory_ids:z.array(z.string().trim().min(1).max(200)).max(32).optional(),
-  required:z.array(fileEntry).max(32),
-  supplemental:z.array(fileEntry.extend({reason:z.string().trim().min(2).max(1000)})).max(32).default([]),
+  required:z.array(suggestedFile).max(32).default([]),
+  supplemental:z.array(suggestedFile.extend({reason:z.string().trim().min(2).max(1000)})).max(32).default([]),
   output_dir:contextPath,
   max_bytes:z.number().int().min(1024).max(262144).default(65536),
 }).strict();
@@ -25,7 +28,12 @@ export function taskFileScope(wb:Workbench,t:Row,r?:Row):FileScope {
   const p=wb.get('projects',t.project_id),roots=wb.roots(p);
   return {taskId:t.id||'pending',root:r?.cwd||p.source_root||roots[0],roots,protectedPaths:[wb.config.dataDir,...(t.protected_paths||[]),...(t.protectedPaths||[])],writeRoots:t.allowed_paths||[],contract:t.context_contract?contextContractSchema.parse(t.context_contract):null};
 }
-function entries(scope:FileScope):Entry[]{return scope.contract?[...scope.contract.required.map(e=>({...e,kind:'required' as const})),...scope.contract.supplemental.map(e=>({...e,kind:'supplemental' as const}))]:[]}
+function entries(scope:FileScope):Entry[]{
+  const c=scope.contract;if(!c)return [];
+  const list:Entry[]=[...c.required.map(e=>({...e,kind:'required' as const})),...c.supplemental.map(e=>({...e,kind:'supplemental' as const}))];
+  if(c.plan?.path&&!list.some(e=>e.path===c.plan!.path&&JSON.stringify(e.range)===JSON.stringify(c.plan!.range)))list.unshift({path:c.plan.path,range:c.plan.range,kind:'required',reason:'本轮方案'});
+  return list;
+}
 function forbidden(scope:FileScope,file:string){return protectedName(file)||file.split(/[\\/]/).some(s=>/^data$/i.test(s))||scope.protectedPaths.some(p=>{
   const abs=path.resolve(scope.root,p);return inside(abs,file)||(fs.existsSync(abs)&&inside(fs.realpathSync.native(abs),file));
 })}
@@ -48,6 +56,7 @@ function contractBudgetKey(scope:FileScope){
 /** Validates only named paths; it neither enumerates directories nor reads file content. */
 export function validateTaskContextContract(wb:Workbench,task:Row){
   const scope=taskFileScope(wb,task);if(!scope.contract)return;
+  if(scope.contract.plan?.path)resolveEntry(scope,scope.contract.plan.path,true);
   for(const id of scope.contract.memory_ids||[])assert(wb.maybe('memories',id)?.project_id===task.project_id,'经验不属于当前任务项目',403);
   const seen=new Set<string>();for(const e of contractEntries(scope)){
     if(fs.existsSync(e.path))assert(fs.statSync(e.path).isFile(),'上下文项必须是普通文件');
@@ -90,7 +99,9 @@ export function fileContextSnapshot(scope:FileScope){
 function containsCredential(content:string){return /(?:^|\n)-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----\r?\n[A-Za-z0-9+/=]{16,}|\b(?:sk-[a-zA-Z0-9_-]{20,}|xox[baprs]-[a-zA-Z0-9-]{20,})\b|(?:api[_-]?key|access[_-]?token|password)\s*[=:]\s*["'][^"'\s]{16,}["']/i.test(content)}
 export function readContractFile(scope:FileScope,value:unknown,records:Row[]=[]){
   const v=contextFileReadInput.parse(value);
-  const target=resolveEntry(scope,v.path);const candidates=contractEntries(scope).filter(e=>e.path===target&&(!e.range||(v.range&&v.range.start_line>=e.range.start_line&&v.range.end_line<=e.range.end_line)));
+  const target=resolveEntry(scope,v.path);
+  // A stale suggested path must not prevent reading another legitimate project file.
+  const candidates=entries(scope).flatMap(e=>{try{return [{...e,entry_key:fileKey(e),path:resolveEntry(scope,e.path,true)}]}catch{return []}}).filter(e=>e.path===target&&(!e.range||(v.range&&v.range.start_line>=e.range.start_line&&v.range.end_line<=e.range.end_line)));
   const entry=candidates.find(e=>e.kind==='required')||candidates.find(e=>e.reason===v.reason)||candidates[0];
   const warnings:string[]=[];if(!entry)warnings.push('按需读取项目文件，未列入建议清单');else if(entry.kind==='supplemental'&&v.reason!==entry.reason)warnings.push('补读原因与规划建议不同，已记录实际原因');
   const budgetKey=contractBudgetKey(scope),delivered=records.filter(x=>(x.task_id===scope.taskId||!x.task_id)&&x.status==='delivered');

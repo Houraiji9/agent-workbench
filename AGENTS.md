@@ -35,3 +35,5 @@ RUN.md / REVIEW.md 默认只给目标、范围、产物位置和固定入口，�
 审查者可以提交简短 JSON：verdict、findings、limitations、evidence、report_markdown，工作台绑定编号。受审源码后来变化会附未验证提醒；原版本晚到报告可存档，不改变当前执行。已完成的原生报告不因未先 started、低额度或未披露型号而拒收。
 
 安装回执可在独立审查前登记，实际清单验证与审查结论分别记录。收尾也可记录尚未验证或未回报事项，不能据此声称已经通过审查或用户验收。
+
+方案与资料按 [docs/TASK-HANDOFF.md](docs/TASK-HANDOFF.md) 的入口按需取用：大脑先当前摘要，执行者看本轮方案，审查者从变化和指定证据开始。文件 roles/required/supplemental 仅控制推荐，不限制必要补读；单项 context section 不夹带全量历史，不默认遍历工程或全量回归。

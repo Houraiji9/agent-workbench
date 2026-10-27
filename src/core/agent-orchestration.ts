@@ -251,7 +251,7 @@ export class AgentOrchestrator {
     const saved=this.wb.get('runs',r.id);saved.continuations=[...(saved.continuations||[]),{request_id:v.request_id,digest,result}];this.wb.put('runs',saved,{task_id:t.id});return result;
   }
   async getJob(input:unknown){const v=agentJobInput.parse(input);let j=this.wb.get('agent_jobs',v.job_id);assert(j.task_id===this.wb.get('runs',v.run_id).task_id&&canQueryRunnerJob(this.wb,v.run_id,j.run_id),'禁止跨执行查询调用记录',403);const end=Date.now()+v.timeout_ms;while(!terminal.has(j.status)&&j.revision===(v.after_revision??j.revision)&&Date.now()<end&&!this.closed){await new Promise(r=>setTimeout(r,Math.min(200,end-Date.now())));j=this.wb.get('agent_jobs',v.job_id)}return {...jobView(j),changed:v.after_revision===undefined||j.revision!==v.after_revision};}
-  private artifactDirectory(j:Row,t:Row,r:Row){const base=t.context_contract?.output_dir||path.join(r.cwd,'.agent-workbench-output',t.id,r.id);const target=safePath(path.join(base,'calls',j.id),t.allowed_paths,true);assert(!this.wb.privatePath(target)&&!protectedName(target),'调用产物目录不能是内部存储或凭据目录');fs.mkdirSync(target,{recursive:true});return target;}
+  private artifactDirectory(j:Row,t:Row,r:Row){const base=path.resolve(r.cwd,t.context_contract?.output_dir||path.join(r.cwd,'.agent-workbench-output',t.id,r.id));const target=safePath(path.join(base,'calls',j.id),t.allowed_paths,true);assert(!this.wb.privatePath(target)&&!protectedName(target),'调用产物目录不能是内部存储或凭据目录');fs.mkdirSync(target,{recursive:true});return target;}
   private prompt(j:Row,t:Row,r:Row,dir:string){
     const command=`& '${process.execPath.replace(/'/g,"''")}' --import '${import.meta.resolve('tsx').replace(/'/g,"''")}' '${path.join(ROOT,'scripts',j.role==='review'?'review.ts':'agent.ts').replace(/'/g,"''")}' ${j.role==='review'?j.review_id:r.id}`;
     const env=`$env:WORKBENCH_ROOT='${this.wb.config.root.replace(/'/g,"''")}'; $env:WORKBENCH_DATA_DIR='${this.wb.config.dataDir.replace(/'/g,"''")}'; $env:WORKBENCH_PORT='${this.wb.config.port}'; `;
@@ -262,7 +262,7 @@ export class AgentOrchestrator {
       const known=prior?.context_ack?.hash||prior?.context_cache?.filter((x:Row)=>x.session_id===j.resume_session_id).at(-1)?.hash;
       const ctx=reviewContext(this.wb,{review_id:j.review_id,mode:known?'delta':'brief',...(known?{known_context_hash:known,session_id:j.resume_session_id}:{})},base,j.id);
       // One copy of the context and result shape; transport binds task/version fields.
-      return shared+`Task ${t.id} / Run ${r.id} / Review ${j.review_id}\n按需回传入口：${env}${command} started ${base.assignment.reviewer_id}\n资料已附下方；实际客户端活动由工作台记录，不必为了接单运行命令。按需用只读工具补读。若客户端不允许写入或执行验证，记录未验证项并直接返回报告，不要求用户转交。独立检查源码与证据，列出具体问题和未验证项；不替作者实施修改。\n最终返回 JSON（可用 Markdown 围栏），字段 verdict、findings、limitations、evidence、report_markdown；完整报告保存在 report_markdown。可用 submit <JSON文件> 直接回传，或由工作台接收原生最终结果。\n${JSON.stringify(ctx)}\n`;
+      return shared+`Task ${t.id} / Run ${r.id} / Review ${j.review_id}\n按需回传入口：${env}${command} started ${base.assignment.reviewer_id}\n资料已附下方；实际客户端活动由工作台记录，不必为了接单运行命令。按需用只读工具补读。若客户端不允许写入或执行验证，记录未验证项并直接返回报告，不要求用户转交。从本轮方案、差异和指定证据开始，只检查本轮变化与直接影响；发现关联风险再补读，不默认遍历项目或跑全量测试。列出具体问题和未验证项；不替作者实施修改。\n最终直接用文字返回 JSON（可用 Markdown 围栏，无需写报告文件），字段 verdict、findings、limitations、evidence、report_markdown；完整报告保存在 report_markdown。可用 submit <JSON文件> 直接回传，或由工作台接收原生最终结果。\n${JSON.stringify(ctx)}\n`;
 
     }
     const priorJob=j.previous_job_id?this.wb.get('agent_jobs',j.previous_job_id):null,priorRun=priorJob?this.wb.get('runs',priorJob.run_id):null;

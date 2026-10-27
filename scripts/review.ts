@@ -18,7 +18,8 @@ try{
   if(action==='manage'){
     if(!arg||!extra)throw Error('用法：review.ts <审查单ID> manage <管理或读取工具名> <JSON文件>');
     result=await call(arg,JSON.parse(readBounded(path.resolve(extra),1024*1024).toString('utf8')));
-  }else if(action==='context')result=await call('get_review_assignment',{review_id:assignment,...(arg?{mode:'delta',known_context_hash:arg}:{mode:'brief'})});
+  }else if(action==='context-section')result=await call('get_review_assignment',{review_id:assignment,section:arg});
+  else if(action==='context')result=await call('get_review_assignment',{review_id:assignment,...(arg?{mode:'delta',known_context_hash:arg}:{mode:'brief'})});
   else if(action==='ack')result=await call('ack_review_context',{review_id:assignment,context_hash:arg});
   else if(action==='read')result=await call('read_review_context_file',{...JSON.parse(readBounded(path.resolve(arg),64*1024).toString('utf8')),review_id:assignment});
   else if(action==='started'){

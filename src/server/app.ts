@@ -3,7 +3,7 @@ import {authenticateExecutionJob} from '../core/execution-job-capability.ts';
 import {projectMemories} from '../core/project-memory.ts';
 import {registerProjectManagementRoutes} from './project-management-routes.ts';
 import {recoverNativeReview} from '../core/native-review-recovery.ts';
-import {chatPlanningContext} from '../core/chat-planning.ts';
+import {chatPlanningContext,chatPlanningBrief} from '../core/chat-planning.ts';
 import {registerDelegation,reportDelegation} from '../core/workflow-policy.ts';
 import {AgentOrchestrator,agentClientKind} from '../core/agent-orchestration.ts';
 import {mainExecutionControlSummary,setMainExecutionControl} from '../core/main-execution-control.ts';
@@ -158,7 +158,7 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
   app.post<{Params:{table:string;id:string};Body:Row}>('/api/baseline/:table/:id',async req=>wb.updateBaseline(req.params.table,req.params.id,req.body.changes,req.body.version));
   app.post('/api/backup',async()=>createBackup(wb));
   app.post<{Body:Row}>('/api/settings/roots',async req=>{const r=addAuthorizedRoot(config,req.body?.path);if(r.added)wb.transaction(()=>wb.audit('user','add_authorized_root',r.added!,{roots:r.roots}));return r});
-  app.get<{Querystring:Row}>('/api/history',async req=>wb.history(req.query));
+  app.get<{Querystring:Row}>('/api/history',async req=>wb.history({detail:'full',...req.query}));
   app.get<{Querystring:Row}>('/api/history/external',async req=>integrations.search(req.query));
   app.post<{Params:{id:string};Body:Row}>('/api/sessions/:id/link',async req=>wb.linkSession(req.params.id,req.body.run_id));
   app.get<{Params:{id:string};Querystring:Row}>('/api/sessions/:id/messages',async req=>integrations.sessionPage(req.params.id,Number(req.query.from)||0));
@@ -199,7 +199,7 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
       if(role!=='manager'&&tool==='get_management_context'){delete result.connection_settings;delete result.authorized_roots;result.mode=role;}
       return result;
     }
-    if(role==='chat_planner'){assert(['get_chat_planning_context','submit_task_plan'].includes(tool),'聊天规划连接仅可读取需求规划包和提交计划',403);if(tool==='get_chat_planning_context')return chatPlanningContext(wb,b.request_id);const q=wb.get('requests',b.request_id);assert(q.workflow_kind!=='small'||Array.isArray(b.tasks)&&b.tasks.length<=3,'小需求最多三项');return wb.submitPlan(b,'chat_mcp',role)}const isReport=['report_run_event','submit_run_result'].includes(tool);if(role==='runner')assert(isReport||['register_delegation','report_delegation','recover_native_review','dispatch_review','continue_run','get_agent_job','read_run_context_file','wait_run_update','complete_run_closeout','get_run_context','ack_run_context','report_run_activity','report_runtime_deployment','get_deployment_context','report_deployment_evidence','report_review_handoff','get_closeout_context','export_closeout_order','get_run_feedback','get_review_context','submit_grok_review','get_review_candidates','export_review_order'].includes(tool),'执行凭据仅可回报或查询自己的 Run',403);
+    if(role==='chat_planner'){assert(['get_chat_planning_context','submit_task_plan'].includes(tool),'聊天规划连接仅可读取需求规划包和提交计划',403);if(tool==='get_chat_planning_context')return chatPlanningBrief(chatPlanningContext(wb,b.request_id));const q=wb.get('requests',b.request_id);assert(q.workflow_kind!=='small'||Array.isArray(b.tasks)&&b.tasks.length<=3,'小需求最多三项');return wb.submitPlan(b,'chat_mcp',role)}const isReport=['report_run_event','submit_run_result'].includes(tool);if(role==='runner')assert(isReport||['register_delegation','report_delegation','recover_native_review','dispatch_review','continue_run','get_agent_job','read_run_context_file','wait_run_update','complete_run_closeout','get_run_context','ack_run_context','report_run_activity','report_runtime_deployment','get_deployment_context','report_deployment_evidence','report_review_handoff','get_closeout_context','export_closeout_order','get_run_feedback','get_review_context','submit_grok_review','get_review_candidates','export_review_order'].includes(tool),'执行凭据仅可回报或查询自己的 Run',403);
     if(role==='reviewer'){
       assert(b.review_id===scope&&['get_review_assignment','ack_review_context','read_review_context_file','report_review_started','submit_review_result','submit_review_report'].includes(tool),'审查凭据仅可操作本审查单',403);
       if(tool==='get_review_assignment')return reviewContext(wb,b,reviewAssignmentContext(wb,scope!));
@@ -224,7 +224,7 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
       return reportDeployment(wb,b);
     }
     if(tool==='register_delegation'||tool==='report_delegation'){assert(role==='runner'&&scope===b.run_id,'委派登记与回报限本Run执行者',403);return tool==='register_delegation'?registerDelegation(wb,b):reportDelegation(wb,b)}
-    if(tool==='get_chat_planning_context'){assert(['manager','planner'].includes(role),'仅供规划者读取',403);return chatPlanningContext(wb,b.request_id)}
+    if(tool==='get_chat_planning_context'){assert(['manager','planner'].includes(role),'仅供规划者读取',403);return chatPlanningBrief(chatPlanningContext(wb,b.request_id))}
     if(tool==='get_agent_clients'){assert(['planner','manager'].includes(role),'客户端规划信息仅供大脑使用',403);return agents.capabilities()}
     if(tool==='dispatch_run'){assert(false,'外部主执行只能由用户在工作台页面启动；Agent不能代为启动',403);}
     if(tool==='recover_native_review'||tool==='dispatch_review'||tool==='continue_run'||tool==='get_agent_job'||tool==='read_run_context_file'){

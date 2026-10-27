@@ -22,6 +22,7 @@ import { AgentAutomationStatus, automationActive } from '../ui/AgentAutomationSt
 import { AgentAutomationControls } from '../ui/AgentAutomationControls.js';
 import { TaskExecutionPolicy } from '../ui/TaskExecutionPolicy.js';
 import { deliverySummary } from '../ui/DeliveryProfileFields.js';
+import {TaskHandoff} from '../ui/TaskHandoff.js';
 
 const executionContinuationStates = new Set(['ready', 'awaiting_dispatch', 'dispatched', 'waiting_input', 'blocked', 'changes_requested', 'awaiting_closeout', 'closing', 'closeout_waiting_input', 'closeout_blocked']);
 
@@ -116,10 +117,11 @@ function TaskBody({ detail }: { detail: R }) {
       {older.length > 0 && <details className="fold"><summary>之前几次执行的成果（{older.length}）</summary><ArtifactList list={older} /></details>}
     </section>
 
+    <TaskHandoff task={t}/>
     <section className="block" aria-label="这项任务要做什么">
       <h2>这项任务要做什么</h2>
-      <p>冻结的重要程度：{t.importance==='critical'?'重点':'普通'}</p>
-      {deliveryProfile&&<p>冻结的交付方案：{deliverySummary(deliveryProfile)}</p>}
+      <p>重要程度：{t.importance==='critical'?'重点':'普通'}</p>
+      {deliveryProfile&&<p>本轮交付：{deliverySummary(deliveryProfile)}</p>}
       <p>{t.goal}</p>
       {t.deliverables?.length > 0 && <><h3>要交付的东西</h3><ul className="plain-list">{t.deliverables.map((d: string, i: number) => <li key={i}>{d}</li>)}</ul></>}
       <h3>最后由你确认的事</h3>

@@ -3,10 +3,10 @@ import type {Workbench} from './workbench.ts';
 import type {Row} from './schema.ts';
 import {assert,id,now,safePath} from './security.ts';
 import {invalidateCloseout} from './closeout.ts';
-import {validateTaskContextContract} from './file-context.ts';
+import {validateTaskContextContract,contextContractSchema} from './file-context.ts';
 const text=z.string().trim().min(1).max(20000);
 export const taskAmendmentInput=z.object({task_id:z.string(),run_id:z.string(),expected_revision:z.number().int().positive(),reason:text,
- changes:z.object({goal:text.optional(),scope:text.optional(),acceptance:z.array(text).min(1).max(40).optional(),tests:z.array(text).min(1).max(100).optional(),required_files:z.array(z.string().min(1)).max(30).optional()}).strict().refine(v=>Object.keys(v).length>0,'请说明需要补充或修改的内容')}).strict();
+ changes:z.object({context_contract:contextContractSchema.optional(),goal:text.optional(),scope:text.optional(),acceptance:z.array(text).min(1).max(40).optional(),tests:z.array(text).min(1).max(100).optional(),required_files:z.array(z.string().min(1)).max(30).optional()}).strict().refine(v=>Object.keys(v).length>0,'请说明需要补充或修改的内容')}).strict();
 export function amendTask(wb:Workbench,input:unknown){const v=taskAmendmentInput.parse(input);return wb.transaction(()=>{
  const t=wb.get('tasks',v.task_id),r=wb.get('runs',v.run_id);assert(r.task_id===t.id&&t.current_run_id===r.id,'请修改当前执行的任务',409);
  assert(t.revision===v.expected_revision,'任务已变化，请读取当前版本',409);assert(!['accepted','cancelled','rework_linked'].includes(t.status),'已结束任务仅保留历史',409);
@@ -18,6 +18,7 @@ export function amendTask(wb:Workbench,input:unknown){const v=taskAmendmentInput
  invalidateCloseout(wb,r,'用户补充了本轮任务内容；历史交付保留，按新内容重新核验');
  const amendments=(r.amendments as Row[]);Object.assign(t,v.changes,{revision:t.revision+1,updated_at:now()});
  if(v.changes.required_files&&t.context_contract){t.context_contract={...t.context_contract,required:v.changes.required_files.map(path=>({path})),supplemental:t.context_contract.supplemental.filter((entry:Row)=>!v.changes.required_files!.includes(entry.path))};validateTaskContextContract(wb,t);}
+ if(v.changes.context_contract)validateTaskContextContract(wb,t);
  for(const a of wb.all('review_assignments').filter(a=>a.run_id===r.id&&!['revoked','superseded','cancelled'].includes(a.status))){wb.put('review_assignments',{...a,status:'superseded',superseded_reason:change.reason,superseded_at:change.at},{run_id:r.id});}
  const needsDelivery=['submitted','in_review','changes_requested','awaiting_closeout','closing','closeout_blocked','closeout_waiting_input','awaiting_confirmation'].includes(t.status);
  if(needsDelivery){t.status='changes_requested';t.review_stage='awaiting_delivery';}

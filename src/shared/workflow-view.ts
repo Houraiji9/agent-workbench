@@ -10,7 +10,13 @@ export function taskAction(t:Row):{group:ActionGroup;owner:'user'|'agent'|'revie
   if(waitingForDependencies(t))return {group:'waiting',owner:'none',label:'等待前序'};
   if(t.pending_user_decision&&Date.parse(t.pending_user_decision.expires_at)>Date.now())return {group:'decision',owner:'user',label:'确认事项'};
   if(['waiting_input','closeout_waiting_input'].includes(t.status))return t.question_answered?{group:'arrange',owner:'user',label:'答复已保存，继续原会话'}:{group:'answer',owner:'user',label:'去回答'};
-  if(t.automation&&(!t.automation.superseded||t.automation.recovery_required||t.automation.process_may_be_running===true)&&['failed','interrupted'].includes(t.automation.status))return {group:'decision',owner:'user',label:'处理客户端调用阻碍'};
+  // A returned review can advance the Run even when its earlier client call was interrupted.
+  // Keep that call's history, but use the current lifecycle once its process is confirmed gone.
+  const completedReviewCall=t.review_stage==='completed'&&t.automation?.role==='review'
+    &&t.automation.run_id===t.current_run_id&&!!t.current_run_id
+    &&t.automation.process_may_be_running===false&&!t.automation.recovery_required
+    &&['awaiting_closeout','closing','closeout_blocked','closeout_waiting_input','awaiting_confirmation'].includes(t.status);
+  if(t.automation&&!completedReviewCall&&(!t.automation.superseded||t.automation.recovery_required||t.automation.process_may_be_running===true)&&['failed','interrupted'].includes(t.automation.status))return {group:'decision',owner:'user',label:'处理客户端调用阻碍'};
   if(t.automation&&['queued','launching','running'].includes(t.automation.status))return {group:'working',owner:t.automation.role==='review'?'reviewer':'agent',label:t.automation.role==='review'?(t.review_stage==='running'?'独立审查中':'正在调用审查者'):'客户端正在处理'};
   if(['blocked','failed','closeout_blocked'].includes(t.status))return {group:'decision',owner:'user',label:'处理阻碍'};
   if(t.status==='awaiting_confirmation')return t.delivery_target==='runtime'&&!t.deployment?.verified?{group:'working',owner:'agent',label:'等待本机更新'}:{group:'trial',owner:'user',label:'去试用'};
