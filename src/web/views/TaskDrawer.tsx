@@ -1,4 +1,4 @@
-import {reviewSourceLabel,recoveredReviewInvocation} from '../../shared/review-presentation.js';
+import {reviewSourceLabel} from '../../shared/review-presentation.js';
 import {ReviewCollaboration} from '../ui/ReviewCollaboration.js';
 import {hasSameSessionContinuation} from '../../shared/workflow-view.js';
 import {planningOriginLabel} from '../../shared/planning-origin.js';
@@ -12,7 +12,7 @@ import { type R, relayOf, eventText, dispositionText, reviewSkippedTask } from '
 import { relative, fullDate, bytes } from '../lib/format.js';
 import { Drawer, RelayTrack, Pill, Notice } from '../ui/kit.js';
 import { AgentIcon } from '../ui/AgentIcon.js';
-import { copyOrder, copyRework, markDispatched, copyReviewOrder, copyReviewFeedback, copyCloseoutOrder, continueTask, dispatchTask, openTrial } from './actions.js';
+import { copyOrder, copyRework, markDispatched, copyReviewOrder, copyReviewHandoff, copyReviewFeedback, copyCloseoutOrder, continueTask, dispatchTask, openTrial } from './actions.js';
 import {TaskQuickActions} from '../ui/TaskQuickActions.js';
 import { userAcceptanceItems } from '../../core/acceptance.js';
 import {ArtifactLocation} from '../ui/ArtifactLocation.js';
@@ -38,7 +38,7 @@ export function TaskDrawer({ id }: { id: string }) {
       .catch(e => { if (n === seq.current) setError((e as Error).message); });
   }, [id, s.changeTick]);
 
-  const active = automationActive(detail?.task?.automation);
+  const active = automationActive(detail?.task?.automation)||detail?.agent_jobs?.some((j:R)=>j.run_id===detail?.task.current_run_id&&automationActive(j));
   useEffect(() => {
     if (!active) return;
     const controller = new AbortController();
@@ -68,7 +68,7 @@ function TaskBody({ detail }: { detail: R }) {
   const deliveryProfile = t.delivery_profile || run?.delivery_profile || run?.execution_contract?.delivery_profile;
   const portableVerified = deliveryProfile?.deployment?.verification === 'portable_manifest' && !!run?.deployment?.verified;
   const who = run?.agent_id || t.agent_id;
-  const relay = relayOf({...t,active_reviewers:detail.review_summary?.members||t.active_reviewers,review_report_counts:detail.review_summary?.counts,review_decision:detail.review_summary?.decision,closeout:run?.closeout}, s.name, who);
+  const relay = relayOf({...t,review_members:detail.review_summary?.members||t.review_members,review_report_counts:detail.review_summary?.counts,review_decision:detail.review_summary?.decision,closeout:run?.closeout}, s.name, who);
   const current = detail.artifacts.filter((a: R) => a.run_id === t.current_run_id && a.current);
   const older = detail.artifacts.filter((a: R) => !current.includes(a));
   const events = [...detail.events].sort((a: R, b: R) => String(a.received_at).localeCompare(String(b.received_at)));
@@ -91,11 +91,11 @@ function TaskBody({ detail }: { detail: R }) {
     <div className="task-people">
       <OrderStatus task={t}/>
       <span><AgentIcon name={s.name(who)} id={s.agentIconId(who)} size={22} /><span>执行：{s.name(who)}{who !== t.agent_id && <small>（原计划 {s.name(t.agent_id)}）</small>}</span></span>
-      <span>{!reviewSkippedTask(t) && <AgentIcon name={s.name(t.reviewer_id)} id={s.agentIconId(t.reviewer_id)} size={22} />}<span>审查：{reviewSkippedTask(t) ? '本次不安排' : s.name(t.reviewer_id)}</span></span>
+      <span>{!reviewSkippedTask(t) && <AgentIcon name={s.name(t.reviewer_id)} id={s.agentIconId(t.reviewer_id)} size={22} />}<span>审查：{reviewSkippedTask(t) ? '本次不安排' : relay.legs.find(l=>l.key==='review')?.who}</span></span>
       <span className="muted">{relative(t.updated_at, s.tz)}更新</span>
     </div>
 
-    <details className="fold"><summary>完整执行流程</summary><RelayTrack relay={relay}/></details>
+    <RelayTrack relay={relay} compact/><details className="fold"><summary>完整执行流程</summary><RelayTrack relay={relay}/></details>
     {run&&<div className="tool-row"><button className="btn small" disabled={continuationDisabled} onClick={()=>void continueTask(s,t)}>同会话继续</button><button className="btn small ghost" disabled={stoppedExecution ? restartDisabled : continuationDisabled} onClick={()=>void continueTask(s,t,false)}>{stoppedExecution ? '停止后重新开始' : '新会话接手'}</button></div>}
     {stoppedExecution && <p className="muted small">{recoveryRequired ? '仍有调用尚未核实结束，请先展开下方“高级恢复”核实原调用，再重新开始。' : '使用新会话重新开始，原会话与已有回执保留。'}</p>}
     <AgentAutomationStatus job={t.automation}/>
@@ -162,7 +162,6 @@ function NowCard({ detail, relay, run, who, current, lastMessage }: { detail: R;
   const s = useStore();
   const t = detail.task;
   const noReview = reviewSkippedTask(t);
-  const reviewInvocationFailed = t.automation?.role === 'review' && !recoveredReviewInvocation(t.automation) && (!t.automation.superseded||t.automation.recovery_required||t.automation.process_may_be_running===true) && ['failed', 'interrupted'].includes(t.automation.status);
   const steps = (items: React.ReactNode[]) => <ol className="steps">{items.map((x, i) => <li key={i}><span>{x}</span></li>)}</ol>;
   let body: React.ReactNode = null;
 
@@ -199,22 +198,17 @@ function NowCard({ detail, relay, run, who, current, lastMessage }: { detail: R;
           <button className="btn" onClick={() => s.openDialog('retry', { detail })}><Repeat size={16} />换人或重新做一次</button>
         </div></>;
       break;
-    case 'submitted':
-      if(t.review_stage==='awaiting_decision'){body=<p>审查报告已齐，请在下方查看各方意见并记录负责人决定。</p>;break;}
+    case 'submitted': case 'in_review':
       body = noReview ? null : <>
+        {t.review_stage==='awaiting_decision'&&<p>查看下方各方意见，记录负责人决定。</p>}
         {t.review_handoff_issue&&<blockquote className="agent-says">{t.review_handoff_issue}</blockquote>}
-        {reviewInvocationFailed&&<p>审查调用已停止更新，请查看失败原因；原接单记录保留。</p>}
-        <div className="now-actions">
-          {t.review_route&&!automationActive(t.automation)&&(t.review_stage!=='running'||reviewInvocationFailed)&&(!t.automation_policy?.auto_review||reviewInvocationFailed)&&<button className="btn primary" disabled={s.busy} onClick={()=>void dispatchTask(s,t,true,reviewInvocationFailed)}>{reviewInvocationFailed?'原会话已结束，重试审查':'开始独立审查'}</button>}
-        </div>
-        {reviewInvocationFailed&&<p className="muted small">重试前请先核对原审查客户端已结束。工作台也会检查旧进程；仍在运行或无法确认时会拒绝重复启动并说明原因。</p>}
-        <details className="fold"><summary>手动转发或导入审查</summary><p className="muted small">仅在使用无法连接本机的客户端，或你明确选择手动处理时使用。</p><div className="now-actions">
-          <button className="btn" disabled={automationActive(t.automation)} onClick={()=>s.openDialog('review-order',{detail})}>更换审查者</button>
-          <button className="btn" disabled={s.busy||automationActive(t.automation)} onClick={()=>void copyReviewOrder(s,detail)}><Copy size={16}/>复制审查单</button>
-          <button className="btn" onClick={()=>s.openDialog('review-receipt',{detail})}>导入审查回执</button>
-          {t.reviewer_id==='grok-build'&&<button className="btn" onClick={()=>s.openDialog('grok-review',{detail})}>读取 Grok 审查</button>}
-          <button className="btn ghost" disabled={!current.length} onClick={()=>s.openDialog('review',{detail})}>登记审查结果</button>
-        </div></details></>;
+        {!detail.review_summary?.members?.some((m:R)=>!['cancelled','superseded','revoked'].includes(m.status))&&<div className="now-actions">
+          {t.review_route&&!automationActive(t.automation)&&<button className="btn primary" disabled={s.busy} onClick={()=>void dispatchTask(s,t,true)}>开始独立审查</button>}
+          <button className="btn" disabled={s.busy} onClick={()=>void copyReviewHandoff(s,t)}><Copy size={16}/>复制审查单</button>
+        </div>}
+        <div className="now-actions"><button className="btn" onClick={()=>s.openDialog('review-receipt',{detail})}>导入审查回执</button>
+        {t.reviewer_id==='grok-build'&&<button className="btn" onClick={()=>s.openDialog('grok-review',{detail})}>读取 Grok 审查</button>}</div>
+      </>;
       break;
     case 'changes_requested': {
       const last = detail.reviews.filter((r: R) => r.run_id === t.current_run_id&&!r.revoked_at).slice(-1)[0];
@@ -223,9 +217,6 @@ function NowCard({ detail, relay, run, who, current, lastMessage }: { detail: R;
         <div className="now-actions"><button className="btn primary" disabled={s.busy} onClick={()=>void copyReviewFeedback(s,t)}><Copy size={16}/>复制修改意见给执行者</button><button className="btn" onClick={()=>s.openDialog('review-order',{detail})}>重新安排审查</button></div></>;
       break;
     }
-    case 'in_review':
-      body=<><p>独立审查仍在进行，等待尚未完成的审查者回传报告。</p><p className="muted small">已收到的意见保留在下方独立审查列表；全部回报后，由负责人决定继续、修改或追加审查。</p></>;
-      break;
     case 'awaiting_closeout': case 'closing': case 'closeout_blocked':
       if(t.execution_route){body=<>{lastMessage&&t.status==='closeout_blocked'&&<blockquote className="agent-says">{lastMessage}</blockquote>}<ul className="check-list">{run?.closeout?.items?.map((item:R)=><li key={item.id}>{item.text}</li>)}</ul><p className="muted small">由原执行者完成剩余事项，收尾回执通过后再交你试用。</p>{!automationActive(t.automation)&&t.status!=='closing'&&<button className="btn" disabled={s.busy} onClick={()=>void continueTask(s,t)}>继续执行者收尾</button>}</>;break;}
       body = <>{lastMessage && t.status === 'closeout_blocked' && <blockquote className="agent-says">{lastMessage}</blockquote>}

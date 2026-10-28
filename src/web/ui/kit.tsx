@@ -66,13 +66,17 @@ export function Pill({ status, task, tone, children }: { status?: string; task?:
   return <span className={'pill t-' + t}>{children ?? (displayed ? statusText[displayed] || displayed : '')}</span>;
 }
 
+export function ReviewLanes({relay}:{relay:Relay}){
+ const review=relay.legs.find(l=>l.key==='review');if(!review?.members?.length)return null;
+ return <span className="review-progress" aria-label="审查成员进度"><span className="muted small">独立审查 · {review.count}</span><span className="review-lanes">{review.members.map(m=><span key={m.id} className={'review-lane t-'+m.tone}><strong>{m.name}</strong><span>{m.label}</span></span>)}</span></span>;
+}
 /** 接力线：六个交接点，接力棒停在谁手里一目了然。 */
 export function RelayTrack({ relay, compact }: { relay: Relay; compact?: boolean }) {
   const { legs, at, tone } = relay;
   if (compact) {
-    return <div className={'relay-mini t-' + tone} aria-label={at < 0 ? '已取消' : at >= legs.length ? '全部完成' : `第 ${at + 1} 步，共 ${legs.length} 步：${legs[at].label}`}>
+    return <div className="relay-compact"><div className={'relay-mini t-' + tone} aria-label={at < 0 ? '已取消' : at >= legs.length ? '全部完成' : `第 ${at + 1} 步，共 ${legs.length} 步：${legs[at].label}`}>
       {legs.map((l, i) => <span key={l.key} className={i < at || at >= legs.length ? 'done' : i === at ? 'now' : ''} />)}
-    </div>;
+    </div><ReviewLanes relay={relay}/></div>;
   }
   return <ol className={'relay t-' + tone} aria-label="任务进度">
     {legs.map((l, i) => {
@@ -81,7 +85,7 @@ export function RelayTrack({ relay, compact }: { relay: Relay; compact?: boolean
       return <li key={l.key} className={state + (skipped ? ' skipped' : '')} aria-current={state === 'now' ? 'step' : undefined}>
         <span className="relay-dot">{state === 'done' ? <Check size={13} strokeWidth={3} /> : i + 1}</span>
         <span className="relay-label">{l.label}</span>
-        <span className="relay-who">{l.who}</span>
+        {l.members?.length?<><span className="relay-who">{l.count}</span><ul className="relay-members" aria-label="审查成员进度">{l.members.map(m=><li key={m.id} className={'review-lane t-'+m.tone}><strong>{m.name}</strong><span>{m.label}</span></li>)}</ul></>:<span className="relay-who">{l.who}</span>}
       </li>;
     })}
   </ol>;

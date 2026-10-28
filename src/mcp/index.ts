@@ -1,3 +1,4 @@
+import {peerDispatchInput,peerJobInput} from '../core/open-review-handoff.ts';
 import {chatContextInput} from '../core/chat-planning.ts';
 import {nativeReviewRecoveryInput} from '../core/native-review-recovery.ts';
 import {delegationInput,delegationReportInput} from '../core/workflow-policy.ts';
@@ -40,6 +41,9 @@ if(!manager&&!runner&&!reviewer&&!chatPlanner){const tool=managementReadTools.ge
 if(manager){for(const [name,tool] of Object.entries({...managementTools,...managementReadTools}))register(name,tool.description,tool.schema.shape)}
 if(runner||reviewer){for(const [name,tool] of Object.entries({...managementTools,...managementReadTools}))if([...sessionManagementWrites,...sessionManagementReads].includes(name))register(name,tool.description,tool.schema.shape)}
 if(chatPlanner){register('get_chat_planning_context','读取一条需求的脱敏精简规划包，不调用模型和执行者',chatContextInput.shape);register('submit_task_plan','提交真实聊天模型编写的计划，只登记不执行',planSchema.shape)}else if(reviewer){
+register('export_review_handoff','复制给任意接收Agent的本轮审查入口，不预设审查者或模型，多人共用一次交接',{});
+register('dispatch_review','按用户口述直接调用本轮同伴审查，target_review_id为同伴审查单，不代填其报告',peerDispatchInput.shape);
+register('get_agent_job','查询本轮同伴审查调用状态',peerJobInput.shape);
 register('get_review_assignment','读取本审查单精简或同会话增量上下文；缺失时重建brief，不重复全量读取。',reviewDeltaInput.shape);
 register('ack_review_context','确认本次审查上下文版本，不代表模型已理解全部源码',reviewContextAckInput.shape);
 register('read_review_context_file','在本审查合同内按范围和预算读取文件',reviewContextReadInput.shape);
@@ -47,6 +51,7 @@ register('report_review_started','独立审查者接单，限当前审查单',re
 register('submit_review_result','附完整报告并更新审查状态，返回给执行者的说明；不代用户验收',reviewResultInput.shape);
 register('submit_review_report','直接提交本人结论和报告；任务、执行和交付版本由本审查单自动绑定',reviewReportInput.shape);
 }else{
+register('export_review_handoff','生成不绑定接收Agent或模型的本轮审查交接单，接单时登记实际参与者',{run_id:z.string()});
 register('recover_native_review','从工作台已保存的独立调用补登记原报告；只收调用编号，不接收作者填写的结论或文件',nativeReviewRecoveryInput.shape);
 register('dispatch_review','按已规划路由直接调用独立审查；不需要用户转发，不代写审查结论',agentDispatchInput.shape);
 register('continue_run','当前执行会话直接续接返修或收尾，不启动另一执行者；保留旧交付，管理者启动规则不变',agentDispatchInput.shape);

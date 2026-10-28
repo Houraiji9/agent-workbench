@@ -11,7 +11,8 @@ import type {Workbench} from './workbench.ts';
 import type {Row} from './schema.ts';
 import {ROOT} from './config.ts';
 import {assert,id,now,hash,secret,safePath,atomicWrite} from './security.ts';
-import {getReviewContext,reviewConclusion} from './review-evidence.ts';
+import {getReviewContext} from './review-evidence.ts';
+import {reviewConclusion} from './review-conclusion.ts';
 import {canReview,sameAgent,reviewCandidates,assertReviewerResources,reviewerResources} from './reviewer-resources.ts';
 import {assertMayArrangeReview,reviewActor,type ReviewCaller} from './review-permissions.ts';
 import {assertProjectDispatch} from './project-hold.ts';
@@ -23,7 +24,7 @@ import {resolveDeliveryProfile} from './delivery-profile.ts';
 
 export const reviewId=z.string().regex(/^RA-[a-f0-9-]{36}$/);
 export const reviewScopeInput=z.object({review_id:reviewId}).strict();
-export const reviewOrderInput=z.object({run_id:z.string().regex(/^R-[a-f0-9-]{36}$/),reviewer_id:z.string().min(1).max(100),expected_revision:z.number().int(),reason:z.string().trim().min(2).max(2000),delivery_mode:z.enum(['manual','agent']).optional(),new_review:z.boolean().optional(),requested_model:z.string().trim().min(1).max(100).nullable().optional()}).strict();
+export const reviewOrderInput=z.object({review_id:reviewId.optional(),run_id:z.string().regex(/^R-[a-f0-9-]{36}$/),reviewer_id:z.string().min(1).max(100),expected_revision:z.number().int(),reason:z.string().trim().min(2).max(2000),delivery_mode:z.enum(['manual','agent']).optional(),new_review:z.boolean().optional(),requested_model:z.string().trim().min(1).max(100).nullable().optional()}).strict();
 export const reviewStartInput=reviewScopeInput.extend({identity:z.string().min(1).max(100),session_id:z.string().max(300).optional(),actual_model:z.string().max(100).nullable().optional()}).strict();
 export const reviewHandoffInput=z.object({run_id:z.string().regex(/^R-[a-f0-9-]{36}$/),review_id:reviewId,expected_revision:z.number().int(),reason:z.string().trim().min(5).max(2000)}).strict();
 export const reviewResultInput=reviewConclusion.extend({review_id:reviewId,report_markdown:z.string().trim().min(20).max(100000),evidence:z.array(z.string().trim().min(1).max(2000)).min(1).max(100)}).strict();
@@ -33,6 +34,7 @@ export function reviewAssignmentContext(wb:Workbench,assignmentId:string){
   reviewId.parse(assignmentId);const a=wb.get('review_assignments',assignmentId),r=wb.get('runs',a.run_id),t=wb.get('tasks',r.task_id);
   if(a.delivery_snapshot&&(t.current_run_id!==r.id||['superseded','revoked','cancelled'].includes(a.status)))return {...a.delivery_snapshot,review_id:a.id,assignment:a,historical:true,compact_report_template:{verdict:'passed 或 changes_requested',findings:[],limitations:[],evidence:[],report_markdown:'实际审查报告'}};
   const frozen=runTask(t,r);if(frozen.model_selection&&a.requested_model)frozen.model_selection=userReviewSelection(frozen.model_selection,{reviewer_id:a.reviewer_id,requested_model:a.requested_model,reason:a.reason,decided_by:a.model_decided_by||((a.created_by==='user'||a.user_instruction)?'user':'planner')});frozen.reviewer_id=a.reviewer_id;frozen.review_route=undefined;validatePriorityPlan(frozen,frozen.importance||'normal',frozen.review_policy);
+  if(a.handoff_id)frozen.model_selection=null;
   const selectedModel=a.requested_model||frozen.model_selection?.review?.model;
 
   const context=getReviewContext(wb,r.id);if(context.review_digest!==a.review_digest&&!r.scope_revision){const legacy={task_id:t.id,run_id:r.id,task_version:t.version,reviewer_id:a.reviewer_id,review_assignment_id:a.id,artifacts:context.artifacts.map(x=>({id:x.id,sha256:x.sha256})),review_files:r.review_files||[]};if(hash(JSON.stringify(legacy))===a.review_digest)context.review_digest=a.review_digest;}assert(context.review_digest===a.review_digest,'交付已变化，请重新生成审查单',409);
@@ -63,6 +65,7 @@ ${handoffText(t,'reviewer')}
 简版：${command} context
 回传：${command} submit "${path.join(dir,'result.json')}"
 结果格式见 result.example.json：只需结论、问题、未验证项、证据和报告；连接补齐编号。不要重复审查已有原始报告，直接提交即可。
+用户只交接一次。按口述需要同伴时，可用 manage manage_reviews 添加成员，再用 manage dispatch_review（target_review_id 为同伴审查单）调用，或 export_review_handoff 获取不绑定接收者的共同入口。每人回传自己的报告，不让用户逐人转发。
 同项目安排可用 manage <工具名> <JSON文件>，工作台记录实际办理者和变更；流程、模型、额度与读取清单均为建议。
 独立检查并如实回报。报告绑定本次交付；之后源码变化会另行提示，不把旧审查当作新内容已通过。
 `;
@@ -77,7 +80,8 @@ export function exportReviewOrder(wb:Workbench,input:unknown,caller:ReviewCaller
   const frozen=runTask(task,run);validatePriorityPlan(frozen,frozen.importance||'normal',frozen.review_policy);
   getReviewContext(wb,run.id);const candidate=wb.get('agents',v.reviewer_id),author=wb.get('agents',run.agent_id);
   assert(!sameAgent(candidate,author),'独立审查须由另一位审查者完成',403);const resource=reviewerResources(wb,candidate.id),resourceWarnings:string[]=[];if(resource.status!=='available')resourceWarnings.push(resource.reason);resourceWarnings.push(...wb.eligible(candidate.id).warnings);
-  const old=wb.all('review_assignments').find(a=>a.run_id===run.id&&a.reviewer_id===v.reviewer_id&&['awaiting_dispatch','running'].includes(a.status)&&(!v.requested_model||v.requested_model===a.requested_model));
+  const old=v.review_id?wb.get('review_assignments',v.review_id):wb.all('review_assignments').find(a=>a.run_id===run.id&&a.reviewer_id===v.reviewer_id&&['awaiting_dispatch','running'].includes(a.status)&&(!v.requested_model||v.requested_model===a.requested_model));
+  if(v.review_id)assert(old&&old.run_id===run.id&&old.reviewer_id===v.reviewer_id&&['awaiting_dispatch','running'].includes(old.status),'指定审查单已变化，请刷新',409);
   if(old&&old.reviewer_id===v.reviewer_id&&!v.new_review&&['awaiting_dispatch','running'].includes(old.status)){
     if(v.delivery_mode&&v.delivery_mode!==(old.delivery_mode||'manual')){assert(old.status==='awaiting_dispatch','审查者已接单，换交接方式需重新安排',409);wb.transaction(()=>{old.delivery_mode=v.delivery_mode;old.delivery_reason=v.reason;task.review_delivery=v.delivery_mode;task.revision++;task.updated_at=now();wb.put('review_assignments',old,{run_id:run.id});wb.put('tasks',task,{project_id:task.project_id});wb.audit(actor,'change_review_delivery',old.id,{delivery_mode:v.delivery_mode,reason:v.reason})})}
     old.resource_snapshot={...resource,observed_at:now()};old.resource_warnings=resourceWarnings;wb.put('review_assignments',old,{run_id:run.id});syncReviewCollaborationState(wb,task,run);wb.put('tasks',task,{project_id:task.project_id});writeOrder(wb,old);return orderReply(wb,old)
@@ -156,7 +160,8 @@ export const reviewDecisionInput=z.object({run_id:z.string().regex(/^R-[a-f0-9-]
 export const reviewMemberInput=z.object({run_id:z.string().regex(/^R-[a-f0-9-]{36}$/),review_id:reviewId,expected_revision:z.number().int(),action:z.enum(['remove','replace']),reason:z.string().trim().min(5).max(4000),reviewer_id:z.string().min(1).max(100).optional(),requested_model:z.string().trim().min(1).max(100).nullable().optional(),delivery_mode:z.enum(['manual','agent']).optional()}).strict();
 export function reviewCollaboration(wb:Workbench,runId:string){
  const authority=reviewProceedAuthority(wb,runId),reports=wb.runRows('reviews',runId);
- const members:Row[]=wb.runRows('review_assignments',runId).map(a=>({...a,report:reports.find(v=>v.id===a.result_id)||null}));
+ const jobs=wb.runRows('agent_jobs',runId).filter(j=>j.role==='review').sort((a,b)=>String(b.created_at||b.started_at||b.ended_at||'').localeCompare(String(a.created_at||a.started_at||a.ended_at||'')));
+ const members:Row[]=wb.runRows('review_assignments',runId).map(a=>{const j=jobs.find(j=>j.review_id===a.id);return {...a,report:reports.find(v=>v.id===a.result_id)||null,invocation:j?{job_id:j.id,run_id:j.run_id,review_id:j.review_id,client:j.route?.client,status:j.status,reason:j.reason,process_may_be_running:j.process_may_be_running,session_id:j.session_id||null}:null};});
  const active=members.filter(a=>!['cancelled','superseded','revoked'].includes(a.status));
  const valid=reports.filter(v=>!v.revoked_at&&(v.review_id?active.some(a=>a.id===v.review_id):members.length===0||active.some(a=>a.status==='completed'&&a.result_id===v.id)));
  const counts={total:members.length,active:active.length,pending:active.filter(a=>a.status==='awaiting_dispatch').length,running:active.filter(a=>a.status==='running').length,completed:active.filter(a=>a.status==='completed').length,cancelled:members.length-active.length,passed:valid.filter(v=>v.verdict==='passed').length,changes_requested:valid.filter(v=>v.verdict==='changes_requested').length};

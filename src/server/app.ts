@@ -1,4 +1,5 @@
 import {resolveRunnerRun,resolveRunnerContinuationScope} from '../core/run-continuation-scope.ts';
+import {handoffId,handoffCredentialPath,openReviewHandoff,openReviewContext,claimReviewHandoff,peerDispatchInput,peerJobInput} from '../core/open-review-handoff.ts';
 import {authenticateExecutionJob} from '../core/execution-job-capability.ts';
 import {projectMemories} from '../core/project-memory.ts';
 import {registerProjectManagementRoutes} from './project-management-routes.ts';
@@ -145,6 +146,7 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
   });
   app.post('/api/closeout-orders',async req=>exportCloseoutOrder(wb,req.body));
   app.post('/api/review-orders',async req=>exportReviewOrder(wb,req.body,{role:'user'}));
+  app.post<{Params:{id:string}}>('/api/tasks/:id/review-handoff',async req=>openReviewHandoff(wb,wb.get('tasks',req.params.id).current_run_id));
   app.post('/api/review-receipts',async req=>submitReviewResult(wb,req.body,'user_import'));
   app.post<{Params:{id:string};Body:Row}>('/api/runs/:id/review-feedback',async req=>reviewFeedbackOrder(wb,req.params.id,req.body.revision));
   app.get<{Params:{id:string}}>('/api/reviews/:id/report',async(req,res)=>{const r=wb.get('reviews',req.params.id);assert(r.report_markdown,'这条审查没有附报告',404);assert(hash(r.report_markdown)===r.report_sha256,'报告内容校验失败',409);return res.type('text/markdown; charset=utf-8').header('Content-Disposition',disposition('审查报告.md')).send(r.report_markdown)});
@@ -186,8 +188,17 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
     res.type(types[a.extension]||'application/octet-stream');if(req.query.download||!types[a.extension])res.header('Content-Disposition',disposition(a.label));return bytes;
   });
   app.post<{Params:{tool:string};Body:Row}>('/api/mcp/:tool',async req=>{
-    const token=req.headers.authorization?.replace(/^Bearer /,'')||'';let role:string|undefined,scope:string|undefined;if(same(token,wb.keys.manager))role='manager';else if(same(token,wb.keys.planner))role='planner';else if(same(token,wb.keys.chat_planner))role='chat_planner';else if(typeof req.body?.run_id==='string'){const rid=req.body.run_id;assert(/^R-[a-f0-9-]{36}$/.test(rid),'MCP Run ID 无效',401);const run=wb.maybe('runs',rid);if(run){const f=path.join(config.dataDir,'run-keys',rid+'.json');if(fs.existsSync(f)&&same(token,JSON.parse(fs.readFileSync(f,'utf8')).token)){role='runner';scope=rid}}}if(!role&&typeof req.body?.review_id==='string'&&reviewId.safeParse(req.body.review_id).success){const aid=req.body.review_id;const file=safePath(path.join(config.dataDir,'review-keys',aid+'.json'),[config.dataDir],true);if(wb.maybe('review_assignments',aid)&&fs.existsSync(file)&&same(token,JSON.parse(fs.readFileSync(file,'utf8')).token)){role='reviewer';scope=aid}}assert(role,'MCP 认证失败',401);
+    const token=req.headers.authorization?.replace(/^Bearer /,'')||'';let role:string|undefined,scope:string|undefined;if(same(token,wb.keys.manager))role='manager';else if(same(token,wb.keys.planner))role='planner';else if(same(token,wb.keys.chat_planner))role='chat_planner';else if(typeof req.body?.run_id==='string'){const rid=req.body.run_id;assert(/^R-[a-f0-9-]{36}$/.test(rid),'MCP Run ID 无效',401);const run=wb.maybe('runs',rid);if(run){const f=path.join(config.dataDir,'run-keys',rid+'.json');if(fs.existsSync(f)&&same(token,JSON.parse(fs.readFileSync(f,'utf8')).token)){role='runner';scope=rid}}}if(!role&&typeof req.body?.review_id==='string'&&reviewId.safeParse(req.body.review_id).success){const aid=req.body.review_id;const file=safePath(path.join(config.dataDir,'review-keys',aid+'.json'),[config.dataDir],true);if(wb.maybe('review_assignments',aid)&&fs.existsSync(file)&&same(token,JSON.parse(fs.readFileSync(file,'utf8')).token)){role='reviewer';scope=aid}}if(!role&&handoffId.safeParse(req.body?.handoff_id).success){const hid=req.body.handoff_id,file=handoffCredentialPath(wb,hid);if(fs.existsSync(file)&&same(token,JSON.parse(fs.readFileSync(file,'utf8')).token)){role='review_handoff';scope=hid;}}assert(role,'MCP 认证失败',401);
     const tool=req.params.tool,b={...req.body};
+    if(role==='review_handoff'){
+      assert(b.handoff_id===scope&&['get_open_review_context','claim_review_handoff'].includes(tool),'交接连接仅用于读取本轮资料和以本人身份接单',403);
+      return tool==='get_open_review_context'?openReviewContext(wb,scope!):claimReviewHandoff(wb,b);
+    }
+    if(tool==='export_review_handoff'){
+      assert(['runner','reviewer','planner','manager'].includes(role),'请使用当前工作会话导出审查交接',403);
+      const rid=role==='reviewer'?sessionCaller(wb,'reviewer',scope!).run_id:role==='runner'?scope:b.run_id;
+      return openReviewHandoff(wb,rid);
+    }
     const callerJob=role==='runner'?authenticateExecutionJob(wb,scope!,req.headers['x-workbench-execution-job-id'],req.headers['x-workbench-execution-job-token']):undefined;
     if(role==='runner'){scope=tool==='continue_run'?resolveRunnerContinuationScope(wb,scope!,b.request_id):resolveRunnerRun(wb,scope!);if(['report_run_event','submit_run_result'].includes(tool))assert(b.run_id===scope,'旧执行的完整回执不能提交到新Run；请读取当前上下文并使用report_run_activity',409);else b.run_id=scope;}
     if(role==='planner'&&tool==='get_project_memories')return projectMemories(wb,b);
@@ -202,6 +213,14 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
     }
     if(role==='chat_planner'){assert(['get_chat_planning_context','submit_task_plan'].includes(tool),'聊天规划连接仅可读取需求规划包和提交计划',403);if(tool==='get_chat_planning_context')return chatPlanningBrief(chatPlanningContext(wb,b.request_id));const q=wb.get('requests',b.request_id);assert(q.workflow_kind!=='small'||Array.isArray(b.tasks)&&b.tasks.length<=3,'小需求最多三项');return wb.submitPlan(b,'chat_mcp',role)}const isReport=['report_run_event','submit_run_result'].includes(tool);if(role==='runner')assert(isReport||['register_delegation','report_delegation','recover_native_review','dispatch_review','continue_run','get_agent_job','read_run_context_file','wait_run_update','complete_run_closeout','get_run_context','ack_run_context','report_run_activity','report_runtime_deployment','get_deployment_context','report_deployment_evidence','report_review_handoff','get_closeout_context','export_closeout_order','get_run_feedback','get_review_context','submit_grok_review','get_review_candidates','export_review_order'].includes(tool),'执行凭据仅可回报或查询自己的 Run',403);
     if(role==='reviewer'){
+      if(tool==='dispatch_review'||tool==='get_agent_job'){
+        const caller=sessionCaller(wb,'reviewer',scope!),rid=caller.run_id!;
+        if(tool==='dispatch_review'){
+          const v=peerDispatchInput.parse(b),target=wb.get('review_assignments',v.target_review_id);assert(target.run_id===rid,'同伴审查须属于本轮交付',403);
+          const {review_id,target_review_id,...args}=v,result=agents.dispatchReview({...args,run_id:rid,review_id:target_review_id});wb.audit(caller.id,'dispatch_peer_review',target_review_id,{job_id:result.job_id,run_id:rid});return result;
+        }
+        const {review_id,...args}=peerJobInput.parse(b),job=wb.get('agent_jobs',args.job_id);assert(job.run_id===rid&&job.role==='review','只能查询本轮审查调用',403);return agents.getJob({...args,run_id:rid});
+      }
       assert(b.review_id===scope&&['get_review_assignment','ack_review_context','read_review_context_file','report_review_started','submit_review_result','submit_review_report'].includes(tool),'审查凭据仅可操作本审查单',403);
       if(tool==='get_review_assignment')return reviewContext(wb,b,reviewAssignmentContext(wb,scope!));
       if(tool==='ack_review_context')return acknowledgeReviewContext(wb,b,reviewAssignmentContext(wb,scope!));

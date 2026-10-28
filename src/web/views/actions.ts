@@ -51,11 +51,16 @@ export async function copyRework(s:Store,t:R){return s.act(async()=>{
  await copyOrderText(s,`本次验收未通过，请按下面的问题返工：\n${f.note}\n\n${r.entry}`,'返工要求已复制，粘贴给原执行者即可',t);return r;
 })}
 
-export async function copyReviewOrder(s:Store,detail:R){return s.act(async()=>{
- const t=detail.task,c=await api('/tasks/'+t.id+'/review-candidates'),selected=c.candidates.find((a:R)=>a.agent_id===t.reviewer_id);
+export async function copyReviewHandoff(s:Store,t:R){return s.act(async()=>{
+ const handoff=await api('/tasks/'+t.id+'/review-handoff',{});
+ await copyOrderText(s,handoff.entry,'审查交接已复制，发给负责审查的 Agent 即可',t);return handoff;
+},undefined,{refresh:false})}
+
+export async function copyReviewOrder(s:Store,detail:R,member?:R){return s.act(async()=>{
+ const t=detail.task,reviewer=member?.reviewer_id||t.reviewer_id,c=await api('/tasks/'+t.id+'/review-candidates'),selected=c.candidates.find((a:R)=>a.agent_id===reviewer);
  if(!selected?.assignable){s.openDialog('review-order',{detail});return}
- const r=await api('/review-orders',{run_id:t.current_run_id,reviewer_id:t.reviewer_id,expected_revision:c.revision,reason:'用户手动转发独立审查单',...(t.review_stage!=='running'?{delivery_mode:'manual'}:{})});
- const copied=await s.copy(r.entry,'审查单已复制，粘贴给 '+s.name(t.reviewer_id));if(!copied)s.openDialog('review-order',{detail});return r;
+ const r=await api('/review-orders',{run_id:t.current_run_id,reviewer_id:reviewer,...(member?{review_id:member.id}:{}),expected_revision:c.revision,reason:'用户手动转发独立审查单',...(!member&&t.review_stage!=='running'?{delivery_mode:'manual'}:{})});
+ await copyOrderText(s,r.entry,'审查单已复制，粘贴给 '+s.name(reviewer),t);return r;
 })}
 export async function copyReviewFeedback(s:Store,t:R){return s.act(async()=>{
  const r=await api('/runs/'+t.current_run_id+'/review-feedback',{revision:t.revision});await s.copy(r.text,'审查反馈已复制，粘贴回原执行者即可');return r;
@@ -68,10 +73,10 @@ export function reviewRequestText(t: R, run: R | undefined, artifacts: R[], name
 
 export async function copyCloseoutOrder(s:Store,t:R){return s.act(async()=>{const r=await api('/closeout-orders',{run_id:t.current_run_id,expected_revision:t.revision});await copyOrderText(s,r.entry,'收尾单已复制，粘贴回原执行者即可',t);return r})}
 
-export async function dispatchTask(s:Store,t:R,review=false,freshSession=false){return s.act(async()=>{
+export async function dispatchTask(s:Store,t:R,review=false,freshSession=false,reviewId?:string){return s.act(async()=>{
  let current=t;
  if(!review&&t.status==='ready'&&!t.current_run_id){await api('/tasks/'+t.id+'/export',{version:t.version});current=(await api('/tasks/'+t.id)).task;}
- return api('/tasks/'+t.id+(review?'/dispatch-review':'/dispatch'),{expected_revision:current.revision,request_id:crypto.randomUUID(),fresh_session:freshSession});
+ return api('/tasks/'+t.id+(review?'/dispatch-review':'/dispatch'),{expected_revision:current.revision,request_id:crypto.randomUUID(),fresh_session:freshSession,...(reviewId?{review_id:reviewId}:{})});
 },'调用请求已登记，接单与交付状态会按实际回执更新')}
 
 export async function continueTask(s:Store,t:R,sameSession=true){return s.act(async()=>{

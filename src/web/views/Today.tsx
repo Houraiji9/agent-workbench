@@ -7,9 +7,9 @@ import { useStore } from '../app/store.js';
 import { type R, relayOf, requestRelay, byUrgency, isYourTurn, isTheirTurn, reviewSkippedTask } from '../lib/flow.js';
 import { greeting, todayLine, relative, daysUntil, dayCountText, plainDay } from '../lib/format.js';
 import { quotaPercent } from '../quota.js';
-import { Pill, RelayTrack, Empty, Section } from '../ui/kit.js';
+import { Pill, RelayTrack, ReviewLanes, Empty, Section } from '../ui/kit.js';
 import { AgentIcon } from '../ui/AgentIcon.js';
-import { copyOrder, copyPlanning, copyRework, markDispatched, continueTask, openTrial } from './actions.js';
+import { copyOrder, copyPlanning, copyRework, markDispatched, continueTask, openTrial, copyReviewHandoff } from './actions.js';
 import {TaskQuickActions} from '../ui/TaskQuickActions.js';
 import {waitingForDependencies} from '../../shared/execution-order.js';
 import {ExecutionList,OrderStep} from '../ui/ExecutionOrder.js';
@@ -76,14 +76,14 @@ export function Today() {
           <div className="row-list">
             {theirs.map((t: R) => {
               const who = s.executorOf(t), relay = relayOf(t, s.name, who);
-              const holder = ['submitted','in_review'].includes(t.status) && t.review_stage==='running' ? (t.active_reviewers?.find((r:R)=>r.status==='running')?.reviewer_id||t.active_reviewers?.find((r:R)=>r.status==='awaiting_dispatch')?.reviewer_id||t.reviewer_id) : who;
+              const holder = who;
               const project = s.pname(t.project_id);
               return <div key={t.id} className="quick-action-row"><button className="row active-task" onClick={() => s.openTask(t.id)}>
                 <AgentIcon name={s.name(holder)} id={s.agentIconId(holder)} />
                 <span className="row-main">
                   <ProjectTag name={project} />
                   <strong title={t.title}>{t.title}</strong>
-                  <small title={relay.headline}>{['submitted','in_review'].includes(t.status)&&t.review_stage==='running'?s.name(holder)+' · ':''}{relay.headline}</small>
+                  <small title={relay.headline}>{relay.headline}</small>{['submitted','in_review'].includes(t.status)&&<ReviewLanes relay={relay}/>}
                 </span>
                 <span className="row-side"><Pill task={t} /><small>{relative(t.updated_at, s.tz)}更新</small></span>
               </button><TaskQuickActions task={t} trial={false}/></div>;
@@ -160,8 +160,10 @@ function TaskTurn({ t, compact }: { t: R; compact?: boolean }) {
   else if (t.status==='changes_requested') actions=<button className="btn primary" disabled={s.busy} onClick={()=>void continueTask(s,t)}>原会话继续返修</button>;
   else if (['waiting_input','closeout_waiting_input'].includes(t.status)&&t.question_answered)actions=<button className="btn primary" disabled={s.busy} onClick={()=>void continueTask(s,t)}>把答复交回原会话</button>;
   else if (['waiting_input','closeout_waiting_input'].includes(t.status)) actions = <button className="btn primary" onClick={open}><MessageCircleQuestion size={16} />去回答</button>;
+  else if(['submitted','in_review'].includes(t.status)&&!['completed','awaiting_decision'].includes(t.review_stage)&&!reviewSkippedTask(t))actions=<button className="btn primary" disabled={s.busy} onClick={()=>void copyReviewHandoff(s,t)}><Copy size={16}/>交给审查者</button>;
+  else if(['submitted','in_review'].includes(t.status)&&t.review_stage==='awaiting_decision')actions=<button className="btn primary" onClick={open}>查看审查意见</button>;
   else if(['in_review','awaiting_closeout'].includes(t.status))actions=<button className="btn primary" disabled={s.busy} onClick={()=>void continueTask(s,t)}><Copy size={16}/>原会话继续收尾</button>;
-  else if(t.status==='submitted')actions=<button className="btn primary" onClick={open}><Copy size={16}/>交给审查者</button>;
+  else if(t.status==='submitted')actions=<button className="btn primary" disabled={s.busy} onClick={()=>void continueTask(s,t)}>继续收尾</button>;
   else if(t.status==='acceptance_rejected')actions=<button className="btn primary" disabled={s.busy} onClick={()=>void copyRework(s,t)}><Copy size={16}/>复制返工要求</button>;
   else if (['awaiting_confirmation'].includes(t.status)) actions = <button className="btn primary" disabled={s.busy} onClick={()=>void openTrial(s,t)}><CircleCheckBig size={16} />去试用确认</button>;
   else actions = <button className="btn primary" onClick={open}><LifeBuoy size={16} />看看怎么处理</button>;
@@ -176,8 +178,8 @@ function TaskTurn({ t, compact }: { t: R; compact?: boolean }) {
       </div>
     </div>
     <button className="turn-title" onClick={open}>{t.title}</button>
-    <p className="turn-next">{relay.next}</p>
-    <div className="turn-actions">{actions}{!['ready','awaiting_dispatch'].includes(t.status)&&<TaskQuickActions task={t} trial={false}/>}</div>
+    <p className="turn-next">{relay.next}</p><ReviewLanes relay={relay}/>
+    <div className="turn-actions">{actions}{!['ready','awaiting_dispatch'].includes(t.status)&&<TaskQuickActions task={t} trial={false} review={false}/>}</div>
   </article>;
 }
 

@@ -1,10 +1,21 @@
 import {waitingForDependencies} from './execution-order.js';
+import {reviewProgress} from './review-progress.js';
 type Row=Record<string,any>;
 export type ActionGroup='answer'|'decision'|'trial'|'arrange'|'working'|'waiting'|'done';
 export const actionGroups:Record<ActionGroup,string>={answer:'待回答',decision:'异常需决定',trial:'待试用',arrange:'待安排',working:'正在处理',waiting:'等待前序',done:'已结束'};
 /** Display the reviewer's actual receipt without rewriting the task lifecycle. */
 export const hasSameSessionContinuation=(t:Row):boolean=>!!t.same_session_continuation?.run_id&&t.same_session_continuation.run_id===t.current_run_id&&t.same_session_continuation.agent_id===t.agent_id&&['ready','awaiting_dispatch','dispatched','changes_requested','awaiting_closeout'].includes(t.status);
-export const taskDisplayStatus=(t:Row):string=>hasSameSessionContinuation(t)&&taskAction(t).owner==='agent'&&t.status!=='awaiting_closeout'?'continuation_pending':['submitted','in_review'].includes(t.status)&&t.review_stage==='awaiting_decision'?'review_decision':['submitted','in_review'].includes(t.status)&&t.review_stage==='running'?'review_running':t.status;
+export function taskDisplayStatus(t:Row):string{
+ if(hasSameSessionContinuation(t)&&taskAction(t).owner==='agent'&&t.status!=='awaiting_closeout')return 'continuation_pending';
+ if(['submitted','in_review'].includes(t.status)){
+  if(t.review_stage==='awaiting_decision')return 'review_decision';
+  if(t.review_stage!=='completed'){
+   const p=reviewProgress(t);if(p.running||p.starting)return 'review_running';if(p.waiting)return 'review_waiting';if(p.pending)return 'review_arranged';
+   if(!p.total&&t.review_stage==='running')return 'review_running';
+  }
+ }
+ return t.status;
+}
 export function taskAction(t:Row):{group:ActionGroup;owner:'user'|'agent'|'reviewer'|'none';label:string}{
   if(['accepted','cancelled','rework_linked'].includes(t.status))return {group:'done',owner:'none',label:'已结束'};
   if(waitingForDependencies(t))return {group:'waiting',owner:'none',label:'等待前序'};
@@ -16,11 +27,16 @@ export function taskAction(t:Row):{group:ActionGroup;owner:'user'|'agent'|'revie
     &&t.automation.run_id===t.current_run_id&&!!t.current_run_id
     &&t.automation.process_may_be_running===false&&!t.automation.recovery_required
     &&['awaiting_closeout','closing','closeout_blocked','closeout_waiting_input','awaiting_confirmation'].includes(t.status);
-  if(t.automation&&!completedReviewCall&&(!t.automation.superseded||t.automation.recovery_required||t.automation.process_may_be_running===true)&&['failed','interrupted'].includes(t.automation.status))return {group:'decision',owner:'user',label:'处理客户端调用阻碍'};
-  if(t.automation&&['queued','launching','running'].includes(t.automation.status))return {group:'working',owner:t.automation.role==='review'?'reviewer':'agent',label:t.automation.role==='review'?(t.review_stage==='running'?'独立审查中':'正在调用审查者'):'客户端正在处理'};
+  if(['submitted','in_review'].includes(t.status)&&t.review_stage==='awaiting_decision')return {group:'decision',owner:'user',label:'审查报告已齐，待负责人决定'};
+  if(['submitted','in_review'].includes(t.status)&&t.review_stage!=='awaiting_decision'&&t.review_stage!=='completed'){
+    const progress=reviewProgress(t),copy=reviewHandoffCopy(t);
+    if(progress.total)return {group:copy.holder==='you'?'arrange':'working',owner:copy.holder==='you'?'user':'reviewer',label:copy.headline};
+    if(t.automation?.role==='review'&&['failed','interrupted'].includes(t.automation.status)&&!t.automation.superseded)return {group:'arrange',owner:'user',label:'审查待继续，尚未收到报告'};
+  }
+  if(t.automation?.role!=='review'&&t.automation&&!completedReviewCall&&(!t.automation.superseded||t.automation.recovery_required||t.automation.process_may_be_running===true)&&['failed','interrupted'].includes(t.automation.status))return {group:'decision',owner:'user',label:'处理客户端调用阻碍'};
+  if(t.automation&&(t.automation.role!=='review'||['submitted','in_review'].includes(t.status))&&['queued','launching','running'].includes(t.automation.status))return {group:'working',owner:t.automation.role==='review'?'reviewer':'agent',label:t.automation.role==='review'?(t.review_stage==='running'?'独立审查中':'正在调用审查者'):'客户端正在处理'};
   if(['blocked','failed','closeout_blocked'].includes(t.status))return {group:'decision',owner:'user',label:'处理阻碍'};
   if(t.status==='awaiting_confirmation')return t.delivery_target==='runtime'&&!t.deployment?.verified?{group:'working',owner:'agent',label:'等待本机更新'}:{group:'trial',owner:'user',label:'去试用'};
-  if(['submitted','in_review'].includes(t.status)&&t.review_stage==='awaiting_decision')return {group:'decision',owner:'user',label:'审查报告已齐，待负责人决定'};
   if(t.status==='in_review'&&t.review_stage==='running')return {group:'working',owner:'reviewer',label:'独立审查中'};
   if(t.status==='submitted'&&t.reviewer_id===null&&t.review_policy?.mode==='not_requested')return {group:'arrange',owner:'user',label:'继续收尾'};
   if(t.status==='submitted'&&(t.active_reviewers||[]).some((m:Row)=>m.status==='awaiting_dispatch')){const review=reviewHandoffCopy(t);return {group:review.holder==='you'?'arrange':'working',owner:review.holder==='you'?'user':'agent',label:review.headline};}
@@ -60,6 +76,11 @@ export function layoutRelationships(nodes:GraphNode[],edges:GraphEdge[]){
 
 /** Read only recorded review work; pending orders and returned reports are separate facts. */
 export function reviewHandoffCopy(t:Row,summary?:Row){
+ const progress=reviewProgress(t,summary);
+ if(progress.total){
+  const holder=progress.running||progress.starting?'reviewer':progress.waiting||progress.members.some(m=>m.state==='pending'&&m.delivery_mode!=='agent')?'you':'agent';
+  return {headline:progress.headline,next:progress.waiting?'尚未回报的成员可继续原会话或手动交接；其他成员的审查与报告各自保留':progress.running||progress.starting?'各审查者并行处理，报告分别收录':progress.reported===progress.total?'查看各方意见，由负责人决定下一步':holder==='you'?'将审查单交给尚未接单的成员':'等待已安排的调用接单',holder,arranged:true};
+ }
  const members=summary?.members||t.active_reviewers||[],pending=members.filter((m:Row)=>m.status==='awaiting_dispatch'),running=members.filter((m:Row)=>m.status==='running');
  const reported=summary?.counts?.completed??t.review_report_counts?.completed??0;
  if(running.length||t.review_stage==='running')return {headline:reported?'部分审查已回报，其余仍在审查':'独立审查正在进行',next:'等待尚未完成的审查者回传报告，再由负责人决定下一步',holder:'reviewer',arranged:true};

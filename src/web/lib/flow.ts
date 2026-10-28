@@ -1,4 +1,5 @@
 import {reviewHandoffCopy,leadContinuedReview} from '../../shared/workflow-view.js';
+import {reviewProgress} from '../../shared/review-progress.js';
 import {planningOriginLabel} from '../../shared/planning-origin.js';
 import {taskAction,hasSameSessionContinuation} from '../../shared/workflow-view.js';
 export {taskDisplayStatus} from '../../shared/workflow-view.js';
@@ -10,7 +11,7 @@ export type R = Record<string, any>;
 export type Holder = 'you' | 'agent' | 'reviewer' | 'planner' | 'none';
 export type Tone = 'you' | 'working' | 'review' | 'problem' | 'done' | 'quiet';
 
-export interface Leg { key: string; label: string; who: string }
+export interface Leg { key: string; label: string; who: string; members?:{id:string;name:string;label:string;tone:string}[]; count?:string }
 export interface Relay {
   legs: Leg[];
   /** 当前所在一棒（0 起）；已完成为 legs.length，已取消为 -1 */
@@ -39,6 +40,8 @@ export const statusText: R = {
   rework_linked: '验收未通过，已安排返工',
   submitted: '已交付，待审查',
   review_running: '审查中',
+  review_waiting: '审查待继续',
+  review_arranged: '审查待接单',
   review_decision: '待负责人决定',
   awaiting_confirmation: '收尾完成，待你试用',
   in_review: '待执行者收尾',
@@ -53,7 +56,7 @@ export const toneOfStatus: Record<string, Tone> = {
   awaiting_planning: 'you', ready: 'you', awaiting_dispatch: 'you', waiting_input: 'you',
   awaiting_confirmation: 'you', in_review: 'you', awaiting_closeout:'you', closing:'working', closeout_waiting_input:'you', closeout_blocked:'problem',
   dispatched: 'working', running: 'working',
-  submitted: 'review', review_running:'review', review_decision:'you',
+  submitted: 'review', review_running:'review', review_waiting:'you', review_arranged:'quiet', review_decision:'you',
   blocked: 'problem', failed: 'problem', changes_requested: 'problem',acceptance_rejected:'problem',rework_linked:'quiet',
   accepted: 'done', cancelled: 'quiet', planned: 'quiet',
 };
@@ -69,13 +72,14 @@ export function relayOf(t: R, name: (id: string) => string, executor?: string): 
   const skippedReview = reviewSkippedTask(t);
   const doer = name(executor || t.agent_id);
   const continuing=hasSameSessionContinuation(t)&&taskAction(t).owner==='agent';
-  const reviewer = skippedReview ? '本次不审查' : name(t.reviewer_id);
+  const progress=reviewProgress(t);
+  const reviewer = skippedReview ? '本次不审查' : progress.total?progress.members.map(m=>name(m.reviewer_id)).join('、'):name(t.reviewer_id);
   const legs: Leg[] = [
     { key: 'ask', label: '提出需求', who: '你' },
     { key: 'plan', label: '规划拆分', who: planningOriginLabel(t) },
     { key: 'handoff', label: continuing?'原会话续接':'交给执行者', who: continuing?doer:t.execution_route ? '工作台' : '你' },
     { key: 'work', label: '执行', who: doer },
-    { key: 'review', label: '独立审查', who: reviewer },
+    { key: 'review', label: '独立审查', who: reviewer, ...(progress.total?{count:progress.count,members:progress.members.map(m=>({id:m.review_id||m.id,name:name(m.reviewer_id),label:m.label,tone:m.tone}))}:{}) },
     { key: 'closeout', label: '执行收尾', who: doer },
     { key: 'confirm', label: '你试用确认', who: '你' },
   ];
@@ -84,9 +88,13 @@ export function relayOf(t: R, name: (id: string) => string, executor?: string): 
   if(t.status==='awaiting_confirmation'&&t.delivery_target==='runtime'&&!t.deployment?.verified)return r(5,'agent','working','等待本机安装验证','执行者先完成运行目录更新与验证，再交你试用');
   if(waitingForDependencies(t))return r(2,'none','quiet','等待前序任务完成','先完成下方列出的任务并确认验收，再交给执行者');
   if(hasPendingDecision(t))return r(['accept','reject'].includes(t.pending_user_decision.action)?6:4,'you','you',t.pending_user_decision.title,'查看已填好的事项，确认后生效');
-  if(t.automation&&(!t.automation.superseded||t.automation.recovery_required||t.automation.process_may_be_running===true)&&['failed','interrupted'].includes(t.automation.status)&&!['waiting_input','closeout_waiting_input','accepted','cancelled','rework_linked'].includes(t.status))return r(t.automation.role==='review'?4:3,'you','problem','客户端调用受阻',t.automation.reason||'查看调用记录，处理本机客户端问题后再继续');
-  if(t.automation&&['queued','launching','running'].includes(t.automation.status)&&!['waiting_input','closeout_waiting_input','awaiting_confirmation','accepted','cancelled','rework_linked'].includes(t.status))return r(t.automation.role==='review'?4:3,t.automation.role==='review'?'reviewer':'agent',t.automation.role==='review'?'review':'working',t.automation.role==='review'?'正在调用独立审查者':'正在调用执行者','等待实际回执更新进度，无需转发执行单或审查单');
   if(['submitted','in_review'].includes(t.status)&&t.review_stage==='awaiting_decision')return r(4,'you','you','审查报告已齐，等待负责人决定','查看各方意见，记录继续推进、退回修改或追加审查的理由');
+  if(['submitted','in_review'].includes(t.status)&&t.review_stage!=='awaiting_decision'&&t.review_stage!=='completed'){
+    if(progress.total){const copy=reviewHandoffCopy(t);return r(4,copy.holder as Holder,progress.running||progress.starting?'review':'you',copy.headline,copy.next);}
+    if(t.automation?.role==='review'&&['failed','interrupted'].includes(t.automation.status)&&!t.automation.superseded)return r(4,'you','you','审查待继续，尚未收到报告','继续原会话或手动交接；本次调用失败记录保留');
+  }
+  if(t.automation?.role!=='review'&&t.automation&&(!t.automation.superseded||t.automation.recovery_required||t.automation.process_may_be_running===true)&&['failed','interrupted'].includes(t.automation.status)&&!['waiting_input','closeout_waiting_input','accepted','cancelled','rework_linked'].includes(t.status))return r(3,'you','problem','客户端调用受阻',t.automation.reason||'查看调用记录，处理本机客户端问题后再继续');
+  if(t.automation&&(t.automation.role!=='review'||['submitted','in_review'].includes(t.status))&&['queued','launching','running'].includes(t.automation.status)&&!['waiting_input','closeout_waiting_input','awaiting_confirmation','accepted','cancelled','rework_linked'].includes(t.status))return r(t.automation.role==='review'?4:3,t.automation.role==='review'?'reviewer':'agent',t.automation.role==='review'?'review':'working',t.automation.role==='review'?'正在调用独立审查者':'正在调用执行者','等待实际回执更新进度，无需转发执行单或审查单');
   if(t.status==='in_review'&&t.review_stage==='running'){const review=reviewHandoffCopy(t);return r(4,'reviewer','review',review.headline,review.next);}
   if(continuing)return t.status==='awaiting_closeout'?r(5,'agent','working','原会话继续收尾',`${doer} 在当前会话完成剩余事项，回执会更新进度`):r(3,'agent','working','原会话继续返修，等待接单',`${doer} 在当前会话读取本轮修改并回报接单，无需再次转发`);
   switch (t.status) {

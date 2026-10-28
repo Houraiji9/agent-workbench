@@ -1,4 +1,6 @@
 import {syncReviewCollaborationState} from './review-workflow.ts';
+import {reviewConclusion} from './review-conclusion.ts';
+export {reviewConclusion} from './review-conclusion.ts';
 import {stageCloseout,invalidateCloseout,reviewableStates,closeoutStates,verifyDelivery} from './closeout.ts';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -17,11 +19,6 @@ import {assertMayArrangeReview,reviewActor,type ReviewCaller} from './review-per
 const uuid=z.string().uuid();
 export const reviewContextInput=z.object({run_id:z.string().regex(/^R-[a-f0-9-]{36}$/)}).strict();
 export const reviewSessionInput=reviewContextInput.extend({session_id:uuid}).strict();
-export const reviewConclusion=z.object({
-  task_id:z.string(),run_id:z.string(),review_digest:z.string().regex(/^[a-f0-9]{64}$/),
-  verdict:z.enum(['passed','changes_requested']),findings:z.array(z.string().max(10000)).max(100),
-  limitations:z.array(z.string().max(10000)).max(100),
-}).strict();
 export type GrokTrace={summary:Row;history:Row[];updates:Row[]};
 export type TraceReader=(sessionId:string)=>Promise<GrokTrace>;
 const execute=promisify(execFile);
@@ -67,7 +64,6 @@ export function getReviewContext(wb:Workbench,runId:string){
   const run=wb.get('runs',runId),task=wb.get('tasks',run.task_id);
   assert(!reviewSkipped(task),'用户没有安排本次独立审查');
   assert(task.current_run_id===run.id&&reviewableStates.includes(task.status),'只能审查当前已交付版本',409);
-  assert(task.reviewer_id&&run.agent_id!==task.reviewer_id,'当前任务未指定独立审查者',403);
   const delivery_warnings:string[]=[];try{verifyDelivery(wb,task,run)}catch(error){delivery_warnings.push((error as Error).message)}const artifacts=wb.all('artifacts').filter(a=>a.run_id===run.id&&a.current).sort((a,b)=>a.id.localeCompare(b.id));
   assert(artifacts.length>0,'没有可审查的归档产物');
   for(const a of artifacts){const file=safePath(a.archive_path,[path.join(wb.config.dataDir,'artifacts')]);assert(hash(readBounded(file,20*1024*1024))===a.sha256,'归档产物已变化，需重新交付',409)}

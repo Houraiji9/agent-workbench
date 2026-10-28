@@ -133,11 +133,11 @@ test('多人审查等待同伴与负责人决定具有不同持棒人',()=>{
 test('审查主说明区分未安排、待接单与部分回报，其余待接单',()=>{
  const pending=[{reviewer_id:'claude',status:'awaiting_dispatch',delivery_mode:'manual'}];
  const none=relayOf(task('submitted'),name),arranged=relayOf(task('submitted',{active_reviewers:pending,review_stage:'awaiting_dispatch'}),name),partial=relayOf(task('submitted',{active_reviewers:pending,review_report_counts:{completed:1}}),name);
- assert.match(none.headline,/尚未安排/);assert.match(arranged.headline,/已安排/);assert.match(arranged.next,/已准备的审查单/);assert.match(partial.headline,/部分审查已回报.*待接单/);assert.equal(taskAction(task('submitted',{active_reviewers:pending,review_report_counts:{completed:1}})).owner,'user');
+ assert.match(none.headline,/尚未安排/);assert.match(arranged.headline,/已安排/);assert.match(arranged.next,/审查单交给尚未接单的成员/);assert.match(partial.headline,/审查已安排.*已回报 1\/2/);assert.equal(taskAction(task('submitted',{active_reviewers:pending,review_report_counts:{completed:1}})).owner,'user');
 });
 test('负责人继续与真实单人通过的收尾说明不能混同',()=>{
  for(const context of [{review_decision:{decision:'continue'}},{review_closeout_decision_id:'RD'},{closeout:{review_decision_id:'RD'}}]){const relay=relayOf(task('awaiting_closeout',{...context,closeout_delivery:'agent'}),name);assert.match(relay.headline,/负责人决定继续/);assert.doesNotMatch(relay.headline,/审查已通过/);assert.doesNotMatch(relay.next,/收到审查结果/);}
- assert.match(relayOf(task('awaiting_closeout'),name).headline,/审查已通过/);
+ assert.match(relayOf(task('awaiting_closeout'),name).headline,/成果已交付/);assert.doesNotMatch(relayOf(task('awaiting_closeout'),name).headline,/审查已通过/);
 });
 
 test('同会话续单保留未接单事实，当前执行者持棒且旧标记不扩大到新负责人',()=>{

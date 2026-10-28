@@ -36,6 +36,7 @@ function binding(wb:Workbench,id:string,base:Row){
   assert(base.review_id===id&&base.task_id===t.id&&base.run_id===r.id&&base.review_digest===a.review_digest,'审查上下文版本不匹配',409);
 
   const frozen=runTask(t,r);if(frozen.model_selection&&a.requested_model)frozen.model_selection=userReviewSelection(frozen.model_selection,{reviewer_id:a.reviewer_id,requested_model:a.requested_model,reason:a.reason,decided_by:a.model_decided_by||((a.created_by==='user'||a.user_instruction)?'user':'planner')});frozen.reviewer_id=a.reviewer_id;frozen.review_route=undefined;validatePriorityPlan(frozen,frozen.importance||'normal',frozen.review_policy);
+  if(a.handoff_id)frozen.model_selection=null;
   return {a,r,t:frozen};
 }
 function current(wb:Workbench,id:string,base:Row){
