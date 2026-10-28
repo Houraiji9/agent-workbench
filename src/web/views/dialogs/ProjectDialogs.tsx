@@ -133,7 +133,7 @@ export function MemoryDialog({ projectId, onClose }: { projectId: string; onClos
   const s = useStore();
   const tasks = (s.data.tasks as R[]).filter(t => t.project_id === projectId);
   const sessions = (s.data.sessions as R[]).filter(x => x.project_id === projectId).slice(-30);
-  const memories = (s.data.memories as R[]).filter(m => m.project_id === projectId && m.status !== 'superseded');
+  const memories = (s.data.memories as R[]).filter(m => m.project_id === projectId && !m.deleted_at && m.status !== 'superseded');
   const [kind, setKind] = useState('decision');
   const [status, setStatus] = useState('candidate');
   const [content, setContent] = useState('');

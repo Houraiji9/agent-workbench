@@ -1,5 +1,5 @@
 // 团队：每位 Agent 擅长什么、手里有什么、最近一次能观测到的会话活动。
-import React,{useState} from 'react';
+import React,{useLayoutEffect,useRef,useState} from 'react';
 import { Copy, PencilLine, ArrowLeft, Plus, Trash2, RotateCcw, Search } from 'lucide-react';
 import {api} from '../api.js';
 import { useStore } from '../app/store.js';
@@ -37,12 +37,30 @@ export function Team() {
   const agents = (s.data.agents as R[]).filter(a => !a.archived);
   const routeId = (s.data.agents as R[]).find(a => a.id === s.route.id)?.merged_into || s.route.id;
   const selected = agents.find(a => a.id === routeId);
-  return <div className="page-wrap">
+  const listRef = useRef<HTMLDivElement>(null);
+  const listPositions = useRef({all:0,split:0});
+  const listMode = selected ? 'split' : 'all';
+  const previousMode = useRef(listMode);
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    list.scrollTop = listPositions.current[listMode];
+    // The first expanded member should remain in view when the grid becomes a column.
+    if (listMode === 'split' && previousMode.current === 'all' && !listPositions.current.split && list.clientHeight) {
+      const card = list.querySelector<HTMLElement>('.agent-card.on');
+      if (card) list.scrollTop = Math.max(0, card.offsetTop - list.offsetTop);
+    }
+    previousMode.current = listMode;
+  }, [listMode]);
+  const mine = !s.route.tab || s.route.tab === 'mine';
+  return <div className={'page-wrap' + (mine ? ' team-page' : '')}>
     <header className="page-head"><div><h1>团队</h1><p>谁擅长什么、手里有什么。规划 Agent 会按这些分工选人。</p></div><button className="btn primary" onClick={()=>s.openDialog('agent-add')}><Plus size={16}/>新增团队</button></header>
     <Tabs label="团队管理" value={s.route.tab||'mine'} onChange={tab=>s.go({page:'team',tab})} tabs={[[ 'mine','我的团队'],['presets','预设库'],['removed','已移除']]}/>
     {s.route.tab==='presets'?<PresetLibrary/>:s.route.tab==='removed'?<RemovedAgents/>:<>
     <div className={'team' + (selected ? ' has-pick' : '')}>
-      <div className="agent-grid" role="list" aria-label="Agent 列表">
+      <div ref={listRef} className="agent-grid" role="list" aria-label="Agent 列表" tabIndex={0} onScroll={event=>{
+        if (event.currentTarget.clientHeight) listPositions.current[listMode] = event.currentTarget.scrollTop;
+      }}>
         {agents.map(a => {
           const st = agentStats(s, a);
           return <button role="listitem" key={a.id} className={'agent-card' + (selected?.id === a.id ? ' on' : '')} onClick={() => s.go({ page: 'team', id: a.id })} aria-label={a.name}>
@@ -63,7 +81,7 @@ export function Team() {
           </button>;
         })}
       </div>
-      {selected ? <AgentPanel a={selected} /> : <aside className="agent-panel placeholder"><Empty title="选一位成员">看看它的分工、手里的任务和审查安排。</Empty></aside>}
+      {selected ? <AgentPanel key={selected.id} a={selected} /> : <aside className="agent-panel placeholder"><Empty title="选一位成员">看看它的分工、手里的任务和审查安排。</Empty></aside>}
     </div>
     </>}
   </div>;
@@ -74,7 +92,7 @@ function AgentPanel({ a }: { a: R }) {
   const st = agentStats(s, a);
   const accounts = (a.account_ids || []).map((id: string) => (s.data.accounts as R[]).find(x => x.id === id)?.name || id);
   const catalog = (s.data.model_catalog || []).find((g:R) => g.agent_id === a.id);
-  return <aside className="agent-panel" aria-label={a.name + ' 详情'}>
+  return <aside className="agent-panel" aria-label={a.name + ' 详情'} tabIndex={0}>
     <button className="crumb team-back" onClick={() => s.go({ page: 'team' })}><ArrowLeft size={15} />全部成员</button>
     <div className="ap-head">
       <AgentIcon name={a.name} id={a.icon_key||a.id} size={52} />

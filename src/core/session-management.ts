@@ -4,8 +4,8 @@ import {assert} from './security.ts';
 
 /** Credential-derived scope. Tool arguments never select the caller's identity. */
 export type ManagementCaller={role:'manager'|'runner'|'reviewer';id:string;run_id?:string;review_id?:string;project_id?:string;project_ids?:string[]};
-export const sessionManagementWrites=['manage_requests','manage_projects','manage_tasks','manage_reviews','manage_memories','link_execution_session','open_workbench_folder'];
-export const sessionManagementReads=['get_project_memories','get_management_context','get_management_result','get_task_detail','get_planning_entry','get_session_messages','read_artifact'];
+export const sessionManagementWrites=['classify_project_files','manage_requests','manage_projects','manage_tasks','manage_reviews','manage_memories','link_execution_session','open_workbench_folder'];
+export const sessionManagementReads=['get_project_files','get_project_memories','get_management_context','get_management_result','get_task_detail','get_planning_entry','get_session_messages','read_artifact'];
 export function sessionCaller(wb:Workbench,role:'runner'|'reviewer',scope:string):ManagementCaller{
  const a=role==='reviewer'?wb.get('review_assignments',scope):null,r=wb.get('runs',a?.run_id||scope),t=wb.get('tasks',r.task_id);
  assert(t.current_run_id===r.id&&!['cancelled','rework_linked'].includes(t.status),'此连接对应的执行已结束，请使用当前执行连接',409);

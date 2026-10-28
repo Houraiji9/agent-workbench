@@ -10,10 +10,10 @@ test('经验默认只给有限索引，候选/替代有标记，相关全文按�
  const bounded=projectMemories(f.wb,{project_id:'P-workbench',mode:'read',memory_ids:[candidate.id],max_bytes:1024});assert.deepEqual(bounded.deferred_ids,[candidate.id]);assert.equal(bounded.items.length,0);
  assert.throws(()=>projectMemories(f.wb,{project_id:'P-workbench',mode:'read',memory_ids:[]}),/请选择/);
 }finally{f.wb.close()}});
-test('规划选择的经验进入执行简版，同会话上下文不重发不变条目，导出不会注入全文',()=>{const f=fixture();try{
+test('规划选择的经验从历史section按需读取，同会话不重发不变条目，导出不会注入全文',()=>{const f=fixture();try{
  const s=setup(f.wb,f.root),m=f.wb.memory({project_id:'P-workbench',kind:'known_issue',status:'confirmed',content:'问题摘要'.repeat(60)+' SECRET_TAIL_OF_LONG_MEMORY',source_id:s.tid});
  const t=f.wb.get('tasks',s.tid);t.context_contract={required:[],supplemental:[],output_dir:f.root,max_bytes:65536,memory_ids:[m.id]};f.wb.put('tasks',t,{project_id:t.project_id});validateTaskContextContract(f.wb,t);
- assert.deepEqual(taskMemoryContext(f.wb,t).selected_ids,[m.id]);const ctx=executionContext(f.wb,{run_id:s.rid});assert.equal(ctx.context.project_memory.selection,'planner_selected');assert(!JSON.stringify(ctx).includes('SECRET_TAIL'));
+ assert.deepEqual(taskMemoryContext(f.wb,t).selected_ids,[m.id]);const ctx=executionContext(f.wb,{run_id:s.rid,section:'history'});assert.equal(ctx.context.project_memory.selection,'planner_selected');assert(!JSON.stringify(ctx).includes('SECRET_TAIL'));
  assert.deepEqual(executionContext(f.wb,{run_id:s.rid,mode:'delta',known_context_hash:ctx.context_hash}).context,{});
  const q=f.wb.request({project_id:'P-workbench',text:'另一个隔离测试需求'});const plan=f.wb.submitPlan({...s.plan,plan_id:'memory-plan-'+q.id,request_id:q.id});const order=f.wb.exportOrder(plan.task_ids[0],1);const contextFile=fs.readFileSync(path.join(path.dirname(order.path),'CONTEXT.md'),'utf8');assert(!contextFile.includes('SECRET_TAIL'));assert(contextFile.includes('按需'));assert(contextFile.includes('get_project_memories'));
 }finally{f.wb.close()}});

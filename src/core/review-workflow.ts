@@ -80,14 +80,15 @@ export function exportReviewOrder(wb:Workbench,input:unknown,caller:ReviewCaller
   const frozen=runTask(task,run);validatePriorityPlan(frozen,frozen.importance||'normal',frozen.review_policy);
   getReviewContext(wb,run.id);const candidate=wb.get('agents',v.reviewer_id),author=wb.get('agents',run.agent_id);
   assert(!sameAgent(candidate,author),'独立审查须由另一位审查者完成',403);const resource=reviewerResources(wb,candidate.id),resourceWarnings:string[]=[];if(resource.status!=='available')resourceWarnings.push(resource.reason);resourceWarnings.push(...wb.eligible(candidate.id).warnings);
-  const old=v.review_id?wb.get('review_assignments',v.review_id):wb.all('review_assignments').find(a=>a.run_id===run.id&&a.reviewer_id===v.reviewer_id&&['awaiting_dispatch','running'].includes(a.status)&&(!v.requested_model||v.requested_model===a.requested_model));
+  const requestedModel=v.requested_model!==undefined?v.requested_model:frozen.review_arrangement?.reviewer_id===candidate.id?frozen.review_arrangement.requested_model:frozen.model_selection?.review?.agent_id===candidate.id?frozen.model_selection.review.model:frozen.reviewer_id===candidate.id?(frozen.review_route?.model??frozen.agent_selection?.review?.model??null):null;
+  const old=v.review_id?wb.get('review_assignments',v.review_id):wb.all('review_assignments').find(a=>a.run_id===run.id&&a.reviewer_id===v.reviewer_id&&['awaiting_dispatch','running'].includes(a.status)&&(v.requested_model===undefined||v.requested_model===a.requested_model));
   if(v.review_id)assert(old&&old.run_id===run.id&&old.reviewer_id===v.reviewer_id&&['awaiting_dispatch','running'].includes(old.status),'指定审查单已变化，请刷新',409);
   if(old&&old.reviewer_id===v.reviewer_id&&!v.new_review&&['awaiting_dispatch','running'].includes(old.status)){
     if(v.delivery_mode&&v.delivery_mode!==(old.delivery_mode||'manual')){assert(old.status==='awaiting_dispatch','审查者已接单，换交接方式需重新安排',409);wb.transaction(()=>{old.delivery_mode=v.delivery_mode;old.delivery_reason=v.reason;task.review_delivery=v.delivery_mode;task.revision++;task.updated_at=now();wb.put('review_assignments',old,{run_id:run.id});wb.put('tasks',task,{project_id:task.project_id});wb.audit(actor,'change_review_delivery',old.id,{delivery_mode:v.delivery_mode,reason:v.reason})})}
     old.resource_snapshot={...resource,observed_at:now()};old.resource_warnings=resourceWarnings;wb.put('review_assignments',old,{run_id:run.id});syncReviewCollaborationState(wb,task,run);wb.put('tasks',task,{project_id:task.project_id});writeOrder(wb,old);return orderReply(wb,old)
   }
   assert(!old||old.status!=='completed'||v.new_review||old.reviewer_id!==v.reviewer_id,'这次审查已完成，需要补审时请重新安排',409);
-  const a:Row={id:id('RA'),run_id:run.id,task_id:task.id,reviewer_id:candidate.id,requested_model:v.requested_model||(run.review_arrangement?.reviewer_id===candidate.id?run.review_arrangement.requested_model:null)||(frozen.model_selection?.review?.agent_id===candidate.id?frozen.model_selection.review.model:null)||null,
+  const a:Row={id:id('RA'),run_id:run.id,task_id:task.id,reviewer_id:candidate.id,requested_model:requestedModel??null,
     importance:frozen.importance||'normal',model_selection:frozen.model_selection||null,delivery_profile:resolveDeliveryProfile(frozen),resource_snapshot:{...resource,observed_at:now()},resource_warnings:resourceWarnings,
     model_decided_by:caller.recovery_review_id?(wb.get('review_assignments',caller.recovery_review_id).model_decided_by||'planner'):caller.role==='user'||caller.user_instruction?'user':'planner',user_instruction:caller.user_instruction||null,source:caller.source||null,status:'awaiting_dispatch',delivery_mode:v.delivery_mode||task.review_delivery||'manual',reason:v.reason,created_at:now(),created_by:actor};
   wb.transaction(()=>{
@@ -182,16 +183,44 @@ export function updateReviewMember(wb:Workbench,input:unknown,caller:ReviewCalle
  if(v.action==='replace')assert(v.reviewer_id,'更换审查成员需要指定审查者');
  a.status='cancelled';a.ended_at=now();a.cancelled_by=reviewActor(caller);a.cancellation_reason=v.reason;wb.put('review_assignments',a,{run_id:r.id});
  invalidateCloseout(wb,r,'审查成员调整');if(r.review_decision){r.review_decision=null;wb.put('runs',r,{task_id:t.id});}t.status='submitted';if(t.current_review_assignment_id===a.id)t.current_review_assignment_id=null;syncReviewCollaborationState(wb,t,r);t.revision++;t.updated_at=now();wb.put('tasks',t,{project_id:t.project_id});wb.audit(reviewActor(caller),'cancel_review_member',a.id,{reason:v.reason,user_instruction:caller.user_instruction||null});
- if(v.action==='replace')return exportReviewOrder(wb,{run_id:r.id,expected_revision:t.revision,reviewer_id:v.reviewer_id,requested_model:v.requested_model,delivery_mode:v.delivery_mode,reason:v.reason,new_review:true},caller);
+ if(v.action==='replace'){
+  const requested=v.requested_model!==undefined?v.requested_model:v.reviewer_id===a.reviewer_id?a.requested_model??null:undefined;
+  const result=exportReviewOrder(wb,{run_id:r.id,expected_revision:t.revision,reviewer_id:v.reviewer_id,requested_model:requested,delivery_mode:v.delivery_mode||a.delivery_mode,reason:v.reason,new_review:true},caller);
+  // A model edit on the same member retains its provider, with the model changed in both places.
+  // A different reviewer must resolve its own client/provider rather than inherit another member's route.
+  if(v.reviewer_id===a.reviewer_id&&a.route){const next=wb.get('review_assignments',result.review_id);next.route={...a.route,model:requested};wb.put('review_assignments',next,{run_id:r.id});return orderReply(wb,next);}
+  return result;
+ }
  return reviewCollaboration(wb,r.id);});
 }
 
 export const reviewArrangementInput=z.object({run_id:z.string().regex(/^R-[a-f0-9-]{36}$/),expected_revision:z.number().int(),reviewer_id:z.string().min(1).max(100),requested_model:z.string().trim().min(1).max(100).nullable().optional(),reason:z.string().trim().min(5).max(4000),route:agentRouteSchema.optional()}).strict();
+export const taskReviewArrangementInput=reviewArrangementInput.omit({run_id:true});
+export function setTaskReviewArrangement(wb:Workbench,taskId:string,input:unknown,caller:ReviewCaller){
+ const v=taskReviewArrangementInput.parse(input),t=wb.get('tasks',taskId);
+ assert(t.revision===v.expected_revision&&!['accepted','cancelled','rework_linked'].includes(t.status),'任务已变化或已结束',409);
+ if(t.current_run_id)return setReviewArrangement(wb,{...v,run_id:t.current_run_id},caller);
+ assert((t.review_policy?.mode||'required')!=='not_requested','本任务当前未安排独立审查',409);
+ const reviewer=wb.get('agents',v.reviewer_id);assert(!reviewer.archived&&reviewer.allowed_kinds?.includes('review'),'请选择可承担独立审查的 Agent');
+ assert(!sameAgent(reviewer,wb.get('agents',t.agent_id)),'独立审查须由另一位审查者完成',403);
+ if(v.route)assert(agentClientKind(reviewer)===v.route.client,'审查路线客户端与所选审查者不一致',409);
+ const model=v.requested_model!==undefined?v.requested_model:v.route?.model??null,client=agentClientKind(reviewer),route=v.route?{...v.route,model}:client?{client,model}:null;
+ return wb.transaction(()=>{
+  const previous={reviewer_id:t.reviewer_id,review_route:t.review_route||null,model_selection:t.model_selection||null};
+  const arrangement={reviewer_id:reviewer.id,requested_model:model,route,reason:v.reason,source:caller.source||reviewActor(caller),created_at:now()};
+  t.review_arrangement_history=[...(t.review_arrangement_history||[]),{previous,...arrangement}];
+  t.review_arrangement=arrangement;t.reviewer_id=reviewer.id;t.review_route=route;
+  if(t.model_selection?.review)t.model_selection={...t.model_selection,review:{...t.model_selection.review,agent_id:reviewer.id,model}};
+  if(!route&&t.automation_policy)t.automation_policy={...t.automation_policy,auto_review:false};
+  t.revision++;t.updated_at=now();wb.put('tasks',t,{project_id:t.project_id});wb.audit(reviewActor(caller),'set_planned_review_arrangement',t.id,{previous,arrangement});return arrangement;
+ });
+}
 export function setReviewArrangement(wb:Workbench,input:unknown,caller:ReviewCaller){
  const v=reviewArrangementInput.parse(input),r=wb.get('runs',v.run_id),t=wb.get('tasks',r.task_id);assertMayArrangeReview(wb,r.id,caller);
- assert(t.current_run_id===r.id&&t.revision===v.expected_revision&&!['accepted','cancelled'].includes(t.status),'任务已变化或已结束',409);
- const reviewer=wb.get('agents',v.reviewer_id);if(v.route){assert(agentClientKind(reviewer)===v.route.client,'审查路线客户端与所选审查者不一致',409);}const requested=v.requested_model||v.route?.model||null;const route=v.route||(agentClientKind(reviewer)?{client:agentClientKind(reviewer),model:requested}:null);assert(!sameAgent(reviewer,wb.get('agents',r.agent_id)),'独立审查须由另一位审查者完成',403);
- return wb.transaction(()=>{const previous=runTask(t,r),previousModel=r.review_arrangement?.requested_model||previous.model_selection?.review?.model||previous.review_route?.model||null;const changed=previous.reviewer_id!==v.reviewer_id||previousModel!==requested;const delivered=wb.all('artifacts').some(a=>a.run_id===r.id&&a.current);const arrangement={reviewer_id:v.reviewer_id,requested_model:requested,route,reason:v.reason,source:caller.source||reviewActor(caller),user_instruction:caller.user_instruction||null,created_at:now()};r.review_arrangement_history=[...(r.review_arrangement_history||[]),arrangement];r.review_arrangement=arrangement;if(changed&&delivered){for(const member of wb.all('review_assignments').filter(a=>a.run_id===r.id&&a.reviewer_id===previous.reviewer_id&&(!previousModel||a.requested_model===previousModel)&&!['cancelled','revoked','superseded'].includes(a.status))){member.status='cancelled';member.ended_at=now();member.cancelled_by=reviewActor(caller);member.cancellation_reason=v.reason;wb.put('review_assignments',member,{run_id:r.id});}r.review_decision=null;invalidateCloseout(wb,r,'用户调整本轮审查安排');t.status='submitted';}wb.put('runs',r,{task_id:t.id});t.reviewer_id=v.reviewer_id;t.revision++;t.updated_at=now();wb.put('tasks',t,{project_id:t.project_id});wb.audit(reviewActor(caller),'set_review_arrangement',r.id,arrangement);if(changed&&delivered){const review=exportReviewOrder(wb,{run_id:r.id,reviewer_id:v.reviewer_id,requested_model:requested||undefined,expected_revision:t.revision,reason:v.reason,new_review:true},caller);return {...arrangement,review};}return arrangement;});
+ assert(t.current_run_id===r.id&&t.revision===v.expected_revision&&!['accepted','cancelled','rework_linked'].includes(t.status),'任务已变化或已结束',409);
+ assert((runTask(t,r).review_policy?.mode||'required')!=='not_requested','本任务当前未安排独立审查',409);
+ const reviewer=wb.get('agents',v.reviewer_id);assert(!reviewer.archived&&reviewer.allowed_kinds?.includes('review'),'请选择可承担独立审查的 Agent');if(v.route){assert(agentClientKind(reviewer)===v.route.client,'审查路线客户端与所选审查者不一致',409);}const requested=v.requested_model!==undefined?v.requested_model:v.route?.model||null;const route=v.route?{...v.route,model:requested}:(agentClientKind(reviewer)?{client:agentClientKind(reviewer),model:requested}:null);assert(!sameAgent(reviewer,wb.get('agents',r.agent_id)),'独立审查须由另一位审查者完成',403);
+ return wb.transaction(()=>{const previous=runTask(t,r),previousModel=previous.review_arrangement?previous.review_arrangement.requested_model:previous.model_selection?.review?.model??previous.review_route?.model??previous.agent_selection?.review?.model??null;const changed=previous.reviewer_id!==v.reviewer_id||previousModel!==requested;const delivered=wb.all('artifacts').some(a=>a.run_id===r.id&&a.current);const arrangement={reviewer_id:v.reviewer_id,requested_model:requested,route,reason:v.reason,source:caller.source||reviewActor(caller),user_instruction:caller.user_instruction||null,created_at:now()};r.review_arrangement_history=[...(r.review_arrangement_history||[]),arrangement];r.review_arrangement=arrangement;if(changed&&delivered){for(const member of wb.all('review_assignments').filter(a=>a.run_id===r.id&&a.reviewer_id===previous.reviewer_id&&(!previousModel||a.requested_model===previousModel)&&!['cancelled','revoked','superseded'].includes(a.status))){member.status='cancelled';member.ended_at=now();member.cancelled_by=reviewActor(caller);member.cancellation_reason=v.reason;wb.put('review_assignments',member,{run_id:r.id});}r.review_decision=null;invalidateCloseout(wb,r,'用户调整本轮审查安排');t.status='submitted';}wb.put('runs',r,{task_id:t.id});t.reviewer_id=v.reviewer_id;t.revision++;t.updated_at=now();wb.put('tasks',t,{project_id:t.project_id});wb.audit(reviewActor(caller),'set_review_arrangement',r.id,arrangement);if(changed&&delivered){const review=exportReviewOrder(wb,{run_id:r.id,reviewer_id:v.reviewer_id,requested_model:requested||undefined,expected_revision:t.revision,reason:v.reason,new_review:true},caller);return {...arrangement,review};}return arrangement;});
 }
 /** Aggregate member state without changing peer assignments or an explicit proceed decision. */
 export function syncReviewCollaborationState(wb:Workbench,t:Row,r:Row,options:{allowLegacyResult?:boolean}={}){

@@ -27,7 +27,7 @@ test('项目文件真实扫描和原生移动恢复逐项返回，HTML静态预�
 });
 
 test('真实流程含需求和计划，手动执行用量未知且横向画布不撑破页面',async({page})=>{
- const m=await makeTask(page,{title:'合成流程未知用量 '+randomUUID(),stage:'running'});await page.goto('/#/projects/'+m.project.id+'?tab=insights');await expect(page.getByRole('heading',{name:'工作台调用用量与追溯'})).toBeVisible();await expect(page.getByText('整个项目另有 1 次执行没有工作台客户端调用用量',{exact:false})).toBeVisible();await page.getByText('展开关系图与来源记录',{exact:true}).click();await expect(page.getByRole('group',{name:'项目阶段与 Agent 泳道'})).toBeVisible();await page.getByText('文字流程与来源记录',{exact:false}).click();await expect(page.getByText('模型计划：已登记计划 · 页面导入计划',{exact:true})).toBeVisible();expect(await noHorizontalScroll(page)).toBe(true);await shot(page,'项目-真实流程与未知用量',false);
+ const m=await makeTask(page,{title:'合成流程未知用量 '+randomUUID(),stage:'running'});await page.goto('/#/projects/'+m.project.id+'?tab=insights');await expect(page.getByRole('heading',{name:'工作台调用用量与追溯'})).toBeVisible();await expect(page.getByText('整个项目另有 1 次执行没有工作台客户端调用用量',{exact:false})).toBeVisible();await page.getByRole('button',{name:'查看完整关系图',exact:true}).click();await expect(page.getByRole('combobox',{name:'关系图类型'})).toHaveValue('timeline');await expect(page.getByRole('group',{name:'项目阶段与 Agent 泳道'})).toBeVisible();await page.getByText('文字流程与来源记录',{exact:false}).click();await expect(page.getByText('模型计划：已登记计划 · 页面导入计划',{exact:true})).toBeVisible();expect(await noHorizontalScroll(page)).toBe(true);await shot(page,'项目-真实流程与未知用量',false);
 });
 
 test('项目默认模型按 Agent 选择和保存，不混列其他客户端模型',async({page})=>{

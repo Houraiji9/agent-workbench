@@ -1,0 +1,50 @@
+import {test,expect} from '@playwright/test';
+import {makeTask,shot} from './support.ts';
+
+test('计划后尚无Run也可修改审查者模型，取消不保存并排除执行者',async({page})=>{
+  const m=await makeTask(page,{title:'合成计划后审查安排'}),saved:any[]=[];
+  page.on('request',request=>{if(request.url().endsWith('/tasks/'+m.tid+'/review-arrangement')&&request.method()==='POST')saved.push(request.postDataJSON());});
+  await page.goto('/#/today?task='+m.tid);
+  const panel=page.getByRole('region',{name:'审查安排',exact:true});
+  await expect(panel).toHaveCount(1);
+  await expect(panel.getByRole('heading',{name:'审查安排',exact:true})).toBeVisible();
+  await expect(panel.getByText('后续执行单与首次派审使用该安排。',{exact:true})).toBeVisible();
+  await panel.getByRole('button',{name:'修改审查安排',exact:true}).click();
+  const editor=panel.getByRole('region',{name:'修改审查安排',exact:true});
+  await expect(editor.getByLabel('审查者',{exact:true}).locator('option[value="codex"]')).toHaveCount(0);
+  const state=await m.get('/state');for(const agent of state.agents.filter((a:any)=>a.archived||!a.allowed_kinds?.includes('review')))await expect(editor.getByLabel('审查者',{exact:true}).locator('option[value="'+agent.id+'"]')).toHaveCount(0);
+  await editor.getByLabel('审查者',{exact:true}).selectOption('zcode');
+  await editor.getByLabel('审查模型（可选）',{exact:true}).fill('synthetic-custom-review-model');
+  await editor.getByLabel('审查供应商（可选）',{exact:true}).fill('synthetic-provider');
+  await editor.getByRole('button',{name:'取消',exact:true}).click();expect(saved).toHaveLength(0);
+  await panel.getByRole('button',{name:'修改审查安排',exact:true}).click();
+  await editor.getByLabel('审查者',{exact:true}).selectOption('zcode');
+  await expect(editor.getByLabel('审查模型（可选）',{exact:true})).toHaveValue('');
+  await expect(editor.getByLabel('审查供应商（可选）',{exact:true})).toHaveValue('');
+  await editor.getByLabel('审查模型（可选）',{exact:true}).fill('synthetic-custom-review-model');
+  await editor.getByLabel('审查供应商（可选）',{exact:true}).fill('synthetic-provider');
+  await editor.getByRole('button',{name:'保存审查安排',exact:true}).click();
+  await expect(editor).toHaveCount(0);await expect(panel).toHaveCount(1);expect(saved).toHaveLength(1);expect(saved[0]).toMatchObject({reviewer_id:'zcode',requested_model:'synthetic-custom-review-model',reason:'用户在任务页调整审查安排',route:{client:'dsh',model:'synthetic-custom-review-model',provider:'synthetic-provider'}});
+  await expect(panel.getByText('synthetic-custom-review-model',{exact:true})).toBeVisible();
+  const detail=await m.get('/tasks/'+m.tid);expect(detail.task.current_run_id).toBeNull();await shot(page,'任务-规划后常驻审查安排',false);
+});
+
+test('本轮审查模型显式清空为null，常驻摘要不回落旧任务路线；不审查只读',async({page})=>{
+  const m=await makeTask(page,{title:'合成本轮审查模型清空',stage:'running'}),saved:any[]=[];
+  await m.post('/tasks/'+m.tid+'/review-arrangement',{expected_revision:(await m.get('/tasks/'+m.tid)).task.revision,reviewer_id:'grok-build',requested_model:'synthetic-initial-model',reason:'合成浏览器测试安排',route:{client:'grok',model:'synthetic-initial-model'}});
+  await page.route('**/api/tasks/'+m.tid,async route=>{const response=await route.fetch(),json=await response.json();await route.fulfill({response,json:{...json,task:{...json.task,review_route:{client:'grok',model:'synthetic-stale-task-model'}}}});});
+  page.on('request',request=>{if(request.url().endsWith('/tasks/'+m.tid+'/review-arrangement')&&request.method()==='POST')saved.push(request.postDataJSON());});
+  await page.goto('/#/today?task='+m.tid);const panel=page.getByRole('region',{name:'审查安排',exact:true});
+  await expect(panel.getByText('synthetic-initial-model',{exact:true})).toBeVisible();
+  await expect(panel.getByText('synthetic-stale-task-model',{exact:true})).toHaveCount(0);
+  await panel.getByRole('button',{name:'修改审查安排',exact:true}).click();
+  const editor=panel.getByRole('region',{name:'修改审查安排',exact:true});
+  await editor.getByLabel('审查模型（可选）',{exact:true}).fill('');
+  await editor.getByRole('button',{name:'保存审查安排',exact:true}).click();
+  await expect(editor).toHaveCount(0);expect(saved[0].requested_model).toBeNull();expect(saved[0].route.model).toBeNull();
+  await expect(panel.getByText('由审查 Agent 决定',{exact:true})).toBeVisible();
+  await expect(panel.getByText('synthetic-stale-task-model',{exact:true})).toHaveCount(0);
+  await expect(panel.getByText('正在运行的客户端不会被热切换；后续派审采用保存的安排，已有审查报告保留。',{exact:true})).toBeVisible();
+  const skipped=await makeTask(page,{title:'合成不审查只读',skipReview:true});await page.goto('/#/today?task='+skipped.tid);
+  const readonly=page.getByRole('region',{name:'审查安排',exact:true});await expect(readonly.getByText('本次明确不安排独立审查，审查安排只读。',{exact:true})).toBeVisible();await expect(readonly.getByRole('button',{name:'修改审查安排',exact:true})).toHaveCount(0);
+});

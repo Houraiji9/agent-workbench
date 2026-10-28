@@ -38,6 +38,7 @@ ${runnerEntry(r.id,ledgerRoot,connection)}
 当前会话按已有上下文继续；缺少资料时用 context 获取简版，单项展开用 context-section plan / files / requirements / history；MCP 对应 get_run_context(section=...)。文件按需读取。
 交付用 report，独立审查用 review，返修或收尾用 continue。同一入口跟随当前执行，不需要用户再次转交。
 工作台记录流程和结果；模型、预算和阅读清单是建议。执行者可直接调用审查和子代理，登记委派与结果可用 register-delegation / report-delegation。新增外部主执行仍由用户启动。
+本轮相关文件先用 get_project_files 分页或搜索，再用 classify_project_files 补用途分类及依据；用户分类优先，未知保留 unknown 并说明原因。只补本轮范围，不为分类遍历全项目；分类仅写元信息，不授权移动或删除，也不阻断执行、交付或收尾。
 只回报实际结果；用户试用确认由用户本人完成。
 
 完整资料：${path.join(r.directory,'FULL-RUN.md')}

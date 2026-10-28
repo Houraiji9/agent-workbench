@@ -1,0 +1,6 @@
+.project-memories .memory { min-width: 0; }
+.project-memories .memory p,
+.project-memories .memory small { overflow-wrap: anywhere; }
+.project-memories .memory.m-superseded { opacity: 1; }
+.project-memories .memory-top { flex-wrap: wrap; }
+.project-memories .memory .fold .memory { margin-top: 10px; }

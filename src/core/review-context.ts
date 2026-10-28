@@ -1,4 +1,5 @@
 import {taskHandoff} from '../shared/task-handoff.ts';
+import {knownAgentSession} from './agent-session.ts';
 import {briefContext,workflowGuidance,contextChanges,contextSection} from './workflow-guidance.ts';
 import {taskMemoryContext} from './project-memory.ts';
 import {z} from 'zod';
@@ -57,7 +58,8 @@ function dispatchSession(wb:Workbench,jobId:string|undefined,a:Row,t:Row,r:Row){
   if(!job.resume_session_id)return null;
   const previous=job.previous_job_id?wb.get('agent_jobs',job.previous_job_id):null;
   const prior=previous?.review_id?wb.get('review_assignments',previous.review_id):null;
-  assert(previous&&(previous.status==='completed'||['failed','interrupted'].includes(previous.status)&&previous.process_may_be_running===false&&previous.process_end_evidence==='owned_child_exit')&&previous.role==='review'&&previous.task_id===t.id&&previous.session_id===job.resume_session_id&&!previous.session_mismatch&&JSON.stringify(previous.route)===JSON.stringify(job.route)&&prior?.reviewer_id===a.reviewer_id&&(!prior?.session_id||prior.session_id===previous.session_id),'续审缺少同任务、同路由和真实会话证据',409);
+  const known=previous?knownAgentSession(wb,previous):null;
+  assert(previous&&(previous.status==='completed'||['failed','interrupted'].includes(previous.status)&&previous.process_may_be_running===false&&['owned_child_exit','tracked_process_absent'].includes(previous.process_end_evidence))&&previous.role==='review'&&previous.task_id===t.id&&known===job.resume_session_id&&!previous.session_mismatch&&JSON.stringify(previous.route)===JSON.stringify(job.route)&&prior?.reviewer_id===a.reviewer_id&&(!prior?.session_id||prior.session_id===known),'续审缺少同任务、同路由和真实会话证据',409);
   return job.resume_session_id as string;
 }
 export function reviewContext(wb:Workbench,value:unknown,base:Row,dispatchJobId?:string){

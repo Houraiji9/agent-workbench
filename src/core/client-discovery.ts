@@ -18,7 +18,7 @@ export type DiscoveryCandidate = {path: string; source: 'path' | 'registration' 
 type Probe = (command: string, args: string[], env?: Record<string, string>) => Promise<string>;
 export type DiscoveryOptions = {dataDir: string; force?: boolean; /** Dependency injection for isolated tests; never populated from HTTP input. */ testHooks?: {candidates?: DiscoveryCandidate[]; processPath?: string; persistedPathValues?: string[]; machineId?: string; now?: number; probe?: Probe}};
 const KINDS: ClientKind[] = ['dsh', 'claude', 'cursor', 'grok'];
-const LABELS: Record<ClientKind, string> = {dsh: 'DeepSeek Harness / GLM', claude: 'Claude Code', cursor: 'Cursor Agent CLI', grok: 'Grok Build'};
+const LABELS: Record<ClientKind, string> = {dsh: 'DeepSeek Harness', claude: 'Claude Code', cursor: 'Cursor Agent CLI', grok: 'Grok Build'};
 const CACHE_FILE = 'local-agent-clients.json';
 const OVERRIDE_FILE = 'local-agent-client-overrides.json';
 const CACHE_VERSION = 2;
@@ -401,7 +401,7 @@ export function publicClientCapabilities(records: ClientRecord[]): ClientCapabil
   return records.map(({kind, label, status, reason, checkedAt, version, supportedFlags, help}) => {
     const planMode = kind !== 'cursor' || supportsCursorPlanMode(help);
     const headless = status === 'verified' && requiredFlags[kind].every(f => supportedFlags?.includes(f)) && planMode;
-    return {kind, label, status, reason: status === 'verified' && !headless ? 'CLI 身份已验证，但当前版本缺少本程序需要的安全调用参数' : reason, checkedAt, version, ...unknownState, available: status === 'verified', supportsResume: headless && !!supportedFlags?.includes(kind === 'dsh' ? '--session-id' : '--resume'), executionSupported: headless && kind !== 'cursor', reviewSupported: headless};
+    return {kind, label:LABELS[kind], status, reason: status === 'verified' && !headless ? 'CLI 身份已验证，但当前版本缺少本程序需要的安全调用参数' : reason, checkedAt, version, ...unknownState, available: status === 'verified', supportsResume: headless && !!supportedFlags?.includes(kind === 'dsh' ? '--session-id' : '--resume'), executionSupported: headless && kind !== 'cursor', reviewSupported: headless};
   });
 }
 export async function readClientCapabilities(dataDir: string): Promise<ClientCapability[]> {return publicClientCapabilities(await discoverAgentClients({dataDir}));}

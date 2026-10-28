@@ -21,6 +21,7 @@ import {byExecutionOrder} from '../../shared/execution-order.js';
 import {ProjectFilesPanel} from '../ui/ProjectFilesPanel.js';
 import {ProjectInsightsPanel} from '../ui/ProjectInsightsPanel.js';
 import {ProjectPolicyPanel} from '../ui/ProjectPolicyPanel.js';
+import {ProjectMemoriesPanel} from '../ui/ProjectMemoriesPanel.js';
 
 function projectStats(data: R, id: string) {
   const tasks = (data.tasks as R[]).filter(t => t.project_id === id);
@@ -86,7 +87,7 @@ export function ProjectView({ id }: { id: string }) {
   const runIds = new Set((data.runs as R[]).filter(r => st.tasks.some(t => t.id === r.task_id)).map(r => r.id));
   const files = (data.artifacts as R[]).filter(a => runIds.has(a.run_id));
   const diagrams = (data.diagrams as R[]).filter(d => d.project_id === p.id);
-  const memories = (data.memories as R[]).filter(m => m.project_id === p.id);
+  const memories = (data.memories as R[]).filter(m => m.project_id === p.id && !m.deleted_at);
   const tab = route.tab || 'progress';
   return <div className="page-wrap">
     <button className="crumb" onClick={() => s.go({ page: 'projects',tab:p.archived?'archived':'active' })}><ArrowLeft size={15} />全部项目</button>
@@ -116,7 +117,7 @@ export function ProjectView({ id }: { id: string }) {
     {tab === 'files' && <><ProjectFilesPanel projectId={p.id}/><Section title="执行交付的成果"><Files files={files}/></Section></>}
     {tab === 'insights' && <ProjectInsightsPanel projectId={p.id}/>}
     {tab === 'diagrams' && <><RelationshipGraph projectId={p.id}/><details className="fold"><summary>保存的图解快照（{diagrams.length}）</summary><Diagrams project={p} diagrams={diagrams}/></details></>}
-    {tab === 'memory' && <Memories project={p} memories={memories} />}
+    {tab === 'memory' && <ProjectMemoriesPanel key={p.id} project={p} memories={memories} />}
     {tab === 'folders' && <Folders project={p} />}
   </div>;
 }
@@ -202,25 +203,6 @@ function Diagrams({ project, diagrams }: { project: R; diagrams: R[] }) {
     {list.length ? <div className="diagram-grid">{list.map(d => <button key={d.id} className="diagram-card" onClick={() => s.openDialog('diagram', { diagram: d })}>
       <Network size={20} /><strong>{d.title}</strong><small>{d.source === 'ledger_snapshot' ? '任务总览' : 'Agent 绘制'} · {fullDate(d.created_at, s.tz)}</small>
     </button>)}</div> : <Empty title="还没有图解">点上面的按钮生成第一张。</Empty>}
-  </>;
-}
-
-const kindText: R = { decision: '决定', known_issue: '已知问题', failed_attempt: '走过的弯路', handoff: '接着做的入口' };
-function Memories({ project, memories }: { project: R; memories: R[] }) {
-  const s = useStore();
-  const sorted = [...memories].sort((a, b) => (a.status === 'superseded' ? 1 : 0) - (b.status === 'superseded' ? 1 : 0) || String(b.created_at).localeCompare(String(a.created_at)));
-  const source = (id: string) => (s.data.tasks as R[]).find(t => t.id === id)?.title || (s.data.sessions as R[]).find(x => x.id === id)?.title || id;
-  return <>
-    <div className="banner quiet">
-      <Lightbulb size={22} />
-      <div><strong>项目经验</strong><p>决定、问题和下次继续的位置。</p></div>
-      <button className="btn" onClick={() => s.openDialog('memory', { projectId: project.id })}><Plus size={16} />记一条</button>
-    </div>
-    {sorted.length ? <div className="memory-list">{sorted.map(m => <article key={m.id} className={'memory m-' + m.status}>
-      <div className="memory-top"><b>{kindText[m.kind] || m.kind}</b><Pill tone={m.status === 'confirmed' ? 'done' : m.status === 'candidate' ? 'review' : 'quiet'}>{m.status === 'confirmed' ? '已确认' : m.status === 'candidate' ? '候选' : '已被取代'}</Pill></div>
-      <p>{m.content}</p>
-      <small>来自：{source(m.source_id)} · {relative(m.created_at, s.tz)}</small>
-    </article>)}</div> : <Empty title="还没有记录">完成任务后，记一条经验，下次接着做会轻松很多。</Empty>}
   </>;
 }
 

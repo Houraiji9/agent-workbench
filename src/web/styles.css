@@ -377,9 +377,14 @@ kbd { font: 600 11.5px var(--mono); padding: 2px 6px; border: 1px solid var(--li
 .path-actions { display: flex; gap: 6px; flex: none; }
 
 /* —— 团队 —— */
+.page.team-page-shell { height: calc(100dvh - 64px); min-height: 0; display: flex; flex-direction: column; padding-bottom: 20px; }
+.team-page { display: flex; flex-direction: column; flex: 1; min-height: 0; width: 100%; }
+.team-page > .page-head, .team-page > .tabs { flex-shrink: 0; }
 .team { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+.team-page .team { flex: 1; min-height: 0; }
 .team.has-pick { grid-template-columns: minmax(280px, 380px) minmax(0, 1fr); }
 .agent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 10px; align-content: start; }
+.team-page .agent-grid { min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; padding: 2px; }
 .team.has-pick .agent-grid { grid-template-columns: 1fr; gap: 6px; }
 .agent-card { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); text-align: left; cursor: pointer; min-width: 0; }
 .agent-card:hover { border-color: var(--line-2); }
@@ -414,12 +419,13 @@ kbd { font: 600 11.5px var(--mono); padding: 2px 6px; border: 1px solid var(--li
 .model-source a { color: var(--ink-2); display: block; margin-top: 5px; }
 :root[data-theme="dark"] .avatar { background: hsl(var(--hue) 35% 24%); color: hsl(var(--hue) 70% 82%); }
 .agent-panel { padding: 22px 24px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); align-self: start; position: sticky; top: 80px; max-height: calc(100vh - 100px); overflow: auto; }
+.team-page .agent-panel { position: static; height: 100%; min-height: 0; max-height: 100%; overscroll-behavior-y: contain; scrollbar-gutter: stable; }
 .agent-panel.placeholder { display: none; }
 .ap-head { display: flex; align-items: center; gap: 14px; }
 .ap-head > div { flex: 1; }
 .ap-head h2 { font-size: 21px; }
 .ap-head p { margin: 2px 0 0; font-size: 13px; }
-.team-back { display: none; }
+.team-back { display: inline-flex; margin-bottom: 8px; }
 
 /* —— 额度 —— */
 .source-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; margin-bottom: 16px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); font-size: 13.5px; color: var(--ink-2); }
@@ -796,6 +802,8 @@ kbd { font: 600 11.5px var(--mono); padding: 2px 6px; border: 1px solid var(--li
   .search-btn { width: 40px; padding: 0; justify-content: center; }
   .page { padding: 6px 16px 50px; }
   .page-head { flex-direction: column; }
+  .team-page .ap-head { flex-wrap: wrap; gap: 10px; }
+  .team-page .ap-head > div { min-width: calc(100% - 66px); }
   .hero h1 { font-size: 23px; }
   .drawer-body { padding: 14px 18px 40px; }
   .relay-label { font-size: 11.5px; }

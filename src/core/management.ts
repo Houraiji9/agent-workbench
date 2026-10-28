@@ -18,6 +18,8 @@ import {revokeReview} from './review-evidence.ts';
 import {taskAmendmentInput,amendTask} from './task-amendment.ts';
 import {scopeManagementInput,type ManagementCaller} from './session-management.ts';
 import {projectMemoryInput,projectMemories} from './project-memory.ts';
+import {manageMemoryInput} from './memory-management.ts';
+import {getProjectFilesInput,getProjectFiles,classifyProjectFilesInput,classifyProjectFiles} from './project-file-management.ts';
 import {assertMayArrangeReview} from './review-permissions.ts';
 import {prepareDecision,decisionReceipt} from './user-decisions.ts';
 import {createBackup} from '../../scripts/backup.ts';
@@ -100,7 +102,8 @@ export const managementTools:Record<string,Tool>={
     if(v.action==='revoke')return revokeReview(wb,v.review_id,{run_id:v.run_id,revision:v.revision,reason:v.reason});
     return reviewFeedbackOrder(wb,v.run_id,v.revision);
   }},
-  manage_memories:{description:'按用户指示保存项目经验；记录实际Agent及指示来源，不将Agent代登记写成用户亲自确认。supersedes 保留替代关系。',schema:envelope(z.object({project_id:key,kind:z.enum(['decision','known_issue','failed_attempt','handoff']),content:text,status:z.enum(['candidate','confirmed']),source_id:key,supersedes:key.optional(),scope:text.max(100).default('project')}).strict()),execute:({wb,caller},v)=>wb.memory(v,caller?.id||'manager')},
+  classify_project_files:{description:'当前Agent按项目范围批量登记文件用途分类；只写元信息，逐项返回结果，不移动或删除文件。',schema:envelope(classifyProjectFilesInput),execute:({wb,caller},v)=>classifyProjectFiles(wb,v,{actor:'agent',actor_id:caller?.id||'manager',run_id:caller?.run_id,project_ids:caller?.project_ids})},
+  manage_memories:{description:'保存、修改、删除或恢复项目经验；保留原作者、来源和版本历史，删除不再进入默认上下文。',schema:envelope(manageMemoryInput),execute:({wb,caller},v)=>wb.memory(v,caller?.id||'manager')},
   link_execution_session:{description:'按用户要求把已采集的真实会话关联到指定执行记录。',schema:envelope(z.object({session_id:key,run_id:key}).strict()),execute:({wb},v)=>wb.linkSession(v.session_id,v.run_id)},
   refresh_integration:{description:'刷新 Token Monitor 或 AgentsView；返回实际连接结果。',schema:envelope(z.object({integration_id:z.enum(['tokenMonitor','agentsView']),cursor:z.string().max(1000).default('')}).strict()),asynchronous:true,execute:async({wb,services},v)=>{await services.integrations.refresh(v.integration_id,v.cursor);const {snapshot,...status}=wb.get('integrations',v.integration_id);return status}},
   manage_settings:{description:'授权用户指定的准确项目文件夹，或配置本机数据源地址及密钥引用。不会修改全局 Agent 配置。',schema:envelope(z.discriminatedUnion('action',[
@@ -143,6 +146,7 @@ export function managementContext(wb:Workbench,input:unknown){
 export const managementResultInput=z.object({request_id:z.string().uuid()}).strict();
 export const artifactReadInput=z.object({artifact_id:key}).strict();
 export const managementReadTools={
+  get_project_files:{description:'分页读取授权项目文件分类、用途与覆盖范围；refresh只做有界元信息扫描，不读取正文。',schema:getProjectFilesInput},
   get_project_memories:{description:'分页查询项目经验短索引，按编号读取相关全文；已读content_hash用于增量，不要求每轮全读。',schema:projectMemoryInput},
   get_management_context:{description:'读取可管理项目、需求、团队、额度、订阅、任务和当前版本；修改前先读取。',schema:managementContextInput},
   get_management_result:{description:'按操作编号查询是否已保存、失败或中断；重试前核对，避免重复操作。',schema:managementResultInput},
@@ -152,10 +156,11 @@ export const managementReadTools={
   get_session_messages:{description:'分页读取已登记会话消息。',schema:z.object({session_id:key,from:z.number().int().min(0).default(0)}).strict()},
   read_artifact:{description:'读取已登记成果，校验归档内容；按成果编号读取。',schema:artifactReadInput}
 };
-export async function readManagement(wb:Workbench,services:ManagementServices,name:string,input:unknown){
+export async function readManagement(wb:Workbench,services:ManagementServices,name:string,input:unknown,caller:ManagementCaller={role:'manager',id:'manager'}){
   const definition=managementReadTools[name as keyof typeof managementReadTools];assert(definition,'读取工具不存在',404);const v=definition.schema.parse(input) as Row;
   if(name==='get_management_context')return managementContext(wb,v);
   if(name==='get_project_memories')return projectMemories(wb,v);
+  if(name==='get_project_files')return getProjectFiles(wb,v,{actor:'agent',actor_id:caller.id,run_id:caller.run_id,project_ids:caller.project_ids});
   if(name==='get_management_result'){const call=wb.get('management_calls',v.request_id);return call.decision_id?{...call,...decisionReceipt(wb,wb.get('user_decisions',call.decision_id))}:call}
   if(name==='get_task_detail')return wb.taskDetail(v.task_id);
   if(name==='get_planning_entry')return wb.planningEntry(v.request_id);

@@ -25,7 +25,7 @@ export function TaskExecutionPolicy({task,run,runs=[],jobs=[]}:{task:R;run?:R|nu
   const save=async(body:R,ok:string)=>{setError('');const r=await s.act(()=>api('/tasks/'+task.id+'/arrangement',{revision:task.revision,...body}),ok);if(r)setEditing(false);else setError('没有保存，请看上方提示后重试');};
   const submit=()=>void save({agent_id:agent,execution_policy:value},phase==='pending'?'已保存为下一版安排；当前这轮不受影响':phase==='direct'?'执行安排已保存':'已按新安排生成执行单；旧执行单和记录保留，尚未启动');
   const proposal=task.proposed_arrangement;
-  return <details className="fold arrangement" open={!!pending||!!proposal||undefined}>
+  return <details className="fold arrangement" open>
     <summary>执行安排{index?` · 第 ${index} 版执行单`:''}{pending?' · 有待生效的调整':''}</summary>
     <section aria-label="当前执行安排" className="arrangement-block">
       <h3>{run?'本轮实际安排':'当前安排'}<small>来源：{sourceText(contract||task)}</small></h3>

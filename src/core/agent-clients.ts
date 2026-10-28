@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
+import {readHarnessModelRoutes,resolveHarnessProvider} from './harness-models.ts';
 import {supportsCursorPlanMode} from './client-discovery.ts';
 import type {ClientRecord} from './client-discovery.ts';
 export {discoverAgentClients, readClientCapabilities, resolveAgentClient, publicClientCapabilities, setClientOverride} from './client-discovery.ts';
@@ -9,7 +10,7 @@ export {parseAgentOutput, createAgentOutputParser} from './agent-output.ts';
 export type {ParsedAgentOutput, AgentUsage} from './agent-output.ts';
 
 export type AgentInvocationOptions = {role: 'execution' | 'review'; cwd: string; artifactDir: string; model?: string | null; provider?: string; sessionId?: string; promptFile: string};
-export type AgentInvocation = {command: string; args: string[]; stdin?: string; env?: Record<string, string>};
+export type AgentInvocation = {command: string; args: string[]; stdin?: string; env?: Record<string, string>; resolvedRoute?: {provider:string;model:string;source:string}};
 function scalar(value: string, name: string) {
   if (!value.trim() || value.length > 1024 || /[\x00-\x1f\x7f]/.test(value)) throw new Error(`${name} 无效`);
   return value;
@@ -37,7 +38,8 @@ export async function buildAgentInvocation(record: ClientRecord, options: AgentI
   switch (record.kind) {
     case 'dsh': {
       requireFlags(record, ['--profile', '--patch', '--json', ...(sessionId ? ['--session-id'] : [])]);
-      const provider = options.provider ? scalar(options.provider, 'provider') : model ? (/^glm[-.]/i.test(model) ? 'zai-coding-cn' : 'deepseek-account') : undefined;
+      const provider = options.provider ? scalar(options.provider, 'provider') : model ? resolveHarnessProvider(model,await readHarnessModelRoutes(record)) : undefined;
+      if(model&&provider)result.resolvedRoute={provider,model,source:options.provider?'explicit':'native_headless_config'};
       const patches: unknown[] = [
         {id: 'credentials', name: '@deepseek-ai/dsh-credentials-local', disabled: false},
         {id: 'authorization', name: '@deepseek-ai/dsh-authorization', disabled: false},

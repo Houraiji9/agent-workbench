@@ -1,3 +1,4 @@
+import {knownAgentSession} from './agent-session.ts';
 import fs from 'node:fs';
 import {assertProjectDispatch} from './project-hold.ts';
 import {runTask} from './workflow-policy.ts';
@@ -36,7 +37,6 @@ export function validateAgentRoutes(wb:Workbench,task:Row){
     if(!task[field!])continue;
     const route=agentRouteSchema.parse(task[field!]),agent=wb.get('agents',agentId!);
     assert(agentClientKind(agent)===route.client,'客户端与指定团队成员不匹配；请由规划者选择该成员真实使用的入口');
-    if(route.client==='dsh'&&route.model)assert(!!route.provider,'DSH指定模型时需提供provider；省略模型时使用客户端默认配置');
     if(route.client!=='dsh')assert(!route.provider,'此客户端不接受额外 provider 参数');
   }
 
@@ -44,9 +44,9 @@ export function validateAgentRoutes(wb:Workbench,task:Row){
 }
 export function jobView(job:Row){
   return {job_id:job.id,task_id:job.task_id,run_id:job.run_id,review_id:job.review_id||null,role:job.role,phase:job.phase,client:job.route.client,
-    status:job.status,reason:job.reason,native_stop_reason:job.native_stop_reason||null,activity_started_at:job.activity_started_at||null,session_id:job.session_id||null,session_mode:job.session_mode,session_reason:job.session_reason||null,previous_job_id:job.previous_job_id||null,requested_model:job.route.model,actual_model:job.actual_model||null,actual_model_display:job.actual_model_display||null,
+    status:job.status,reason:job.reason,native_stop_reason:job.native_stop_reason||null,activity_started_at:job.activity_started_at||null,session_id:job.session_id||null,session_mode:job.session_mode,session_reason:job.session_reason||null,previous_job_id:job.previous_job_id||null,requested_model:job.route.model,resolved_route:job.resolved_route||null,actual_model:job.actual_model||null,actual_model_display:job.actual_model_display||null,
     revision:job.revision,created_at:job.created_at,started_at:job.started_at||null,ended_at:job.ended_at||null,exit_code:job.exit_code??null,
-    artifacts:job.files||null,usage:job.usage||null,usage_source:job.usage?'client_reported':'unknown',recovery_required:!!job.process_may_be_running&&['failed','interrupted'].includes(job.status),cancel_requested:!!job.cancel_requested_at,process_end_evidence:job.process_end_evidence||null,process_may_be_running:job.process_may_be_running??null,recovery:job.recovery||null,superseded:job.superseded||null};
+    artifacts:job.files||null,usage:job.usage||null,usage_source:job.usage?'client_reported':'unknown',recovery_required:!!job.process_may_be_running&&['failed','interrupted'].includes(job.status),cancel_requested:!!job.cancel_requested_at,process_end_evidence:job.process_end_evidence||null,process_may_be_running:job.process_may_be_running??null,process_pid:job.process_pid||null,process_recovery:job.process_recovery||null,recovery:job.recovery||null,superseded:job.superseded||null};
 }
 type ProcessResult={exitCode:number|null;signal:string|null;error?:string;processStopped?:boolean;deferred?:boolean};
 type LaunchOptions={command:string;args:string[];stdin?:string;env?:Record<string,string>;cwd:string;onLine:(line:string)=>void;onSpawn?:(pid:number)=>void;beforeSpawn?:()=>boolean;stdout:string;stderr:string;signal:AbortSignal};
@@ -107,6 +107,7 @@ export class AgentOrchestrator {
       if(j.status==='queued'&&!j.process_may_be_running&&!j.process_pid)continue;
       this.update(j.id,{status:'interrupted',reason:'工作台上次调用未正常结束；请核对原客户端会话后继续，不会自动重复派发',ended_at:now()});
     }
+    for(const j of this.wb.all('agent_jobs').filter(j=>j.process_may_be_running&&terminal.has(j.status)))this.reconcileAbsentProcess(j);
     this.wb.on('change',this.changed);this.timer=setInterval(this.changed,3000);this.timer.unref();
     void (this.clients.discover||discoverAgentClients)({dataDir:this.wb.config.dataDir}).catch(()=>{});this.changed();
   }
@@ -116,21 +117,34 @@ export class AgentOrchestrator {
   private update(jid:string,changes:Row){if(this.closed&&!this.wb.maybe('agent_jobs',jid))return;this.wb.transaction(()=>{const j=this.wb.get('agent_jobs',jid);Object.assign(j,changes,{revision:j.revision+1,updated_at:now()});this.wb.put('agent_jobs',j,{run_id:j.run_id});const t=this.wb.get('tasks',j.task_id);let effective=j.run_id;try{effective=executionJobRun(this.wb,j)}catch{}if(t.current_run_id===effective){t.automation={...jobView(j),run_id:effective,source_run_id:j.run_id};this.wb.put('tasks',t,{project_id:t.project_id})}})}
   private assertCurrent(runId:string,revision?:number){const r=this.wb.get('runs',runId),t=this.wb.get('tasks',r.task_id);assert(t.current_run_id===r.id&&!t.request_withdrawn&&!['cancelled','accepted','rework_linked'].includes(t.status)&&!this.wb.get('projects',t.project_id).archived,'只能调用当前有效执行',409);if(revision!==undefined)assert(t.revision===revision,'任务已变化，请读取最新 revision',409);this.wb.assertDependencies(t);assertProjectDispatch(this.wb,t.project_id);return {r,t:runTask(t,r)}}
   private duplicate(input:ReturnType<typeof agentDispatchInput.parse>,role:string){const old=this.wb.all('agent_jobs').find(j=>j.request_id===input.request_id);if(old){assert(old.request_digest===hash(JSON.stringify({...input,role})),'同一调用编号内容冲突',409);return jobView(old)}}
-  private priorSession(t:Row,role:string,route:AgentRoute){
+  private priorSession(t:Row,role:string,route:AgentRoute):Row|undefined{
     // Decide from the latest attempt, not the latest usable ID: an older session may lack later work.
     const j=this.wb.all('agent_jobs').filter(j=>j.task_id===t.id&&j.role===role&&terminal.has(j.status)&&JSON.stringify(j.route)===JSON.stringify(route)).sort((a,b)=>b.created_at.localeCompare(a.created_at))[0];
-    return j?.session_id&&!j.session_mismatch&&!j.cancel_requested_at&&(j.status==='completed'||j.process_may_be_running===false&&j.process_end_evidence==='owned_child_exit')?j:undefined;
+    const stopped=j?.process_may_be_running===false&&['owned_child_exit','tracked_process_absent'].includes(j.process_end_evidence);
+    // The previous resume target is an existing native session, not proof that the interrupted
+    // attempt completed. Request it again; onOutput still rejects a different returned identity.
+    const session=j?knownAgentSession(this.wb,j):null;
+    return session&&!j.session_mismatch&&!j.cancel_requested_at&&(j.status==='completed'||stopped)?{...j,session_id:session}:undefined;
+  }
+  private reconcileAbsentProcess(job:Row){
+    if(!job.process_may_be_running||this.launching.has(job.id)||!Number.isSafeInteger(job.process_pid)||job.process_pid<=0)return job;
+    try{process.kill(job.process_pid,0);return job;}catch(error){if((error as NodeJS.ErrnoException).code!=='ESRCH')return job;}
+    const evidence={at:now(),actor:'system',source:'os_pid_probe',pid:job.process_pid,observation:'tracked_process_absent',limitation:'仅核实已记录进程不存在，不证明调用完成或报告通过'};
+    this.update(job.id,{...(active.has(job.status)?{status:'interrupted',reason:'系统核实已记录进程不存在；保留中断，未收到正式完成回执'}:{}),process_may_be_running:false,process_end_evidence:'tracked_process_absent',process_recovery:evidence});
+    this.wb.audit('system','reconcile_agent_process',job.id,evidence);
+    return this.wb.get('agent_jobs',job.id);
   }
   private assertNoOrphan(taskId:string){
-    for(const j of this.wb.all('agent_jobs').filter(j=>j.task_id===taskId&&j.process_may_be_running)){
+    for(const candidate of this.wb.all('agent_jobs').filter(j=>j.task_id===taskId&&j.process_may_be_running)){
+      const j=this.reconcileAbsentProcess(candidate);if(!j.process_may_be_running)continue;
       if(this.launching.has(j.id))continue;
       // PID reuse produces a conservative block, never permission to kill or duplicate a process.
       assert(Number.isSafeInteger(j.process_pid),'上次调用在进程身份保存前中断；禁止重复启动。请在任务的“中断调用恢复”核实原客户端已结束并确认，保留审计记录',409);
       try{process.kill(j.process_pid,0);assert(false,`上次客户端进程 ${j.process_pid} 仍存在，禁止重复启动；请先等待原调用结束`,409)}catch(e){if((e as NodeJS.ErrnoException).code!=='ESRCH')throw e;}
-      this.update(j.id,{process_may_be_running:false});
+      this.reconcileAbsentProcess(j);
     }
   }
-  taskJobs(taskId:string){this.wb.get('tasks',taskId);return this.wb.all('agent_jobs').filter(j=>j.task_id===taskId).map(jobView)}
+  taskJobs(taskId:string){this.wb.get('tasks',taskId);return this.wb.all('agent_jobs').filter(j=>j.task_id===taskId).map(j=>jobView(this.reconcileAbsentProcess(j)))}
   private stopOwned(jid:string,reason:string,actor:string){
     const job=this.wb.get('agent_jobs',jid),ctl=this.launching.get(jid);assert(ctl||job.status==='queued','本进程未持有该客户端，不能按旧PID强行结束；请使用中断调用恢复',409);
     this.update(jid,{status:'interrupted',cancel_requested_at:now(),reason,ended_at:now()});this.wb.audit(actor,'cancel_agent_job',jid,{reason,run_id:job.run_id});ctl?.abort();return jobView(this.wb.get('agent_jobs',jid));
@@ -256,7 +270,7 @@ export class AgentOrchestrator {
     const result=!current.execution_route?{run_id:next.id,task_id:t.id,automatic_delivery:false,entry:order.entry,reason:'返修单已建立，指定执行者可手工接续；未启动外部客户端',context:executionContext(this.wb,{run_id:next.id,mode:'brief'})}:{...this.queueRun({...v,run_id:next.id,expected_revision:current.revision},caller,r.id),previous_run_id:r.id};
     const saved=this.wb.get('runs',r.id);saved.continuations=[...(saved.continuations||[]),{request_id:v.request_id,digest,result}];this.wb.put('runs',saved,{task_id:t.id});return result;
   }
-  async getJob(input:unknown){const v=agentJobInput.parse(input);let j=this.wb.get('agent_jobs',v.job_id);assert(j.task_id===this.wb.get('runs',v.run_id).task_id&&canQueryRunnerJob(this.wb,v.run_id,j.run_id),'禁止跨执行查询调用记录',403);const end=Date.now()+v.timeout_ms;while(!terminal.has(j.status)&&j.revision===(v.after_revision??j.revision)&&Date.now()<end&&!this.closed){await new Promise(r=>setTimeout(r,Math.min(200,end-Date.now())));j=this.wb.get('agent_jobs',v.job_id)}return {...jobView(j),changed:v.after_revision===undefined||j.revision!==v.after_revision};}
+  async getJob(input:unknown){const v=agentJobInput.parse(input);let j=this.wb.get('agent_jobs',v.job_id);assert(j.task_id===this.wb.get('runs',v.run_id).task_id&&canQueryRunnerJob(this.wb,v.run_id,j.run_id),'禁止跨执行查询调用记录',403);j=this.reconcileAbsentProcess(j);const end=Date.now()+v.timeout_ms;while(!terminal.has(j.status)&&j.revision===(v.after_revision??j.revision)&&Date.now()<end&&!this.closed){await new Promise(r=>setTimeout(r,Math.min(200,end-Date.now())));j=this.wb.get('agent_jobs',v.job_id)}return {...jobView(j),changed:v.after_revision===undefined||j.revision!==v.after_revision};}
   private artifactDirectory(j:Row,t:Row,r:Row){const base=path.resolve(r.cwd,t.context_contract?.output_dir||path.join(r.cwd,'.agent-workbench-output',t.id,r.id));const target=safePath(path.join(base,'calls',j.id),t.allowed_paths,true);assert(!this.wb.privatePath(target)&&!protectedName(target),'调用产物目录不能是内部存储或凭据目录');fs.mkdirSync(target,{recursive:true});return target;}
   private prompt(j:Row,t:Row,r:Row,dir:string){
     const command=`& '${process.execPath.replace(/'/g,"''")}' --import '${import.meta.resolve('tsx').replace(/'/g,"''")}' '${path.join(ROOT,'scripts',j.role==='review'?'review.ts':'agent.ts').replace(/'/g,"''")}' ${j.role==='review'?j.review_id:r.id}`;
@@ -268,7 +282,7 @@ export class AgentOrchestrator {
       const known=j.session_mode==='resume'&&(prior?.context_ack?.hash||prior?.context_cache?.filter((x:Row)=>x.session_id===j.resume_session_id).at(-1)?.hash);
       const ctx=reviewContext(this.wb,{review_id:j.review_id,mode:known?'delta':'brief',...(known?{known_context_hash:known,session_id:j.resume_session_id}:{})},base,j.id);
       // One copy of the context and result shape; transport binds task/version fields.
-      return shared+`Task ${t.id} / Run ${r.id} / Review ${j.review_id}\n按需回传入口：${env}${command} started ${base.assignment.reviewer_id}\n资料已附下方；实际客户端活动由工作台记录，不必为了接单运行命令。按需用只读工具补读。若客户端不允许写入或执行验证，记录未验证项并直接返回报告，不要求用户转交。从本轮方案、差异和指定证据开始，只检查本轮变化与直接影响；发现关联风险再补读，不默认遍历项目或跑全量测试。列出具体问题和未验证项；不替作者实施修改。\n最终直接用文字返回 JSON（可用 Markdown 围栏，无需写报告文件），字段 verdict、findings、limitations、evidence、report_markdown；完整报告保存在 report_markdown。可用 submit <JSON文件> 直接回传，或由工作台接收原生最终结果。\n${JSON.stringify(ctx)}\n`;
+      return shared+`Task ${t.id} / Run ${r.id} / Review ${j.review_id}\n按需回传入口：${env}${command} started ${base.assignment.reviewer_id}\n资料已附下方；实际客户端活动由工作台记录，不必为了接单运行命令。优先直接使用客户端已允许的只读文件工具读取下方引用；不必为了获取资料执行 context-section 或其他终端命令，也不必搜索工作台CLI入口。客户端未提供工作台MCP时仍可按本轮授权范围使用已有只读文件能力；只读被拒绝则保留限制，不能绕过。若客户端不允许写入或执行验证，记录未验证项并直接返回报告，不要求用户转交。最终文件指纹由工作台记录；不要仅为收尾再次调用终端校验指纹。此前终端被取消时，依据已读材料直接提交报告，把未复核的指纹或测试列为limitations；材料不足则如实报告无法确认，不绕过客户端拒绝。从本轮方案、差异和指定证据开始，只检查本轮变化与直接影响；发现关联风险再补读，不默认遍历项目或跑全量测试。列出具体问题和未验证项；不替作者实施修改。\n最终直接用文字返回 JSON（可用 Markdown 围栏，无需写报告文件），字段 verdict、findings、limitations、evidence、report_markdown；完整报告保存在 report_markdown。可用 submit <JSON文件> 直接回传，或由工作台接收原生最终结果。\n${JSON.stringify(ctx)}\n`;
 
     }
     const priorJob=j.previous_job_id?this.wb.get('agent_jobs',j.previous_job_id):null,priorRun=priorJob?this.wb.get('runs',priorJob.run_id):null;
@@ -319,6 +333,7 @@ export class AgentOrchestrator {
       const latest=this.assertCurrent(r.id);assertMainLaunch(this.wb,initial,latest.t,latest.r);if(initial.role==='review'){assertReviewerResources(this.wb,this.wb.get('review_assignments',initial.review_id).reviewer_id);reviewAssignmentContext(this.wb,initial.review_id)}else this.wb.eligible(r.agent_id);
       const dir=this.artifactDirectory(initial,latest.t,latest.r),promptFile=path.join(dir,'TASK.txt');atomicWrite(promptFile,this.prompt(initial,latest.t,latest.r,dir));
       const invocation=await this.clients.build(client,{role:initial.role,cwd:r.cwd,artifactDir:dir,model:initial.route.model,provider:initial.route.provider,sessionId:initial.resume_session_id||undefined,promptFile});
+      if(invocation.resolvedRoute)this.update(jid,{resolved_route:invocation.resolvedRoute});
       if(this.closed||ctl.signal.aborted||this.deferForProjectHold(jid))return;
       const current=this.assertCurrent(r.id);assertMainLaunch(this.wb,initial,current.t,current.r);validateAgentRoutes(this.wb,initial.role==='review'?this.reviewTask(current.t,initial.review_id):current.t);
       assert(JSON.stringify(initial.role==='review'?this.reviewTask(current.t,initial.review_id).review_route:current.t.execution_route)===JSON.stringify(initial.route),'调用路线已变化，请重新规划',409);

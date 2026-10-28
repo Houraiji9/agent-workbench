@@ -23,15 +23,22 @@ export interface ProjectFilesWorkbench {
   privatePath(file:string):boolean;
 }
 export interface UserFileAction {actor:'user'}
+/** Identity is supplied by the authenticated service caller, never tool input. */
+export interface AgentFileAction {actor:'agent';actor_id:string;run_id?:string;task_id?:string;project_ids?:string[]}
+export interface FileClassification {
+  actor:'user'|'agent'|'rule'|'artifact';actor_id:string|null;run_id:string|null;task_id:string|null;
+  purpose:string;reason:string;recorded_at:string;revision:number;
+}
 export interface FileSource {artifact_id:string;task_id:string;run_id:string;agent_id:string|null;sha256:string|null;current:boolean;label:string|null}
 export interface ProjectFile extends Row {
   id:string;project_id:string;path:string;category:FileCategory;validity:FileValidity;retention:FileRetention;
-  purpose:string;cleanup_reason:string|null;classification_source:'user'|'artifact'|'unknown';
+  purpose:string;cleanup_reason:string|null;classification_source:'user'|'agent'|'rule'|'artifact'|'unknown';
+  revision?:number;classification?:FileClassification;classification_reason?:string;classification_stale?:boolean;snapshot_warning?:string|null;
   sources:FileSource[];bytes:number|null;mtime:string|null;observed_at:string;
 }
 export interface ScanLimits {maxEntries?:number;maxFiles?:number;maxDepth?:number;maxMilliseconds?:number;maxIssues?:number}
 export interface ScanResult {
-  files:ProjectFile[];coverage:{roots:string[];scope:string;visitedEntries:number;visitedDirectories:number;observedFiles:number;
+  files:ProjectFile[];coverage:{roots:string[];scope:string;partial?:boolean;project_roots?:string[];visitedEntries:number;visitedDirectories:number;observedFiles:number;
     complete:boolean;truncated:boolean;reasons:string[];unknown:number;skipped:number;issues:{path:string;reason:string}[];observed_at:string};
 }
 export interface ReferenceReport {references:{entity:string;id:string;reason:string}[];boundary:string;global:'unknown';complete:boolean}
@@ -128,11 +135,49 @@ function sources(wb:ProjectFilesWorkbench,pid:string){
 }
 function limit(value:number|undefined,fallback:number,max:number){assert(value===undefined||Number.isInteger(value)&&value>0,'扫描上限需要正整数');return Math.min(value??fallback,max)}
 
+export function projectFileRevision(row:ProjectFile):number{return Number.isInteger(row.revision)&&row.revision!>0?row.revision!:1;}
+export function assertFileAgent(wb:ProjectFilesWorkbench,pid:string,actor:AgentFileAction){
+  assert(actor?.actor==='agent'&&typeof actor.actor_id==='string'&&actor.actor_id.trim().length>0,'需要当前会话的真实 Agent 身份',403);
+  wb.get('projects',pid);
+  const run=actor.run_id?wb.get('runs',actor.run_id):null,taskId=actor.task_id||run?.task_id;
+  if(run&&actor.task_id)assert(run.task_id===actor.task_id,'分类会话的 Task/Run 不匹配',403);
+  if(taskId)assert(wb.get('tasks',taskId).project_id===pid||actor.project_ids?.includes(pid),'分类会话不属于当前项目',403);
+}
+export function projectFileMetadataRows(wb:ProjectFilesWorkbench,pid:string):ProjectFile[]{
+  const {roots}=projectRoots(wb,pid);
+  return wb.all('project_files').filter(row=>row.project_id===pid&&typeof row.path==='string'&&path.isAbsolute(row.path)&&roots.some(root=>inside(root,row.path))&&!blocked(row.path)&&!wb.privatePath(row.path)) as ProjectFile[];
+}
+/** Path-only suggestions explain their evidence, without inventing validity or authorship. */
+export function suggestProjectFileCategory(relativePath:string):{category:FileCategory;reason:string}{
+  const normalized=relativePath.replace(/\\/g,'/'),parts=normalized.split('/'),name=parts.at(-1)||'';
+  if(parts.some(part=>backupNames.test(part)))return {category:'backup',reason:'路径名称或扩展名含 backup、备份或 bak 标记；仅建议备份类别，不推断可清理'};
+  if(parts.some(part=>/^(?:tests?|__tests__|specs?|测试)$/i.test(part))||/\.(?:test|spec)\.[^.]+$/i.test(name))return {category:'test',reason:'位于测试目录或使用 test/spec 文件名；仅按路径建议测试类别'};
+  if(/(?:^|\/)docs\/(?:handoff|reports?|evidence)(?:\/|$)/i.test(normalized)||parts.some(part=>/^(?:handoff|reports?|evidence|过程|交接)$/i.test(part)))return {category:'process',reason:'位于交接、报告或证据目录；按路径建议过程文件'};
+  if(sourceExtensions.has(path.extname(name).toLowerCase())||sourceNames.test(name))return {category:'source',reason:'常见工程扩展名或工程说明文件名；不代表已验证内容或当前有效'};
+  return {category:'unknown',reason:'没有匹配成果登记或已知路径规则；用途与来源待当前 Agent 或用户说明'};
+}
+function classificationHistory(old:ProjectFile){
+  return [...(old.classification_history||[]),{revision:projectFileRevision(old),category:old.category,validity:old.validity,retention:old.retention,purpose:old.purpose,cleanup_reason:old.cleanup_reason,classification:old.classification||null,classification_source:old.classification_source,recorded_at:stamp()}];
+}
+
 /** On-demand metadata only: never reads file contents or assigns an author to unknown files. */
 export function scanProjectFiles(wb:ProjectFilesWorkbench,pid:string,action:UserFileAction,limits:ScanLimits={}):ScanResult {
-  user(action);const {roots}=projectRoots(wb,pid),started=Date.now(),observed=stamp();
+  user(action);return scanMetadata(wb,pid,limits);
+}
+export function scanProjectFilesForAgent(wb:ProjectFilesWorkbench,pid:string,actor:AgentFileAction,limits:ScanLimits={},scanPaths?:string[]):ScanResult {
+  assertFileAgent(wb,pid,actor);return scanMetadata(wb,pid,limits,scanPaths);
+}
+function scanMetadata(wb:ProjectFilesWorkbench,pid:string,limits:ScanLimits,scanPaths?:string[]):ScanResult {
+  const {roots:projectRootList}=projectRoots(wb,pid),started=Date.now(),observed=stamp();
+  const partial=scanPaths!==undefined;
+  assert(!partial||Array.isArray(scanPaths)&&scanPaths.length>0&&scanPaths.length<=10,'局部扫描需要1至10个项目内目录');
+  // Validate the entire selection before observing or persisting any file rows.
+  const roots=partial?[...new Set(scanPaths!.map(directory=>{
+    assert(typeof directory==='string'&&directory.length<=2000,'局部扫描目录无效');
+    const real=authorized(wb,pid,directory);assert(fs.lstatSync(real).isDirectory(),'局部扫描仅接受普通目录',403);return real;
+  }))]:projectRootList;
   const maxEntries=limit(limits.maxEntries,5000,20000),maxFiles=limit(limits.maxFiles,1500,5000),maxDepth=limit(limits.maxDepth,8,20),maxMs=limit(limits.maxMilliseconds,1000,5000),maxIssues=limit(limits.maxIssues,50,200);
-  const coverage:ScanResult['coverage']={roots,scope:'仅所列授权项目根；跳过内部数据、执行历史、凭据、链接与待清理目录；未读取内容或验证全局引用',visitedEntries:0,visitedDirectories:0,observedFiles:0,complete:true,truncated:false,reasons:[],unknown:0,skipped:0,issues:[],observed_at:observed};
+  const coverage:ScanResult['coverage']={roots,...(partial?{partial:true,project_roots:projectRootList}:{}),scope:(partial?'仅所选项目内目录的局部扫描，不代表全项目；':'仅所列授权项目根；')+'跳过内部数据、执行历史、凭据、链接与待清理目录；未读取内容或验证全局引用',visitedEntries:0,visitedDirectories:0,observedFiles:0,complete:true,truncated:false,reasons:[],unknown:0,skipped:0,issues:[],observed_at:observed};
   const previous=new Map(wb.all('project_files').filter(f=>f.project_id===pid&&f.retention!=='moved').map(f=>[key(f.path),f as ProjectFile]));
   const byPath=sources(wb,pid),files:ProjectFile[]=[],seen=new Set<string>(),dirs=[...roots].reverse().map(file=>({file,depth:0}));
   const issue=(file:string,reason:string,unknown=false)=>{if(unknown){coverage.unknown++;coverage.complete=false}else coverage.skipped++;if(coverage.issues.length<maxIssues)coverage.issues.push({path:file,reason})};
@@ -155,7 +200,17 @@ export function scanProjectFiles(wb:ProjectFilesWorkbench,pid:string,action:User
           if(!stat.isFile()||stat.nlink!==1){issue(real,'special_or_hardlink_skipped');continue}
           const k=key(real);if(seen.has(k))continue;seen.add(k);
           const old=previous.get(k),provenance=byPath.get(k)||[];
-          const row:ProjectFile={...old,id:old?.id||id('PF'),project_id:pid,path:real,category:old?.classification_source==='user'?old.category:provenance.length?'deliverable':'unknown',validity:old?.classification_source==='user'?old.validity:provenance.length?(provenance.some(p=>p.current)?'current':'historical'):'unknown',retention:old?.retention||'keep',purpose:old?.purpose||'',cleanup_reason:old?.cleanup_reason||null,classification_source:old?.classification_source==='user'?'user':provenance.length?'artifact':'unknown',sources:provenance,bytes:stat.size,mtime:stat.mtime.toISOString(),observed_at:observed};
+          const manual=old&&['user','agent'].includes(old.classification_source),root=projectRootList.find(r=>inside(r,real))!,suggestion=suggestProjectFileCategory(path.relative(root,real));
+          const category=manual?old.category:provenance.length?'deliverable':suggestion.category;
+          const validity=manual?old.validity:provenance.length?(provenance.some(p=>p.current)?'current':'historical'):'unknown';
+          const classificationSource=manual?old.classification_source:provenance.length?'artifact':suggestion.category==='unknown'?'unknown':'rule';
+          const changed=!!old&&(old.bytes!==stat.size||old.mtime!==stat.mtime.toISOString());
+          const metadataChanged=!!old&&(changed||old.category!==category||old.validity!==validity||old.classification_source!==classificationSource||JSON.stringify(old.sources)!==JSON.stringify(provenance));
+          const revision=old?projectFileRevision(old)+(metadataChanged?1:0):1;
+          const reason=provenance.length?'工作台成果登记中存在本路径；当前/历史效力仅来自成果记录':suggestion.reason;
+          const classification:FileClassification|undefined=manual?old.classification:{actor:provenance.length?'artifact':'rule',actor_id:null,run_id:provenance[0]?.run_id||null,task_id:provenance[0]?.task_id||null,purpose:old?.purpose||'',reason,recorded_at:observed,revision};
+          const row:ProjectFile={...old,id:old?.id||id('PF'),project_id:pid,path:real,category,validity,retention:old?.retention||'keep',purpose:old?.purpose||'',cleanup_reason:old?.cleanup_reason||null,classification_source:classificationSource,classification,classification_reason:manual?old.classification_reason||old.classification?.reason||'保留既有人工分类':reason,revision,
+            classification_stale:manual?!!old.classification_stale||changed:false,snapshot_warning:manual&&(old.classification_stale||changed)?'文件大小或修改时间已变化，原分类保留，需重新核对':null,sources:provenance,bytes:stat.size,mtime:stat.mtime.toISOString(),observed_at:observed};
           wb.put('project_files',row,{project_id:pid});files.push(row);coverage.observedFiles++;
         }catch(e){if(e instanceof FileLinkError)issue(file,'link_skipped');else issue(file,errorText(e),true)}
       }
@@ -174,9 +229,29 @@ export function saveProjectFile(wb:ProjectFilesWorkbench,pid:string,fileId:strin
   user(action);assert(changes&&Object.keys(changes).every(k=>['category','validity','retention','purpose','cleanup_reason'].includes(k)),'分类仅接受用途、效力、保留策略及说明');
   assert(categories.includes(changes.category)&&validities.includes(changes.validity)&&retentions.includes(changes.retention)&&(changes.retention as string)!=='moved','分类字段无效');
   assert(typeof changes.purpose==='string'&&changes.purpose.length<=2000,'用途说明过长');
-  const old=wb.get('project_files',fileId) as ProjectFile;assert(old.project_id===pid&&old.retention!=='moved','文件不属于此项目或已移动',403);regular(wb,pid,old.path);
+  const old=wb.get('project_files',fileId) as ProjectFile;assert(old.project_id===pid&&old.retention!=='moved','文件不属于此项目或已移动',403);const {stat}=regular(wb,pid,old.path);
   const reason=changes.cleanup_reason?.trim()||null;assert(changes.retention!=='cleanup_candidate'||!!reason&&reason.length<=2000,'待清理文件需要明确理由');
-  const row={...old,...changes,cleanup_reason:reason,classification_source:'user' as const,classified_at:stamp()};wb.put('project_files',row,{project_id:pid});return row;
+  const revision=projectFileRevision(old)+1,at=stamp();
+  const classification:FileClassification={actor:'user',actor_id:'user',run_id:null,task_id:null,purpose:changes.purpose,reason:reason||'用户在项目文件页面明确保存分类',recorded_at:at,revision};
+  const row={...old,...changes,bytes:stat.size,mtime:stat.mtime.toISOString(),observed_at:at,cleanup_reason:reason,classification_source:'user' as const,classified_at:at,revision,classification,classification_reason:classification.reason,classification_stale:false,snapshot_warning:null,classification_history:classificationHistory(old)};wb.put('project_files',row,{project_id:pid});return row;
+}
+export interface AgentFileClassification {expected_revision?:number;category:FileCategory;validity:FileValidity;retention:Exclude<FileRetention,'moved'>;purpose:string;reason:string}
+/** Metadata write only. User labels and all move/open/restore guards remain independent. */
+export function classifyProjectFileForAgent(wb:ProjectFilesWorkbench,pid:string,fileId:string,actor:AgentFileAction,changes:AgentFileClassification){
+  assertFileAgent(wb,pid,actor);
+  const old=wb.get('project_files',fileId) as ProjectFile;
+  assert(old.project_id===pid,'文件不属于当前项目',403);assert(old.retention!=='moved','文件已移动，只能从移动记录核对',409);
+  if(old.classification_source==='user')return {status:'skipped_user' as const,file_id:fileId,revision:projectFileRevision(old),reason:'保留用户人工分类；Agent 不能覆盖'};
+  assert(categories.includes(changes.category)&&validities.includes(changes.validity)&&['keep','cleanup_candidate'].includes(changes.retention),'分类字段无效');
+  assert(typeof changes.purpose==='string'&&changes.purpose.trim().length>0&&changes.purpose.length<=2000&&typeof changes.reason==='string'&&changes.reason.trim().length>0&&changes.reason.length<=2000,'Agent 分类需要用途与依据');
+  if(changes.expected_revision!==undefined)assert(changes.expected_revision===projectFileRevision(old),'文件登记版本已变化，请重新查询后分类',409);
+  assert(!old.classification_stale||changes.expected_revision===projectFileRevision(old),'文件快照已变化，需查询当前 revision 并重新核对',409);
+  const {stat}=regular(wb,pid,old.path);
+  assert(old.bytes===stat.size&&old.mtime===stat.mtime.toISOString(),'文件快照已变化，请刷新元信息后重新分类',409);
+  const revision=projectFileRevision(old)+1,at=stamp();
+  const classification:FileClassification={actor:'agent',actor_id:actor.actor_id,run_id:actor.run_id||null,task_id:actor.task_id||(actor.run_id?wb.get('runs',actor.run_id).task_id:null),purpose:changes.purpose.trim(),reason:changes.reason.trim(),recorded_at:at,revision};
+  const row:ProjectFile={...old,category:changes.category,validity:changes.validity,retention:changes.retention,purpose:classification.purpose,cleanup_reason:changes.retention==='cleanup_candidate'?classification.reason:null,classification_source:'agent',classification,classification_reason:classification.reason,classified_at:at,revision,classification_stale:false,snapshot_warning:null,classification_history:classificationHistory(old)};
+  wb.put('project_files',row,{project_id:pid});return {status:'applied' as const,file_id:fileId,revision,classification};
 }
 /** Revalidates every request. Caller serves text as text, HTML in isolation, or reveals the folder. */
 export function projectFilePath(wb:ProjectFilesWorkbench,pid:string,fileId:string,action:UserFileAction){

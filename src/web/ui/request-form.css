@@ -6,4 +6,10 @@
 .request-delivery-summary { margin: -6px 0 0; font-size: 13px; color: var(--ink-2); line-height: 1.6; overflow-wrap: anywhere; }
 .request-form .request-choice-note { margin: -6px 0 0; }
 .request-form .delivery-profile-fields { border-left: 2px solid var(--line); padding-left: 14px; }
+.request-agent-selection { border-top: 1px solid var(--line); padding-top: 16px; min-width: 0; }
+.request-agent-selection h3 { font-size: 15px; margin-bottom: 6px; }
+.request-agent-role { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 14px; min-width: 0; }
+.request-agent-role > .field:nth-child(3) { grid-column: 1 / -1; }
+.request-agent-role select, .request-agent-role input { width: 100%; min-width: 0; }
 @media (max-width: 520px) { .request-options { grid-template-columns: 1fr; } }
+@media (max-width: 520px) { .request-agent-role { grid-template-columns: 1fr; } }

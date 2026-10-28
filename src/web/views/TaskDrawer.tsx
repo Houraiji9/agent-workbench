@@ -21,6 +21,7 @@ import {waitingForDependencies} from '../../shared/execution-order.js';
 import { AgentAutomationStatus, automationActive } from '../ui/AgentAutomationStatus.js';
 import { AgentAutomationControls } from '../ui/AgentAutomationControls.js';
 import { TaskExecutionPolicy } from '../ui/TaskExecutionPolicy.js';
+import { TaskReviewArrangement } from '../ui/TaskReviewArrangement.js';
 import { deliverySummary } from '../ui/DeliveryProfileFields.js';
 import {TaskHandoff} from '../ui/TaskHandoff.js';
 
@@ -97,13 +98,14 @@ function TaskBody({ detail }: { detail: R }) {
 
     <RelayTrack relay={relay} compact/><details className="fold"><summary>完整执行流程</summary><RelayTrack relay={relay}/></details>
     {run&&<div className="tool-row"><button className="btn small" disabled={continuationDisabled} onClick={()=>void continueTask(s,t)}>同会话继续</button><button className="btn small ghost" disabled={stoppedExecution ? restartDisabled : continuationDisabled} onClick={()=>void continueTask(s,t,false)}>{stoppedExecution ? '停止后重新开始' : '新会话接手'}</button></div>}
-    {stoppedExecution && <p className="muted small">{recoveryRequired ? '仍有调用尚未核实结束，请先展开下方“高级恢复”核实原调用，再重新开始。' : '使用新会话重新开始，原会话与已有回执保留。'}</p>}
+    {stoppedExecution && <p className="muted small">{recoveryRequired ? '仍有调用的进程状态待核验；工作台会自动核实已记录的进程编号。下方“高级恢复”列出缺少进程信息或仍未退出等具体原因。' : '使用新会话重新开始，原会话与已有回执保留。'}</p>}
     <AgentAutomationStatus job={t.automation}/>
     <AgentAutomationControls key={t.id} task={t} jobs={detail.agent_jobs}/>
     {portableVerified&&<Notice tone="info">本机便携清单已核验。</Notice>}
     {run?.deployment_evidence&&<details className="fold"><summary>部署证据与来源</summary><p className="muted small">{portableVerified?'便携清单由工作台核验；健康和回退说明来自执行者报告。':'执行者报告，工作台未主动验证线上。'}</p><pre className="pre">{typeof run.deployment_evidence==='string'?run.deployment_evidence:JSON.stringify(run.deployment_evidence,null,2)}</pre></details>}
     <details className="fold"><summary>上下文与客户端状态</summary>{run?.context_usage?<p>接口已提供 {run.context_usage.requests} 次上下文，共 {run.context_usage.characters} 字符，其中增量 {run.context_usage.delta||0} 次。字符数不等于模型计费 token。</p>:<p>当前执行尚无简版接口的上下文统计；不把缺失数据当作零消耗。</p>}<p>{hasSameSessionContinuation(t)?'原执行会话直接读取本轮增量，接单后更新状态，无需重发执行单。':t.execution_route?'本任务已指定客户端；续作会尝试连接原会话，能否恢复以实际调用结果为准。':'本任务未配置自动调用路线；继续操作会准备可复制的兼容入口。'}</p><button className="link" onClick={()=>s.go({page:'settings'})}>查看本机客户端</button></details>
     <TaskExecutionPolicy key={(run?.id||t.id)+':'+(t.pending_arrangement?.saved_at||'')} task={t} run={run} runs={detail.runs} jobs={detail.agent_jobs||[]}/>
+    <TaskReviewArrangement key={'review-arrangement:'+t.id+':'+t.revision} task={t} run={run}/>
     {(run?.execution_contract?.review_policy||t.review_policy)?.mode==='light'&&<Notice>本次为有限审查，只检查：{((run?.execution_contract?.review_policy||t.review_policy)?.focus||[]).join('；')}。其他范围仍需另行验证，不代表完整审查通过。</Notice>}
 
     {pendingDecisions(s.data,true).some(d=>d.task_id===t.id)?pendingDecisions(s.data,true).filter(d=>d.task_id===t.id).map(d=><UserDecision key={d.id} decision={d}/>):<NowCard detail={detail} relay={relay} run={run} who={who} current={current} lastMessage={lastMessage} />}

@@ -40,7 +40,7 @@ export function freezeExecutionContract(task:Row,agentId:string,model:string|nul
     execution_policy:{...normalizePolicy(task.execution_policy),main_model:model},policy_source:task.policy_source||'legacy_default',
     execution_route:task.execution_route?{...task.execution_route,...(model?{model}:{})}:null,review_route:task.review_route||null,
     automation_policy:task.automation_policy||null,review_policy:task.review_policy||{mode:'required'},
-    importance:task.importance||'normal',model_selection:task.model_selection||null,
+    importance:task.importance||'normal',model_selection:task.model_selection||null,agent_selection:task.agent_selection||null,review_arrangement:task.review_arrangement||null,
     delivery_profile:resolveDeliveryProfile(task),delivery_target:task.delivery_target||'source',runtime_root:task.runtime_root??null};
   checkPriority({...task,...data});
   // Detach nested planner declarations from the mutable Task before hashing/storing the Run.
@@ -51,7 +51,7 @@ export function freezeExecutionContract(task:Row,agentId:string,model:string|nul
 export function runTask(task:Row,run:Row):Row{
   const c=run.execution_contract?structuredClone(run.execution_contract):null;
   if(!c)return reviewArrangementTask(task,run);
-  const additions=Object.fromEntries(['importance','model_selection','delivery_profile','delivery_target','runtime_root']
+  const additions=Object.fromEntries(['importance','model_selection','delivery_profile','delivery_target','runtime_root','agent_selection','review_arrangement']
     .filter(key=>Object.hasOwn(c,key)).map(key=>[key,structuredClone(c[key])]));
   return reviewArrangementTask({...task,agent_id:c.agent_id,requested_model:c.requested_model,reviewer_id:c.reviewer_id,
     execution_policy:rPolicy(run,c),execution_route:c.execution_route||undefined,review_route:c.review_route||undefined,

@@ -4,6 +4,20 @@ async function environment(){const f=fixture();f.wb.close();const {app,wb}=await
  const call=async(tool:string,input:any,auth=token)=>{const r=await app.inject({method:'POST',url:'/api/mcp/'+tool,headers:{host:'127.0.0.1:'+f.config.port,authorization:'Bearer '+auth},payload:{run_id:s.rid,...input}});return {status:r.statusCode,data:r.json()};};
  const manage=(tool:string,change:any,auth=token,extra:any={})=>call(tool,{request_id:crypto.randomUUID(),user_instruction:'用户口述：请直接在这个任务修改，保留历史，不再另开关联单。',change,...extra},auth);
  return {...f,app,wb,...s,call,manage,token};}
+
+test('接单Agent通过MCP查询和分类本项目，真实身份来自凭据且跨项目拒绝',async()=>{const f=await environment();try{
+ const file=path.join(f.root,'classification-example.ts');fs.writeFileSync(file,'// synthetic classification fixture');
+ const listed=await f.call('get_project_files',{project_id:'P-workbench',refresh:true,query:'classification-example'});assert.equal(listed.status,200,JSON.stringify(listed.data));
+ const row=listed.data.files.find((r:any)=>r.path===file);assert(row);
+ const item={file_id:row.file_id,expected_revision:row.revision,category:'test',validity:'current',retention:'keep',purpose:'隔离接口测试夹具',reason:'当前执行者验证分类登记，不是生产内容'};
+ const saved=await f.manage('classify_project_files',{project_id:'P-workbench',items:[item]});assert.equal(saved.status,200,JSON.stringify(saved.data));assert.equal(saved.data.result.applied,1);
+ const stored=f.wb.get('project_files',row.file_id);assert.equal(stored.classification.actor_id,'runner:'+f.rid);assert.equal(stored.classification.run_id,f.rid);
+ assert.equal((await f.call('get_project_files',{project_id:'P-workbench',refresh:true,query:'classification-example'})).data.files[0].category,'test');
+ const other=path.join(f.root,'classification-other');fs.mkdirSync(other);const p=f.wb.registerProject({name:'另一项目分类夹具',path:other});
+ assert.equal((await f.call('get_project_files',{project_id:p.id,refresh:true})).status,403);
+ assert.equal((await f.manage('classify_project_files',{project_id:p.id,items:[item]})).status,403);
+ assert.equal((await f.manage('classify_project_files',{project_id:'P-workbench',actor_id:'user',items:[item]})).status,400);
+}finally{await f.app.close();}});
 test('执行者会话在已开工同任务修改审查安排与范围，保留初始合约和操作来源',async()=>{const f=await environment();try{
  const contract=structuredClone(f.wb.get('runs',f.rid).execution_contract),before=f.wb.get('tasks',f.tid);
  const a=await f.manage('manage_reviews',{action:'set_arrangement',data:{run_id:f.rid,expected_revision:before.revision,reviewer_id:'claude',requested_model:'test-review-model',reason:'用户要求更换审查人员及明确模型'}});assert.equal(a.status,200,JSON.stringify(a.data));

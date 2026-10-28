@@ -1,3 +1,5 @@
+import {setTaskReviewArrangement} from '../core/review-workflow.ts';
+import {projectMemoryHistory} from '../core/memory-management.ts';
 import {resolveRunnerRun,resolveRunnerContinuationScope} from '../core/run-continuation-scope.ts';
 import {handoffId,handoffCredentialPath,openReviewHandoff,openReviewContext,claimReviewHandoff,peerDispatchInput,peerJobInput} from '../core/open-review-handoff.ts';
 import {authenticateExecutionJob} from '../core/execution-job-capability.ts';
@@ -137,6 +139,7 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
   app.post<{Params:{id:string}}>('/api/tasks/:id/rework',async req=>reworkOrder(wb,req.params.id,req.body));
   app.post('/api/receipts',async req=>wb.event(req.body,undefined,'user_imported'));
   app.get<{Params:{id:string}}>('/api/tasks/:id/review-candidates',async req=>reviewCandidates(wb,req.params.id));
+  app.post<{Params:{id:string}}>('/api/tasks/:id/review-arrangement',async req=>setTaskReviewArrangement(wb,req.params.id,req.body,{role:'user'}));
   app.post<{Params:{id:string};Body:Row}>('/api/tasks/:id/reviews/manage',async req=>{
     const {action,...data}=req.body,t=wb.get('tasks',req.params.id);assert(data.run_id===t.current_run_id,'请使用当前执行记录',409);
     if(action==='add')return exportReviewOrder(wb,data,{role:'user'});
@@ -158,6 +161,7 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
   app.post('/api/subscriptions',async req=>wb.createSubscription(req.body));
   app.post<{Params:{id:string}}>('/api/subscriptions/:id/delete',async req=>wb.deleteSubscription(req.params.id,req.body));
   app.post('/api/memories',async req=>wb.memory(req.body as Row));
+  app.get<{Params:{id:string}}>('/api/projects/:id/memories/history',async req=>projectMemoryHistory(wb,req.params.id));
   app.post<{Params:{table:string;id:string};Body:Row}>('/api/baseline/:table/:id',async req=>wb.updateBaseline(req.params.table,req.params.id,req.body.changes,req.body.version));
   app.post('/api/backup',async()=>createBackup(wb));
   app.post<{Body:Row}>('/api/settings/roots',async req=>{const r=addAuthorizedRoot(config,req.body?.path);if(r.added)wb.transaction(()=>wb.audit('user','add_authorized_root',r.added!,{roots:r.roots}));return r});
@@ -207,7 +211,7 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
       const caller=role==='manager'?{role:'manager' as const,id:'manager'}:sessionCaller(wb,role as 'runner'|'reviewer',scope!);
       const payload={...b};if(role!=='manager'){delete payload.run_id;delete payload.review_id;}
       if(Object.hasOwn(managementTools,tool))return manage(wb,managementServices,tool,payload,caller);
-      const result:Row=await readManagement(wb,managementServices,tool,scopeManagementInput(wb,tool,payload,caller));
+      const result:Row=await readManagement(wb,managementServices,tool,scopeManagementInput(wb,tool,payload,caller),caller);
       if(role!=='manager'&&tool==='get_management_context'){delete result.connection_settings;delete result.authorized_roots;result.mode=role;}
       return result;
     }

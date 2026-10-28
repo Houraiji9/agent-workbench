@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import {spawnSync} from 'node:child_process';
 import { fixture, taskInput, event, finishCloseout } from './agent-routing-fixture.ts';
 import { AgentOrchestrator, type Launcher } from '../src/core/agent-orchestration.ts';
 import {setMainExecutionControl,mainExecutionControlSummary} from '../src/core/main-execution-control.ts';
@@ -55,6 +56,32 @@ function deliver(f: F, tid: string, rid: string) {
   receipt(f, tid, rid, 'submitted', { result: '隔离调度测试交付：只验证正式状态和调用隔离，没有运行模型或生产任务。' });
 }
 function input(f: F, tid: string, rid = f.wb.get('tasks', tid).current_run_id) { return { run_id: rid, request_id: crypto.randomUUID(), expected_revision: f.wb.get('tasks', tid).revision }; }
+
+test('系统核实失效PID后同步恢复状态并续接最近已知原会话，不伪造用户确认或审查结论',async()=>{
+ const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
+ try{
+  const t=planned(f);deliver(f,t.tid,t.rid);const ra=exportReviewOrder(f.wb,{run_id:t.rid,expected_revision:f.wb.get('tasks',t.tid).revision,reviewer_id:'grok-build',reason:'系统恢复证据测试',delivery_mode:'agent'},{role:'runner',id:'test'});
+  const child=spawnSync(process.execPath,['-e',''],{windowsHide:true});assert.equal(child.status,0);assert(child.pid);
+  const old={id:'AJ-'+crypto.randomUUID(),task_id:t.tid,run_id:t.rid,role:'review',phase:'review',review_id:ra.review_id,route:{client:'grok',model:'synthetic-review'},status:'interrupted',revision:1,created_at:new Date().toISOString(),process_pid:child.pid,process_may_be_running:true,session_id:null,resume_session_id:'known-native-session',session_mode:'resume',reason:'合成后台中断'};
+  const origin={...old,id:'AJ-'+crypto.randomUUID(),created_at:new Date(Date.now()-1000).toISOString(),session_id:'known-native-session',resume_session_id:null,session_mode:'new',process_may_be_running:false,process_end_evidence:'owned_child_exit',status:'failed'};
+  f.wb.put('agent_jobs',origin,{run_id:t.rid});f.wb.put('agent_jobs',{...old,previous_job_id:origin.id},{run_id:t.rid});
+  const before=f.wb.all('reviews').length;
+  const refreshed=await o.getJob({run_id:t.rid,job_id:old.id,timeout_ms:0});assert.equal(refreshed.recovery_required,false);assert.equal(refreshed.process_end_evidence,'tracked_process_absent');assert.equal(refreshed.process_recovery.actor,'system');assert.equal(refreshed.status,'interrupted');assert.equal(f.wb.all('reviews').length,before);
+  await o.getJob({run_id:t.rid,job_id:old.id,timeout_ms:0});assert.equal((f.wb.db.prepare("SELECT COUNT(*) AS n FROM audit WHERE action='reconcile_agent_process'").get() as any).n,1);
+  const next=o.dispatchReview({...input(f,t.tid),review_id:ra.review_id,instructions:'同原会话只读审查'});assert.equal(next.session_mode,'resume');assert.equal(next.previous_job_id,old.id);await until(()=>fake.builds.length===1||f.wb.get('agent_jobs',next.job_id).status==='failed','恢复构造');assert.equal(fake.builds.length,1,f.wb.get('agent_jobs',next.job_id).reason);assert.equal(fake.builds[0].sessionId,'known-native-session');
+  const prompt=fs.readFileSync(fake.builds[0].promptFile,'utf8');assert.match(prompt,/不必为了获取资料执行 context-section/);assert.match(prompt,/指纹由工作台记录/);
+  fake.releases[0]();await terminal(f,next.job_id);assert.equal(f.wb.all('reviews').length,before);
+ }finally{await o.close();f.wb.close();}
+});
+
+test('系统恢复只采纳已核实的进程缺失，活PID和缺PID都不被伪装成结束',async()=>{
+ for(const pid of [process.pid,null]){
+  const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
+  try{const t=planned(f);deliver(f,t.tid,t.rid);const old={id:'AJ-'+crypto.randomUUID(),task_id:t.tid,run_id:t.rid,role:'review',phase:'review',route:{client:'grok',model:'synthetic-review'},status:'interrupted',revision:1,created_at:new Date().toISOString(),process_pid:pid,process_may_be_running:true};f.wb.put('agent_jobs',old,{run_id:t.rid});
+   const refreshed=await o.getJob({run_id:t.rid,job_id:old.id,timeout_ms:0});assert.equal(refreshed.recovery_required,true);assert.equal(refreshed.process_recovery,null);assert.throws(()=>o.dispatchReview(input(f,t.tid)),pid?/仍存在/:/进程身份/);assert.equal(fake.launches.length,0);assert.equal(f.wb.all('reviews').length,0);
+  }finally{await o.close();f.wb.close();}
+ }
+});
 function finishReview(f: F, reviewId: string, verdict: 'passed' | 'changes_requested' = 'passed', sessionId?: string) {
   const context = reviewAssignmentContext(f.wb, reviewId);
   startReview(f.wb, { review_id: reviewId, identity: context.assignment.reviewer_id, ...(sessionId ? { session_id: sessionId } : {}) });
@@ -111,6 +138,21 @@ test('session fallback: usable latest review resumes while active and unresolved
   const next=o.dispatchReview(input(f,t.tid));assert.equal(next.session_mode,'resume');assert.equal(next.review_id,first.review_id);await until(()=>fake.launches.length===2,'review should resume');assert.equal(fake.builds[1].sessionId,'usable-session');fake.releases[1]();await terminal(f,next.job_id);
   const unresolved=f.wb.get('agent_jobs',next.job_id);Object.assign(unresolved,{process_may_be_running:true,process_pid:process.pid});f.wb.put('agent_jobs',unresolved,{run_id:t.rid});
   assert.throws(()=>o.dispatchReview({...input(f,t.tid),fresh_session:true}),/仍存在/);assert.equal(fake.launches.length,2);
+ }finally{await o.close();f.wb.close();}
+});
+
+test('Grok cancelled fingerprint segment has no verdict; resumed native report completes the same RA',async()=>{
+ const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
+ try{const t=planned(f);deliver(f,t.tid,t.rid);const first=o.dispatchReview(input(f,t.tid));await until(()=>fake.launches.length===1,'原生审查先启动');
+  fake.launches[0].onLine(JSON.stringify({type:'text',data:'合成客户端事件：最后一次文件指纹终端调用取消，尚未回传正式报告。'}));
+  fake.launches[0].onLine(JSON.stringify({type:'end',sessionId:'synthetic-cancelled-fingerprint',stopReason:'cancelled'}));fake.releases[0]();
+  const cancelled=await terminal(f,first.job_id);assert.equal(cancelled.status,'failed');assert.equal(cancelled.native_stop_reason,'cancelled');assert.equal(cancelled.process_may_be_running,false);assert.equal(cancelled.session_id,'synthetic-cancelled-fingerprint');
+  assert.equal(f.wb.all('reviews').length,0);assert.equal(f.wb.get('tasks',t.tid).status,'submitted');assert.notEqual(f.wb.get('review_assignments',first.review_id!).status,'completed');
+  const before=structuredClone(f.wb.get('agent_jobs',first.job_id)),next=o.dispatchReview({...input(f,t.tid),review_id:first.review_id!});
+  assert.equal(next.review_id,first.review_id);assert.equal(next.session_mode,'resume');assert.equal(next.previous_job_id,first.job_id);await until(()=>fake.launches.length===2,'在客户端原生会话继续');assert.equal(fake.builds[1].sessionId,'synthetic-cancelled-fingerprint');
+  const report=nativeReviewResult(f,next.review_id!,{verdict:'changes_requested',findings:['合成独立报告保留实际问题，不把无报告阶段判为通过']});
+  fake.launches[1].onLine(JSON.stringify({type:'text',data:JSON.stringify(report)}));fake.launches[1].onLine(JSON.stringify({type:'end',sessionId:'synthetic-cancelled-fingerprint',stopReason:'end_turn'}));fake.releases[1]();assert.equal((await terminal(f,next.job_id)).status,'completed');
+  assert.equal(f.wb.all('review_assignments').length,1);assert.equal(f.wb.all('reviews').length,1);const saved=f.wb.all('reviews')[0];assert.equal(saved.review_id,first.review_id);assert.equal(saved.verdict,'changes_requested');assert.equal(saved.source,'native_client_output');assert.equal(saved.client_job_id,next.job_id);assert.equal(saved.session_id,'synthetic-cancelled-fingerprint');assert.equal(saved.report_markdown,report.report_markdown);assert.equal(f.wb.get('tasks',t.tid).status,'changes_requested');const original=f.wb.get('agent_jobs',first.job_id);assert.equal(original.status,before.status);assert.equal(original.reason,before.reason);assert.equal(original.native_stop_reason,'cancelled');assert.equal(original.session_id,before.session_id);assert.deepEqual(original.files,before.files);assert.equal(original.recovery.original_status,'failed');assert.equal(original.recovery.review_assignment_id,first.review_id);assert.equal(original.recovery.review_id,saved.id);
  }finally{await o.close();f.wb.close();}
 });
 

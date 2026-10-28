@@ -90,7 +90,7 @@ test('DSH 官方桌面 cmd 只解析入口，直接启动 Electron Node，不使
 
 test('DSH 任务级 overlay 启用账号服务、精确模型与续作，提示走 stdin', async t => {
   const {dir, promptFile} = await fixture(t); const client = await record(dir, 'dsh');
-  const invoke = await buildAgentInvocation(client, {...options(dir, promptFile), model: 'deepseek-flash'});
+  const invoke = await buildAgentInvocation(client, {...options(dir, promptFile), model: 'deepseek-flash',provider:'deepseek-account'});
   assert.deepEqual(invoke.args.slice(0, 2), ['--profile', 'headless']);
   assert.equal(invoke.args[invoke.args.indexOf('--session-id') + 1], 'session-123');
   assert.equal(invoke.stdin, await fs.readFile(promptFile, 'utf8'));
@@ -102,11 +102,11 @@ test('DSH 任务级 overlay 启用账号服务、精确模型与续作，提示�
   assert(!JSON.stringify(invoke).match(/always-approve|yolo|bypassPermissions/));
 });
 
-test('DSH 的 GLM provider 单独选择，overlay 值不能注入 YAML', async t => {
+test('Harness 的任意 provider 单独选择，overlay 值不能注入 YAML', async t => {
   const {dir, promptFile} = await fixture(t); const client = await record(dir, 'dsh');
-  const invoke = await buildAgentInvocation(client, {...options(dir, promptFile), model: 'glm-5.3'});
+  const invoke = await buildAgentInvocation(client, {...options(dir, promptFile), model: 'glm-5.3',provider:'custom-provider'});
   const patches = JSON.parse(await fs.readFile(invoke.args[invoke.args.indexOf('--patch') + 1], 'utf8'));
-  assert.deepEqual(patches.at(-1).config, {provider: 'zai-coding-cn', model: 'glm-5.3'});
+  assert.deepEqual(patches.at(-1).config, {provider: 'custom-provider', model: 'glm-5.3'});
   assert(!patches.some((p: {id: string}) => p.id === 'deepseek-account'));
   await assert.rejects(buildAgentInvocation(client, {...options(dir, promptFile), provider: 'x\n- id: injected'}), /provider 无效/);
 });

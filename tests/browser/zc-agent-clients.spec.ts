@@ -316,7 +316,7 @@ test('已接单执行停止后须核实再以新会话请求新Run，同会话�
   await expect(restart).toBeVisible();
   await expect(restart).toBeDisabled();
   await expect(sameSession).toBeDisabled();
-  await expect(d).toContainText('仍有调用尚未核实结束，请先展开下方“高级恢复”');
+  await expect(d).toContainText('仍有调用的进程状态待核验；工作台会自动核实已记录的进程编号。');
   expect(continueRequests).toHaveLength(0);
   await d.getByText('高级恢复（遗留调用 1）', { exact: true }).click();
   await d.getByRole('button', { name: '确认原调用已结束', exact: true }).click();

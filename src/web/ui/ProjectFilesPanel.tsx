@@ -21,6 +21,7 @@ const categoryNames: Record<FileCategory, string> = {
 };
 const validityNames: Record<FileValidity, string> = { current: '当前', historical: '历史', invalid: '无效', unknown: '未知' };
 const retentionNames: Record<FileRetention, string> = { keep: '保留', cleanup_candidate: '待清理', moved: '已移走' };
+const classificationSourceNames={user:'用户分类',agent:'Agent 分类',rule:'路径规则建议',artifact:'成果登记',unknown:'待说明'};
 const moveStatusNames: Record<FileMove['status'], string> = {
   prepared: '移动未确认', moved: '已移走', failed: '移动失败', restored: '已恢复', restore_failed: '恢复失败', uncertain: '状态待核实',
 };
@@ -204,7 +205,10 @@ export function ProjectFilesPanel({ projectId }: { projectId: string }) {
             <div className="file-row-copy" style={{ minWidth: 0, flex: 1 }}>
               <strong style={{ display: 'block', overflowWrap: 'anywhere' }}>{file.path.split(/[\\/]/).pop() || file.path}</strong>
               <code style={{ display: 'block', overflowWrap: 'anywhere' }}>{file.path}</code>
-              <small>{unknown(file.category, categoryNames)} · {unknown(file.validity, validityNames)} · {unknown(file.retention, retentionNames)} · {file.classification_source === 'user' ? '用户分类' : file.classification_source === 'artifact' ? '成果来源' : '来源未知'}</small>
+              <small>{unknown(file.category, categoryNames)} · {unknown(file.validity, validityNames)} · {unknown(file.retention, retentionNames)} · {unknown(file.classification_source,classificationSourceNames)} · 登记版本 {file.revision||1}</small>
+              {(file.classification_reason||file.classification?.reason)&&<small style={{display:'block',overflowWrap:'anywhere'}}>分类依据：{file.classification_reason||file.classification?.reason}</small>}
+              {file.classification&&<small style={{display:'block',overflowWrap:'anywhere'}}>记录者：{file.classification.actor==='user'?'用户':file.classification.actor==='agent'?file.classification.actor_id:'系统规则或成果登记'}{file.classification.task_id?` · Task ${file.classification.task_id}`:''}{file.classification.run_id?` · Run ${file.classification.run_id}`:''} · {fullDate(file.classification.recorded_at,s.tz)}</small>}
+              {file.classification_stale&&<small role="status" style={{display:'block'}}>需重新核对：{file.snapshot_warning||'文件快照已变化，原分类保留'}</small>}
               {file.purpose && <p>{file.purpose}</p>}
               <small>{file.bytes === null ? '大小未知' : bytes(file.bytes)} · {fullDate(file.mtime, s.tz)}</small>
               {file.sources?.length ? <small className="file-sources" style={{ overflowWrap: 'anywhere' }}>来源：{file.sources.map((source, index) => <span key={`${source.task_id}-${source.artifact_id}-${index}`}>{source.label || source.artifact_id} · Task {source.task_id} · Run {source.run_id || '未知'} · {source.agent_id ? s.name(source.agent_id) : 'Agent未知'} · {source.current === true ? '当前' : source.current === false ? '历史' : '未知'} · SHA-256 {source.sha256 || '未知'}</span>)}</small> : <small>来源 Task/Agent/Run：未知 · SHA-256：未知</small>}

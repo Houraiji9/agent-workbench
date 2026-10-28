@@ -1,6 +1,6 @@
 import {pendingDecisions} from './ui/UserDecision.js';
 // 工作台入口：左侧导航 + 顶部快捷栏 + 页面 + 任务抽屉 + 对话框。
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Sun, Moon, Search, Plus, Menu, X, House, FolderKanban, Users, Gauge, History, Settings as Cog, Inbox } from 'lucide-react';
 import './styles.css';
@@ -33,6 +33,7 @@ function Shell() {
   const [menu, setMenu] = useState(false);
   const [palette, setPalette] = useState(false);
   const { route, data } = s;
+  const previousRoute = useRef(route);
   const decisions=pendingDecisions(data),decisionTasks=new Set(decisions.map(d=>d.task_id));
   const visible=(id:unknown)=>!data.projects.some((p:Record<string,unknown>)=>p.id===id&&(p.shelved||p.archived));
   const yours = decisions.length + data.tasks.filter((t:Record<string,any>)=>visible(t.project_id)&&!decisionTasks.has(t.id)&&isYourTurn(t)).length + data.requests.filter((q: Record<string, unknown>) => q.status === 'awaiting_planning' && visible(q.project_id)).length;
@@ -48,7 +49,14 @@ function Shell() {
     return () => window.removeEventListener('keydown', onKey);
   }, [s, palette, route.task]);
 
-  useEffect(() => { setMenu(false); window.scrollTo({top:0,behavior:'instant'}); }, [route.page, route.id, route.tab]);
+  useEffect(() => {
+    const previous = previousRoute.current;
+    const memberChange = previous.page === 'team' && route.page === 'team'
+      && (previous.tab || 'mine') === 'mine' && (route.tab || 'mine') === 'mine' && previous.id !== route.id;
+    previousRoute.current = route;
+    setMenu(false);
+    if (!memberChange) window.scrollTo({top:0,behavior:'instant'});
+  }, [route.page, route.id, route.tab]);
   useEffect(() => { document.title = '工作台' + (yours ? `（${yours} 件等你）` : ''); }, [yours]);
 
   const conn = data.integrations as Record<string, any>[];
@@ -98,7 +106,7 @@ function Shell() {
           <button className="btn primary" onClick={() => s.openDialog('request')}><Plus size={18} />提需求</button>
         </div>
       </header>
-      <main id="main" className="page" tabIndex={-1}>{body}</main>
+      <main id="main" className={'page' + (page === 'team' && (!route.tab || route.tab === 'mine') ? ' team-page-shell' : '')} tabIndex={-1}>{body}</main>
     </div>
     {menu && <div className="side-scrim" onClick={() => setMenu(false)} />}
 

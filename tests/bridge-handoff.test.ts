@@ -14,7 +14,7 @@ test('方案和分角色首读/条件补读贯穿执行单、上下文和审查�
   const plan=executionContext(f.wb,{run_id:r.id,section:'plan'});assert.equal(plan.context.handoff.plan.content,t.context_contract.plan.content);assert(!('project_memory' in plan.context));
   const aid='RA-'+crypto.randomUUID();f.wb.put('review_assignments',{id:aid,run_id:r.id,reviewer_id:'grok-build',review_digest:'digest',status:'running'},{run_id:r.id});
   const review=reviewContext(f.wb,{review_id:aid},{review_id:aid,task_id:t.id,run_id:r.id,review_digest:'digest'});assert.equal(review.context.files.suggested[1].path,'diff.txt');assert.deepEqual(review.context.handoff.review_focus,['只验证新分支及直接调用方']);
-  const order=compactOrder(t,f.wb.get('projects',t.project_id),r,f.root);assert.match(order,/只有关联检查失败时补读/);assert.match(order,/context-section plan/);
+  const order=compactOrder(t,f.wb.get('projects',t.project_id),r,f.root);assert.match(order,/只有关联检查失败时补读/);assert.match(order,/context-section plan/);assert.match(fs.readFileSync(s.order.path,'utf8'),/get_project_files.*classify_project_files/);
  }finally{f.wb.close()}
 });
 
