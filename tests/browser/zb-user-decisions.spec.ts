@@ -22,18 +22,17 @@ test('会话准备验收：首页和任务详情一次确认，宽窄明暗布�
   expect((await made.get('/tasks/'+made.tid)).task.status).toBe('accepted');expect(await noHorizontalScroll(page)).toBeTruthy();
 });
 
-test('已有修改要求的改派：确认前保留原报告，点确认后可复制新审查单',async({page})=>{
+test('已有修改要求可直接追加审查：无需二次确认卡，原报告保留并可复制新单',async({page})=>{
   const {root}=await api(page),token=JSON.parse(fs.readFileSync(path.join(root,'data/keys.json'),'utf8')).manager;
-  const made=await makeTask(page,{title:'测试：审查改派须用户确认',stage:'submitted'}),d=await made.get('/tasks/'+made.tid);
+  const made=await makeTask(page,{title:'测试：已有授权可直接追加审查',stage:'submitted'}),d=await made.get('/tasks/'+made.tid);
   const original=await made.post('/reviews',{run_id:made.rid,reviewer_id:'grok-build',performed:true,verdict:'changes_requested',evidence:'隔离页面测试的原始审查记录，要求修复功能。',findings:'修复后再交付',artifact_hashes:d.artifacts.map((a:any)=>a.sha256)});
   const task=(await made.get('/tasks/'+made.tid)).task;
   const r=await page.request.post('/api/mcp/manage_reviews',{headers:{authorization:'Bearer '+token},data:{request_id:randomUUID(),user_instruction:'隔离测试：请准备改派 Claude 复查。',change:{action:'assign',data:{run_id:made.rid,reviewer_id:'claude',expected_revision:task.revision,reason:'隔离用户希望 Claude 重新审查'}}}});expect(r.ok(),await r.text()).toBeTruthy();
-  await page.goto('/#/today');const card=page.getByRole('article',{name:'确认重新安排审查：'+made.title});await expect(card).toBeVisible();await expect(card.getByText('审查者：Claude',{exact:true})).toBeVisible();
-  let detail=await made.get('/tasks/'+made.tid);expect(detail.task.status).toBe('changes_requested');expect(detail.reviews.find((x:any)=>x.id===original.id).revoked_at).toBeFalsy();
-  await card.getByRole('button',{name:'确认重新安排审查'}).click();await expect(card).toHaveCount(0);
-  detail=await made.get('/tasks/'+made.tid);expect(detail.task.status).toBe('submitted');expect(detail.task.reviewer_id).toBe('claude');expect(detail.reviews.find((x:any)=>x.id===original.id).revoked_at).toBeTruthy();
-  await page.getByRole('article',{name:made.title,exact:true}).getByRole('button',{name:'交给审查者'}).click();await page.getByRole('dialog',{name:'任务详情'}).getByText('手动转发或导入审查',{exact:true}).click();await expect(page.getByRole('dialog',{name:'任务详情'}).getByRole('button',{name:/复制审查单/}).first()).toBeVisible();
-  await page.getByRole('dialog',{name:'任务详情'}).getByRole('button',{name:'复制审查单',exact:true}).click();
-  await expect.poll(()=>page.evaluate(()=>navigator.clipboard.readText())).toContain(detail.task.current_review_assignment_id);
-  expect(await page.evaluate(()=>navigator.clipboard.readText())).toContain('Claude');
+  await page.goto('/#/today');await expect(page.getByRole('article',{name:'确认重新安排审查：'+made.title})).toHaveCount(0);
+  const detail=await made.get('/tasks/'+made.tid);expect(detail.task.status).toBe('submitted');expect(detail.review_assignments.some((a:any)=>a.reviewer_id==='claude'&&a.status==='awaiting_dispatch')).toBeTruthy();expect(detail.reviews.find((x:any)=>x.id===original.id).revoked_at).toBeFalsy();
+  await page.goto('/#/today?task='+made.tid);const collaboration=page.getByRole('dialog',{name:'任务详情'}).getByRole('region',{name:'独立审查协作',exact:true});
+  await expect(collaboration.getByText('Claude · 已安排 · 待接单',{exact:true})).toBeVisible();
+  await collaboration.getByRole('button',{name:'复制共同审查交接',exact:true}).click();
+  await expect.poll(()=>page.evaluate(()=>navigator.clipboard.readText())).toContain(made.rid);
+  expect(await page.evaluate(()=>navigator.clipboard.readText())).toContain(made.tid);
 });

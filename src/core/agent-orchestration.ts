@@ -15,7 +15,8 @@ import type {Workbench} from './workbench.ts';
 import type {Row} from './schema.ts';
 import {ROOT} from './config.ts';
 import {assert,id,now,hash,safePath,atomicWrite,protectedName} from './security.ts';
-import {agentDispatchInput,agentJobInput,agentRouteSchema,agentControlInput,agentRecoveryInput,type AgentRoute} from './agent-route-schema.ts';
+import {agentDispatchInput,agentJobInput,agentRouteSchema,agentControlInput,agentRecoveryInput,reviewReplacementInput,type AgentRoute} from './agent-route-schema.ts';
+import {effectiveRouteView,staticRouteDiagnostics,classifyReviewInterruption} from './agent-route-diagnostics.ts';
 import {discoverAgentClients,readClientCapabilities,resolveAgentClient,buildAgentInvocation,createAgentOutputParser,type ParsedAgentOutput} from './agent-clients.ts';
 import {exportReviewOrder,reviewAssignmentContext,reviewFeedbackOrder,submitReviewResult,reviewResultInput,isRecoveredReviewJob,recordReviewActivity,syncReviewCollaborationState} from './review-workflow.ts';
 import {assertReviewerResources,sameAgent} from './reviewer-resources.ts';
@@ -45,6 +46,7 @@ export function validateAgentRoutes(wb:Workbench,task:Row){
 export function jobView(job:Row){
   return {job_id:job.id,task_id:job.task_id,run_id:job.run_id,review_id:job.review_id||null,role:job.role,phase:job.phase,client:job.route.client,
     status:job.status,reason:job.reason,native_stop_reason:job.native_stop_reason||null,activity_started_at:job.activity_started_at||null,session_id:job.session_id||null,session_mode:job.session_mode,session_reason:job.session_reason||null,previous_job_id:job.previous_job_id||null,requested_model:job.route.model,resolved_route:job.resolved_route||null,actual_model:job.actual_model||null,actual_model_display:job.actual_model_display||null,
+    effective_route:effectiveRouteView(job.route,job.actual_model,job.actual_model_display,job.route_preference_source||'unspecified'),route_diagnostics:job.route_diagnostics||null,interruption:job.interruption||null,verification_limits:job.verification_limits||[],replacement:job.review_replacement||null,
     revision:job.revision,created_at:job.created_at,started_at:job.started_at||null,ended_at:job.ended_at||null,exit_code:job.exit_code??null,
     artifacts:job.files||null,usage:job.usage||null,usage_source:job.usage?'client_reported':'unknown',recovery_required:!!job.process_may_be_running&&['failed','interrupted'].includes(job.status),cancel_requested:!!job.cancel_requested_at,process_end_evidence:job.process_end_evidence||null,process_may_be_running:job.process_may_be_running??null,process_pid:job.process_pid||null,process_recovery:job.process_recovery||null,recovery:job.recovery||null,superseded:job.superseded||null};
 }
@@ -150,6 +152,19 @@ export class AgentOrchestrator {
     this.update(jid,{status:'interrupted',cancel_requested_at:now(),reason,ended_at:now()});this.wb.audit(actor,'cancel_agent_job',jid,{reason,run_id:job.run_id});ctl?.abort();return jobView(this.wb.get('agent_jobs',jid));
   }
   cancelJob(taskId:string,input:unknown){const v=agentControlInput.parse(input),t=this.wb.get('tasks',taskId),j=this.wb.get('agent_jobs',v.job_id);assert(j.task_id===t.id,'禁止跨任务停止调用',403);assert(t.revision===v.expected_revision,'任务已变化，请刷新',409);if(j.cancel_requested_at)return jobView(j);assert(active.has(j.status),'此调用已结束',409);return this.stopOwned(j.id,v.reason,'user')}
+  /** Caller authenticates scope and explicit choice. Never stops an unowned process by PID. */
+  prepareReviewReplacement(taskId:string,input:unknown,actor='user'){
+    const v=reviewReplacementInput.parse(input),t=this.wb.get('tasks',taskId),a=this.wb.get('review_assignments',v.review_id);
+    assert(t.revision===v.expected_revision,'任务已变化，请刷新后重新选择替换方式',409);
+    assert(a.run_id===t.current_run_id&&this.wb.get('runs',a.run_id).task_id===taskId&&!['cancelled','superseded','revoked'].includes(a.status),'目标审查已变化，请刷新后重新选择',409);
+    const jobs=this.wb.all('agent_jobs').filter(j=>j.task_id===taskId&&j.run_id===a.run_id&&j.review_id===a.id&&j.role==='review'&&(active.has(j.status)||j.process_may_be_running));
+    if(v.mode==='stop_then_replace')for(const j of jobs)assert(this.launching.has(j.id)||j.status==='queued'&&!j.process_may_be_running,'原调用已非本进程持有；请先核实结束，不能按旧PID停止或启动替换',409);
+    for(const j of jobs){this.update(j.id,{review_replacement:{mode:v.mode,review_id:a.id,requested_at:now(),actor,reason:v.reason}});if(v.mode==='stop_then_replace'&&!j.cancel_requested_at)this.stopOwned(j.id,v.reason,actor);}
+    this.wb.audit(actor,'prepare_review_replacement',a.id,{mode:v.mode,job_ids:jobs.map(j=>j.id),reason:v.reason});
+    const pending=v.mode==='stop_then_replace'&&jobs.some(j=>{const current=this.wb.get('agent_jobs',j.id);return current.process_may_be_running||this.launching.has(j.id);});
+    return {review_id:a.id,mode:v.mode,status:pending?'pending':'ready',expected_revision:t.revision,job_ids:jobs.map(j=>j.id)};
+  }
+  private assertReplacementStopped(taskId:string){for(const j of this.wb.all('agent_jobs').filter(j=>j.task_id===taskId&&j.review_replacement?.mode==='stop_then_replace'))assert(!j.process_may_be_running&&!this.launching.has(j.id),'替换前原调用尚未确认结束，请等待原进程终态',409);}
   confirmProcessEnded(taskId:string,input:unknown){
     const v=agentRecoveryInput.parse(input),t=this.wb.get('tasks',taskId),j=this.wb.get('agent_jobs',v.job_id);
     assert(j.task_id===t.id,'禁止跨任务恢复调用',403);assert(t.revision===v.expected_revision,'任务已变化，请刷新',409);assert(['failed','interrupted'].includes(j.status)&&j.process_may_be_running&&!this.launching.has(j.id),'此调用不属于待核实的遗留进程',409);
@@ -160,6 +175,7 @@ export class AgentOrchestrator {
   private create(input:ReturnType<typeof agentDispatchInput.parse>,role:'execution'|'review',t:Row,r:Row,phase:string,reviewId?:string,mainAuthorization?:Row,recovery?:{previous:Row;newSession:boolean}){
     assertProjectDispatch(this.wb,t.project_id);
     if(role==='review')t=this.reviewTask(t,reviewId!);
+    if(role==='review')this.assertReplacementStopped(t.id);
     const route=agentRouteSchema.parse(t[role==='review'?'review_route':'execution_route']);validateAgentRoutes(this.wb,t);
     const existing=this.wb.all('agent_jobs').find(j=>j.task_id===t.id&&j.role===role&&(role!=='review'||j.review_id===reviewId)&&active.has(j.status));if(existing)return {job:existing,created:false};
     this.assertNoOrphan(t.id);
@@ -167,6 +183,9 @@ export class AgentOrchestrator {
     const previous=recovery?.previous||this.wb.all('agent_jobs').filter(j=>j.run_id===r.id&&j.role===role&&j.phase===phase&&(role!=='review'||j.review_id===reviewId)&&['failed','interrupted'].includes(j.status)).sort((a,b)=>b.created_at.localeCompare(a.created_at))[0];
     const sessionReason=prior?'继续最近一次可用会话':input.fresh_session?'按本次选择新开会话':previous?'上次调用已结束，没有可用的续接会话，自动新开继续':'首次调用，新开会话';
     const j:Row={id:id('AJ'),request_id:input.request_id,request_digest:hash(JSON.stringify({...input,role})),task_id:t.id,project_id:t.project_id,run_id:r.id,policy_digest:r.execution_contract?.digest||null,review_id:reviewId||null,role,phase,instructions:input.instructions||null,...(mainAuthorization?{main_launch_authorization:mainAuthorization}:{}),...(phase==='closeout'?{fresh_session:!prior}:{}),route,status:'queued',process_may_be_running:false,process_end_evidence:'not_started',reason:'等待工作台调用本机客户端',revision:1,created_at:now(),session_id:null,resume_session_id:prior?.session_id||null,session_mode:prior?'resume':'new',session_reason:sessionReason,previous_job_id:prior?.id||previous?.id||null};
+    const member=reviewId?this.wb.get('review_assignments',reviewId):null;
+    j.route_preference_source=member?.model_decided_by||(member?.created_by==='user'?'user':t.model_selection?.[role==='review'?'review':'main']?.decided_by)||'unspecified';
+    j.verification_limits=[...new Set([...(prior?.verification_limits||[]),...(previous?.verification_limits||[])])];
     this.wb.transaction(()=>{this.wb.put('agent_jobs',j,{run_id:r.id});const stored=this.wb.get('tasks',t.id);stored.automation=jobView(j);if(role==='review')stored.review_delivery='agent';this.wb.put('tasks',stored,{project_id:t.project_id});this.wb.audit('agent_dispatch','queue_client',j.id,{run_id:r.id,role,client:route.client,model:route.model,...(mainAuthorization?{main_launch_authorization:mainAuthorization}:{})})});
     setImmediate(()=>void this.run(j.id));return {job:j,created:true};
   }
@@ -190,6 +209,7 @@ export class AgentOrchestrator {
     return {...t,reviewer_id:a.reviewer_id,review_route:route};
   }
   dispatchReview(input:unknown){const v=agentDispatchInput.parse(input),old=this.duplicate(v,'review');if(old)return old;let {r,t}=this.assertCurrent(v.run_id,v.expected_revision);
+    this.assertReplacementStopped(t.id);
     assert(['submitted','in_review','changes_requested','awaiting_closeout','closing','closeout_blocked','awaiting_confirmation'].includes(t.status),'当前执行尚未交付或不需要审查',409);
     let a=v.review_id?this.wb.get('review_assignments',v.review_id):this.wb.all('review_assignments').find(a=>a.run_id===r.id&&a.reviewer_id===t.reviewer_id&&['awaiting_dispatch','running'].includes(a.status));
     if(!a)assert(t.review_route,'未指定自动审查路由；可以先保存成员安排，再明确客户端与模型',409);
@@ -281,6 +301,7 @@ export class AgentOrchestrator {
       const prior=previous?.review_id?this.wb.maybe('review_assignments',previous.review_id):null;
       const known=j.session_mode==='resume'&&(prior?.context_ack?.hash||prior?.context_cache?.filter((x:Row)=>x.session_id===j.resume_session_id).at(-1)?.hash);
       const ctx=reviewContext(this.wb,{review_id:j.review_id,mode:known?'delta':'brief',...(known?{known_context_hash:known,session_id:j.resume_session_id}:{})},base,j.id);
+      Object.assign(ctx,{verification_limits:j.verification_limits||[],previous_segment:previous?{job_id:previous.id,interruption:previous.interruption||null,stop_reason:previous.native_stop_reason||null}:null});
       // One copy of the context and result shape; transport binds task/version fields.
       return shared+`Task ${t.id} / Run ${r.id} / Review ${j.review_id}\n按需回传入口：${env}${command} started ${base.assignment.reviewer_id}\n资料已附下方；实际客户端活动由工作台记录，不必为了接单运行命令。优先直接使用客户端已允许的只读文件工具读取下方引用；不必为了获取资料执行 context-section 或其他终端命令，也不必搜索工作台CLI入口。客户端未提供工作台MCP时仍可按本轮授权范围使用已有只读文件能力；只读被拒绝则保留限制，不能绕过。若客户端不允许写入或执行验证，记录未验证项并直接返回报告，不要求用户转交。最终文件指纹由工作台记录；不要仅为收尾再次调用终端校验指纹。此前终端被取消时，依据已读材料直接提交报告，把未复核的指纹或测试列为limitations；材料不足则如实报告无法确认，不绕过客户端拒绝。从本轮方案、差异和指定证据开始，只检查本轮变化与直接影响；发现关联风险再补读，不默认遍历项目或跑全量测试。列出具体问题和未验证项；不替作者实施修改。\n最终直接用文字返回 JSON（可用 Markdown 围栏，无需写报告文件），字段 verdict、findings、limitations、evidence、report_markdown；完整报告保存在 report_markdown。可用 submit <JSON文件> 直接回传，或由工作台接收原生最终结果。\n${JSON.stringify(ctx)}\n`;
 
@@ -296,7 +317,7 @@ export class AgentOrchestrator {
     this.wb.transaction(()=>{
     const j=this.wb.get('agent_jobs',jid);const sid=v.sessionId,model=v.model;
     const patch:Row={};
-    if(j.role==='review'&&!j.activity_started_at&&!v.terminal&&v.success!==false&&(v.textDelta!==undefined||['system/init','session','grok/tool_call','acp/tool_call'].includes(v.eventType||''))){recordReviewActivity(this.wb,j.review_id,j.id);patch.activity_started_at=now();patch.reason='独立审查正在进行（已收到客户端实际活动）';}
+    if(j.role==='review'&&active.has(j.status)&&!j.cancel_requested_at&&!j.activity_started_at&&!v.terminal&&v.success!==false&&(v.textDelta!==undefined||['system/init','session','grok/tool_call','acp/tool_call'].includes(v.eventType||''))){recordReviewActivity(this.wb,j.review_id,j.id);patch.activity_started_at=now();patch.reason='独立审查正在进行（已收到客户端实际活动）';}
     if(v.messageId)patch.usage_message_id=v.messageId;
     if(v.usage){const ordinal=(j.usage_ordinal||0)+1,task=this.wb.get('tasks',j.task_id);const input=usageInputFromOutput({...j,id:j.id,actual_model:v.modelFormat==='identifier'?v.model:j.actual_model,client_kind:j.route.client,requested_model:j.route.model,project_id:j.project_id||task.project_id,agent_id:j.role==='review'?this.wb.get('review_assignments',j.review_id).reviewer_id:task.agent_id,usage_message_id:v.messageId||j.usage_message_id},v,ordinal,now());
       if(input){const normalized=createUsageEvent(input),old=input.identity_quality==='source_event_id'?this.wb.maybe('usage_events',normalized.id):undefined;
@@ -311,6 +332,10 @@ export class AgentOrchestrator {
     if(typeof model==='string'&&model.length<=100&&v.modelFormat==='display_name')patch.actual_model_display=model;
     else if(typeof model==='string'&&model.length<=100){patch.actual_model=model;patch.observed_models=[...new Set([...(j.observed_models||[]),...(j.actual_model?[j.actual_model]:[]),model])];}
     if(v.usage){if(v.usage.scope==='step'){const previous=j.usage?.scope==='invocation_steps'?j.usage:{scope:'invocation_steps',steps:0};const usage:Row={...previous,steps:previous.steps+1};for(const key of ['inputTokens','outputTokens','cacheReadTokens','cacheWriteTokens','totalTokens'] as const)if(v.usage[key]!==undefined)usage[key]=(previous[key]||0)+v.usage[key]!;patch.usage=usage;}else patch.usage=v.usage;}
+    if(v.toolInterruption||v.stopReason==='cancelled'){
+      patch.interruption=v.toolInterruption?classifyReviewInterruption(undefined,v.toolInterruption):j.interruption||classifyReviewInterruption(v.stopReason);
+      patch.verification_limits=[...new Set([...(j.verification_limits||[]),...patch.interruption.verification_limits])];
+    }
     if(v.success===false)patch.output_failed=true;if(v.stopReason)patch.native_stop_reason=v.stopReason;
     if(Object.keys(patch).length)this.update(jid,patch);
     });
@@ -333,6 +358,7 @@ export class AgentOrchestrator {
       const latest=this.assertCurrent(r.id);assertMainLaunch(this.wb,initial,latest.t,latest.r);if(initial.role==='review'){assertReviewerResources(this.wb,this.wb.get('review_assignments',initial.review_id).reviewer_id);reviewAssignmentContext(this.wb,initial.review_id)}else this.wb.eligible(r.agent_id);
       const dir=this.artifactDirectory(initial,latest.t,latest.r),promptFile=path.join(dir,'TASK.txt');atomicWrite(promptFile,this.prompt(initial,latest.t,latest.r,dir));
       const invocation=await this.clients.build(client,{role:initial.role,cwd:r.cwd,artifactDir:dir,model:initial.route.model,provider:initial.route.provider,sessionId:initial.resume_session_id||undefined,promptFile});
+      this.update(jid,{route_diagnostics:invocation.routeDiagnostics||staticRouteDiagnostics(client,initial.route)});
       if(invocation.resolvedRoute)this.update(jid,{resolved_route:invocation.resolvedRoute});
       if(this.closed||ctl.signal.aborted||this.deferForProjectHold(jid))return;
       const current=this.assertCurrent(r.id);assertMainLaunch(this.wb,initial,current.t,current.r);validateAgentRoutes(this.wb,initial.role==='review'?this.reviewTask(current.t,initial.review_id):current.t);

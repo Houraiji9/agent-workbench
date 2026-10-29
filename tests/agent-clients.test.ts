@@ -22,18 +22,18 @@ async function fixture(t: {after: (fn: () => Promise<void>) => void}) {
   await fs.writeFile(promptFile, '审查真实任务。\n保留中文与路径 C:\\a b\\代码。\n$(不会被 shell 执行) & echo secret');
   return {dir, promptFile};
 }
-async function candidate(dir: string, name: string) {const p = path.join(dir, name); await fs.writeFile(p, 'synthetic executable'); return p;}
+async function candidate(dir: string, name: string) {const p = path.join(dir, name); await fs.mkdir(path.dirname(p),{recursive:true}); await fs.writeFile(p, 'synthetic executable'); return p;}
 function hooks(file: string, kind: keyof typeof helps, counter = {count: 0}, machineId = 'machine-a'): NonNullable<DiscoveryOptions['testHooks']> {
   return {candidates: [{path: file, source: 'path'}], machineId, now: 1000, probe: async (_exe, args) => {counter.count++; return args.at(-1) === '--version' ? kind === 'cursor' ? '2026.10.22-27dcf5f' : '1.2.3' : helps[kind];}};
 }
 async function record(dir: string, kind: keyof typeof helps) {
-  const file = await candidate(dir, kind + '.exe');
+  const file = await candidate(dir, (kind==='cursor'?'cursor-agent':kind) + '.exe');
   return (await discoverAgentClients({dataDir: path.join(dir, 'cache-' + kind), testHooks: hooks(file, kind)})).find(r => r.kind === kind)!;
 }
 const options = (dir: string, promptFile: string) => ({role: 'review' as const, cwd: dir, artifactDir: path.join(dir, '中文 产物 & 目录'), model: 'model-exact', promptFile, sessionId: 'session-123'});
 
 test('agent.exe 的真实 Grok 身份不被误认为 Cursor，公开状态无本机路径', async t => {
-  const {dir} = await fixture(t); const file = await candidate(dir, 'agent.exe');
+  const {dir} = await fixture(t); const file = await candidate(dir, 'Grok Build/agent.exe');
   const records = await discoverAgentClients({dataDir: path.join(dir, 'data'), testHooks: hooks(file, 'grok')});
   assert.equal(records.find(r => r.kind === 'grok')?.status, 'verified');
   assert.equal(records.find(r => r.kind === 'cursor')?.status, 'missing');
@@ -66,15 +66,18 @@ test('过期、损坏及旧结构缓存不会接受历史客户端身份', async
   await discoverAgentClients({dataDir, testHooks: injected}); assert.equal(counter.count, 8);
 });
 
-test('伪装的产品名称、无版本与不可识别脚本都不能被标为已验证', async t => {
-  const {dir} = await fixture(t); const file = await candidate(dir, 'claude.exe');
-  for (const output of ['unknown tool', helps.claude]) {
-    const records = await discoverAgentClients({dataDir: path.join(dir, 'data'), force: true, testHooks: {...hooks(file, 'claude'), probe: async () => output}});
-    assert.equal(records.find(r => r.kind === 'claude')?.status, 'unverified');
+test('非Claude候选伪装、无版本及危险脚本不通过；Claude始终跳过且零探测', async t => {
+  const {dir} = await fixture(t); const file = await candidate(dir, 'grok.exe');
+  for (const output of ['unknown tool', helps.grok]) {
+    const records = await discoverAgentClients({dataDir:path.join(dir,'data'),force:true,testHooks:{...hooks(file,'grok'),probe:async()=>output}});
+    assert.equal(records.find(r=>r.kind==='grok')?.status,'unverified');
   }
-  const cmd = await candidate(dir, 'claude.cmd');
-  await fs.writeFile(cmd, '@echo off\necho pretend & dangerous-command %*');
-  await assert.rejects(resolveClientLauncher(cmd), /不支持/);
+  const cmd=await candidate(dir,'grok.cmd');await fs.writeFile(cmd,'@echo off\necho pretend & dangerous-command %*');
+  await assert.rejects(resolveClientLauncher(cmd),/不支持/);
+  const excluded=await candidate(dir,'claude.exe');let probes=0;
+  const records=await discoverAgentClients({dataDir:path.join(dir,'excluded-data'),testHooks:{...hooks(excluded,'claude'),probe:async()=>{probes++;return helps.claude;}}});
+  assert.equal(records.find(r=>r.kind==='claude')?.status,'skipped');assert.equal(probes,0);
+  await assert.rejects(resolveClientLauncher(excluded),/按用户要求跳过/);
 });
 
 test('DSH 官方桌面 cmd 只解析入口，直接启动 Electron Node，不使用 shell', async t => {
@@ -122,12 +125,12 @@ test('Grok 传真实 prompt 文件、模型、cwd 和 resume，空格中文符�
   assert(!invoke.args.includes('--session-id')); assert.equal(invoke.stdin, undefined);
 });
 
-test('Claude 使用 stdin 与订阅兼容模式，不注入 --bare 或权限绕过', async t => {
-  const {dir, promptFile} = await fixture(t); const client = await record(dir, 'claude');
-  const invoke = await buildAgentInvocation(client, options(dir, promptFile));
-  assert(invoke.args.includes('--print')); assert(invoke.args.includes('--verbose'));
-  assert.equal(invoke.args[invoke.args.indexOf('--output-format') + 1], 'stream-json');
-  assert.equal(invoke.stdin, await fs.readFile(promptFile, 'utf8')); assert(!invoke.args.includes('--bare'));
+test('Claude排除记录不能形成调用且公开能力始终不可用', async t => {
+  const {dir,promptFile}=await fixture(t);const client=await record(dir,'claude');
+  assert.equal(client.status,'skipped');
+  await assert.rejects(buildAgentInvocation(client,options(dir,promptFile)),/未验证|跳过|不可用/);
+  const capability=publicClientCapabilities([client])[0];
+  assert.equal(capability.available,false);assert.equal(capability.reviewSupported,false);assert.equal(capability.executionSupported,false);
 });
 
 test('Cursor 只读审查引用任务文件，执行不得静默打开 force', async t => {
@@ -158,7 +161,7 @@ test('缺失、未知参数支持、相对路径与空提示在启动前明确�
 });
 
 test('手动指定位置必须验证对应产品，身份冲突不持久化', async t => {
-  const {dir} = await fixture(t); const file = await candidate(dir, 'agent.exe'); const dataDir = path.join(dir, 'data');
+  const {dir} = await fixture(t); const file = await candidate(dir, 'Grok Build/agent.exe'); const dataDir = path.join(dir, 'data');
   await assert.rejects(setClientOverride({dataDir, kind: 'cursor', executable: file, testHooks: hooks(file, 'grok')}), /实际属于 Grok Build/);
   await assert.rejects(fs.stat(path.join(dataDir, 'local-agent-client-overrides.json')), /ENOENT/);
   const records = await setClientOverride({dataDir, kind: 'grok', executable: file, testHooks: hooks(file, 'grok')});
@@ -170,7 +173,7 @@ test('手动指定位置必须验证对应产品，身份冲突不持久化', as
 });
 
 test('产品与版本正确仍需有安全 headless 参数才声明角色支持', async t => {
-  const {dir} = await fixture(t); const client = await record(dir, 'claude');
+  const {dir} = await fixture(t); const client = await record(dir, 'grok');
   const [capability] = publicClientCapabilities([{...client, supportedFlags: ['--model']}]);
   assert.equal(capability.available, true); assert.equal(capability.executionSupported, false); assert.equal(capability.reviewSupported, false);
   assert.match(capability.reason, /缺少/);
@@ -191,7 +194,7 @@ test('缓存不能注入额外启动参数或权限环境变量', async t => {
 test('npm shim 解析固定脚本入口，拒绝目录穿越且不把参数送到 cmd', async t => {
   const {dir} = await fixture(t); const moduleDir = path.join(dir, 'node_modules', 'client');
   await fs.mkdir(moduleDir, {recursive: true}); const entry = await candidate(moduleDir, 'cli.js');
-  const shim = path.join(dir, 'claude.cmd');
+  const shim = path.join(dir, 'grok.cmd');
   await fs.writeFile(shim, '@echo off\n"%_prog%" "%dp0%\\node_modules\\client\\cli.js" %*');
   const launch = await resolveClientLauncher(shim);
   assert.equal(launch.executable, process.execPath); assert.deepEqual(launch.prefixArgs, [entry]);
@@ -199,7 +202,7 @@ test('npm shim 解析固定脚本入口，拒绝目录穿越且不把参数送�
   await assert.rejects(resolveClientLauncher(shim), /路径无效/);
 
   const agentModule = path.join(dir, 'node_modules', 'grok-agent'); await fs.mkdir(agentModule, {recursive: true});
-  const agentEntry = await candidate(agentModule, 'cli.js'), agentShim = path.join(dir, 'agent.cmd');
+  const agentEntry = await candidate(agentModule, 'cli.js'), agentShim = path.join(dir, 'grok-agent.cmd');
   await fs.writeFile(agentShim, '@echo off\n"%_prog%" "%dp0%\\node_modules\\grok-agent\\cli.js" %*');
   const agentLaunch = await resolveClientLauncher(agentShim);
   assert.equal(agentLaunch.executable, process.execPath); assert.deepEqual(agentLaunch.prefixArgs, [agentEntry]);
@@ -367,7 +370,7 @@ test('gatherCandidates discovers User and Machine PATH entries when process PATH
     dataDir: path.join(dir, 'data'), force: true,
     testHooks: {processPath, persistedPathValues: [path.dirname(cursor.wrapper), machinePath], machineId: 'persisted-path-machine', now: 1000,
       probe: async (exe, args) => {
-        if (exe === claude) return args.at(-1) === '--version' ? '2.1.310' : helps.claude;
+        assert.notEqual(exe,claude,'Claude must never be probed');
         assert.equal(exe, cursor.node);
         return args.at(-1) === '--version' ? '2026.10.22-27dcf5f' : helps.cursor;
       }},
@@ -375,8 +378,8 @@ test('gatherCandidates discovers User and Machine PATH entries when process PATH
   assert.notEqual(processPath, path.dirname(cursor.wrapper));
   assert.equal(records.find(r => r.kind === 'cursor')?.status, 'verified');
   assert.equal(records.find(r => r.kind === 'cursor')?.candidatePath, cursor.wrapper);
-  assert.equal(records.find(r => r.kind === 'claude')?.status, 'verified');
-  assert.equal(records.find(r => r.kind === 'claude')?.candidatePath, claude);
+  assert.equal(records.find(r => r.kind === 'claude')?.status, 'skipped');
+  assert.equal(records.find(r => r.kind === 'claude')?.candidatePath, undefined);
 });
 
 test('Cursor entry ancestors and same-root PowerShell symlinks are rejected', async t => {
@@ -397,5 +400,10 @@ test('Cursor entry ancestors and same-root PowerShell symlinks are rejected', as
 });
 
 test('all clients may use their configured default without a model argument or model override',async t=>{
- const {dir,promptFile}=await fixture(t);for(const kind of ['claude','cursor','grok','dsh'] as const){const client=await record(dir,kind);const call=await buildAgentInvocation(client,{...options(dir,promptFile),role:'review',model:undefined});assert(!call.args.includes('--model'));assert(!call.args.includes('undefined'));if(kind==='dsh'){const overlay=JSON.parse(await fs.readFile(call.args[call.args.indexOf('--patch')+1],'utf8'));assert(!overlay.some((p:any)=>p.id==='agent-default-model'));assert(!overlay.some((p:any)=>p.id==='deepseek-account'));}}
+ const {dir,promptFile}=await fixture(t);for(const kind of ['cursor','grok','dsh'] as const){const client=await record(dir,kind);const call=await buildAgentInvocation(client,{...options(dir,promptFile),role:'review',model:undefined});assert(!call.args.includes('--model'));assert(!call.args.includes('undefined'));if(kind==='dsh'){const overlay=JSON.parse(await fs.readFile(call.args[call.args.indexOf('--patch')+1],'utf8'));assert(!overlay.some((p:any)=>p.id==='agent-default-model'));assert(!overlay.some((p:any)=>p.id==='deepseek-account'));}}
 });
+
+test('unknown generic agent refuses before identity probe or override persistence',async t=>{const {dir}=await fixture(t);const file=await candidate(dir,'unknown/agent.exe'),counter={count:0};const records=await discoverAgentClients({dataDir:path.join(dir,'data'),testHooks:hooks(file,'grok',counter)});assert.equal(counter.count,0);assert.equal(records.find(r=>r.kind==='grok')?.status,'missing');await assert.rejects(setClientOverride({dataDir:path.join(dir,'data'),kind:'grok',executable:file,testHooks:hooks(file,'grok',counter)}),/未知客户端/);assert.equal(counter.count,0);});
+
+async function nativeCursorLayout(dir:string){const layout=await cursorLayout(dir);const current=await fs.readFile(layout.wrapper,'utf8');await fs.writeFile(layout.wrapper,current.split(/\r?\n/).filter(line=>!line.startsWith('if exist ')&&!line.startsWith('if errorlevel ')&&!line.startsWith('rem cursor-agent-promote-staged')).filter((line,index)=>line!=='@echo off'||index===0).join('\r\n'));await fs.writeFile(layout.ps1,cursorPs1Template.slice(cursorPs1Template.indexOf('if (-not $env:CURSOR_INVOKED_AS)')));return layout;}
+test('current official native Cursor template works for direct launcher, persisted PATH and manual override',async t=>{const {dir}=await fixture(t),layout=await nativeCursorLayout(dir);const launch=await resolveClientLauncher(layout.wrapper);assert.equal(launch.executable,layout.node);const probe:NonNullable<DiscoveryOptions['testHooks']>['probe']=async(exe,args)=>{assert.equal(exe,layout.node);return args.at(-1)==='--version'?'2026.10.22-27dcf5f':helps.cursor;};const records=await discoverAgentClients({dataDir:path.join(dir,'data'),testHooks:{processPath:path.join(dir,'empty'),persistedPathValues:[layout.rootDir],probe}});assert.equal(records.find(r=>r.kind==='cursor')?.status,'verified');const manual=await setClientOverride({dataDir:path.join(dir,'manual'),kind:'cursor',executable:layout.wrapper,testHooks:{candidates:[],probe}});assert.equal(manual.find(r=>r.kind==='cursor')?.status,'verified');await fs.appendFile(layout.ps1,'\nWrite-Output injected');await assert.rejects(resolveClientLauncher(layout.wrapper),/不受支持/);});

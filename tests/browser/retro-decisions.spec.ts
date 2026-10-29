@@ -1,0 +1,91 @@
+import {test,expect} from '@playwright/test';
+import {makeTask,drawer,noHorizontalScroll} from './support.ts';
+const evidence='G:/项目/工作台/工程/docs/handoff/planning-Qcc765a6c/ui';
+
+test('常驻审查安排显式提交原调用模式，pending和needs_choice均保留输入与编辑',async({page})=>{
+  const made=await makeTask(page,{title:'合成常驻安排原调用模式',stage:'running'}),posted:any[]=[];
+  await page.route('**/api/tasks/'+made.tid+'/review-arrangement',route=>{
+    posted.push(route.request().postDataJSON());return route.fulfill({json:posted.length===1?{status:'pending',next:'合成等待原调用退出'}:posted.length===2?{status:'needs_choice',next:'合成模式尚未应用'}:{status:'updated'}});
+  });
+  await page.goto('/#/today?task='+made.tid);
+  const panel=drawer(page).getByRole('region',{name:'审查安排',exact:true});
+  await panel.getByRole('button',{name:'修改审查安排',exact:true}).click();
+  const editor=panel.getByRole('region',{name:'修改审查安排',exact:true});
+  await expect(editor.getByRole('combobox',{name:'原调用处理',exact:true})).toHaveValue('stop_then_replace');
+  await editor.getByLabel('审查模型（可选）',{exact:true}).fill('synthetic-arrangement-fast');
+  await editor.getByRole('button',{name:'保存审查安排',exact:true}).click();
+  await expect(editor.getByRole('alert')).toContainText('合成等待原调用退出');
+  await expect(editor.getByLabel('审查模型（可选）',{exact:true})).toHaveValue('synthetic-arrangement-fast');
+  await expect(page.locator('.toast.ok')).toHaveCount(0);expect(posted[0].replacement_mode).toBe('stop_then_replace');
+  await editor.getByRole('combobox',{name:'原调用处理',exact:true}).selectOption('retain_parallel');
+  await editor.getByRole('button',{name:'保存审查安排',exact:true}).click();
+  await expect(editor.getByRole('alert')).toContainText('合成模式尚未应用');
+  await expect(page.locator('.toast.ok')).toHaveCount(0);expect(posted[1].replacement_mode).toBe('retain_parallel');
+  await editor.screenshot({path:`${evidence}/task-arrangement-pending.png`,animations:'disabled'});
+  await editor.getByRole('button',{name:'保存审查安排',exact:true}).click();
+  await expect(editor).toHaveCount(0);expect(posted[2].replacement_mode).toBe('retain_parallel');
+  await expect(page.locator('.toast.ok')).toContainText('审查安排已保存');
+});
+
+test('审查旧调用两种模式准确提交，pending保留编辑且不显示保存成功',async({page})=>{
+  const made=await makeTask(page,{title:'合成旧调用模式与pending',stage:'submitted'});
+  await made.post('/review-orders',{run_id:made.rid,expected_revision:(await made.get('/tasks/'+made.tid)).task.revision,reviewer_id:'grok-build',requested_model:'synthetic-original',reason:'合成审查安排，无客户端调用'});
+  const posted:any[]=[];
+  await page.route('**/api/tasks/'+made.tid+'/reviews/manage',route=>{
+    posted.push(route.request().postDataJSON());
+    return route.fulfill({json:posted.length===1?{status:'pending',next:'合成旧调用仍在结束，安排尚未修改'}:{status:'updated'}});
+  });
+  await page.goto('/#/today?task='+made.tid);
+  const panel=drawer(page).getByRole('region',{name:'独立审查协作',exact:true});
+  await panel.locator('article').getByRole('button',{name:'调整此审查者',exact:true}).click();
+  await expect(panel.getByRole('combobox',{name:'原调用处理',exact:true})).toHaveValue('stop_then_replace');
+  await panel.getByRole('combobox',{name:'审查模型',exact:true}).fill('synthetic-fast');
+  await panel.getByRole('textbox',{name:'调整原因或决定依据',exact:true}).fill('保留本轮输入供重试');
+  await panel.getByRole('button',{name:'保存安排',exact:true}).click();
+  await expect(panel.getByRole('alert')).toContainText('合成旧调用仍在结束');
+  await expect(panel.getByRole('combobox',{name:'审查模型',exact:true})).toHaveValue('synthetic-fast');
+  await expect(panel.getByRole('textbox',{name:'调整原因或决定依据',exact:true})).toHaveValue('保留本轮输入供重试');
+  await expect(page.locator('.toast.ok')).toHaveCount(0);
+  expect(posted[0]).toMatchObject({action:'replace',replacement_mode:'stop_then_replace',requested_model:'synthetic-fast'});
+  await panel.screenshot({path:`${evidence}/review-replacement-pending.png`,animations:'disabled'});
+  await panel.getByRole('combobox',{name:'原调用处理',exact:true}).selectOption('retain_parallel');
+  await panel.getByRole('button',{name:'保存安排',exact:true}).click();
+  await expect(panel.getByRole('combobox',{name:'审查模型',exact:true})).toHaveCount(0);
+  expect(posted[1]).toMatchObject({action:'replace',replacement_mode:'retain_parallel',requested_model:'synthetic-fast'});
+  await expect(page.locator('.toast.ok')).toContainText('审查安排已更新');
+  expect((await made.get('/tasks/'+made.tid)).review_summary.members[0].requested_model).toBe('synthetic-original');
+});
+
+test('过期验收默认可刷新，仅显式同组阶段合为一张卡并逐项确认',async({page})=>{
+  const first=await makeTask(page,{title:'合成同组源码阶段',stage:'reviewed'});
+  const second=await makeTask(page,{title:'合成同组发布阶段',stage:'reviewed'});
+  const unrelated=await makeTask(page,{title:'合成同组发布阶段',stage:'reviewed'});
+  const expiredTask=await makeTask(page,{title:'合成过期卡必须可见',stage:'reviewed'});
+  const groupId='synthetic-explicit-group';
+  const makeCard=(task:typeof first,id:string,status='pending')=>({id,task_id:task.tid,project_id:task.project.id,action:'accept',title:'确认验收通过',task_title:task.title,status,details:['合成待确认资料，未经真实用户验收'],checks:['合成检查事项'],expires_at:status==='expired'?'2000-01-01T00:00:00Z':'2099-01-01T00:00:00Z'});
+  const cards=[makeCard(first,'UD-first'),makeCard(second,'UD-second'),makeCard(unrelated,'UD-unrelated'),makeCard(expiredTask,'UD-expired','expired')];
+  const confirmed=new Set<string>();let refreshes=0;const confirmedPayloads:any[]=[];
+  const inject=(data:any)=>({...data,user_decisions:cards.filter(card=>!confirmed.has(card.id)),tasks:data.tasks.map((task:any)=>({...task,...([first.tid,second.tid].includes(task.id)?{delivery_group_id:groupId}:{})}))});
+  for(const endpoint of ['bootstrap','state'])await page.route('**/api/'+endpoint,async route=>{const response=await route.fetch();return route.fulfill({response,json:inject(await response.json())});});
+  await page.route('**/api/user-decisions/UD-expired/refresh',route=>{refreshes++;Object.assign(cards[3],{status:'pending',expires_at:'2099-01-01T00:00:00Z'});return route.fulfill({json:{status:'pending',decision_id:'UD-expired'}});});
+  await page.route('**/api/user-decision-groups/confirm',route=>{const payload=route.request().postDataJSON();confirmedPayloads.push(payload);payload.decision_ids.forEach((id:string)=>confirmed.add(id));return route.fulfill({json:{status:'confirmed'}});});
+  await page.goto('/#/today');
+  const group=page.getByRole('article',{name:'关联交付验收',exact:true});
+  await expect(group).toHaveCount(1);await expect(group.getByRole('checkbox')).toHaveCount(2);
+  await expect(page.getByRole('article',{name:'确认验收通过：'+unrelated.title,exact:true})).toHaveCount(1);
+  const expired=page.getByRole('article',{name:'确认验收通过：'+expiredTask.title,exact:true});
+  await expect(expired.getByRole('button',{name:'刷新确认事项',exact:true})).toBeVisible();
+  await expect(expired.getByRole('button',{name:'确认验收通过',exact:true})).toHaveCount(0);
+  await expired.screenshot({path:`${evidence}/expired-decision-refresh.png`,animations:'disabled'});
+  await expired.getByRole('button',{name:'刷新确认事项',exact:true}).click();
+  await expect(expired.getByRole('button',{name:'确认验收通过',exact:true})).toBeVisible();expect(refreshes).toBe(1);
+  await group.getByRole('checkbox',{name:first.title,exact:true}).check();
+  await expect(group.getByRole('checkbox',{name:second.title,exact:true})).not.toBeChecked();
+  await expect(group.getByRole('button',{name:'验收选中的 1 个阶段',exact:true})).toBeEnabled();
+  await group.screenshot({path:`${evidence}/decision-group-selected.png`,animations:'disabled'});
+  await page.setViewportSize({width:390,height:844});expect(await noHorizontalScroll(page)).toBe(true);
+  await page.screenshot({path:`${evidence}/decision-group-narrow.png`,fullPage:true,animations:'disabled'});
+  await group.getByRole('button',{name:'验收选中的 1 个阶段',exact:true}).click();
+  await expect(group).toHaveCount(0);expect(confirmedPayloads).toEqual([{decision_ids:['UD-first']}]);
+  await expect(page.getByRole('article',{name:'确认验收通过：'+second.title,exact:true})).toHaveCount(2);
+});

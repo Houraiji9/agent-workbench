@@ -1,3 +1,4 @@
+import {assertCursorPowerShellWrapper} from './client-launcher.ts';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -5,7 +6,7 @@ import {createHash, randomUUID} from 'node:crypto';
 import {execFile} from 'node:child_process';
 
 export type ClientKind = 'dsh' | 'claude' | 'cursor' | 'grok';
-export type ClientStatus = 'verified' | 'missing' | 'unverified';
+export type ClientStatus = 'verified' | 'missing' | 'unverified' | 'skipped';
 export type ClientRecord = {
   kind: ClientKind; label: string; status: ClientStatus; reason: string; checkedAt: string;
   authentication: 'unknown'; quota: 'unknown'; invocation: 'unknown';
@@ -21,24 +22,29 @@ const KINDS: ClientKind[] = ['dsh', 'claude', 'cursor', 'grok'];
 const LABELS: Record<ClientKind, string> = {dsh: 'DeepSeek Harness', claude: 'Claude Code', cursor: 'Cursor Agent CLI', grok: 'Grok Build'};
 const CACHE_FILE = 'local-agent-clients.json';
 const OVERRIDE_FILE = 'local-agent-client-overrides.json';
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
+const DISCOVERY_POLICY = 'exclude-claude-v1';
+const SKIPPED_REASON = '按用户要求跳过 Claude；未探测客户端、登录、模型或额度';
+export function isExcludedClientPath(file:string){return /claude|anthropic/i.test(file);}
+function assertAllowedPath(file:string){if(isExcludedClientPath(file))throw Error(SKIPPED_REASON);}
+function allowedCandidate(file:string){return !isExcludedClientPath(file)&&expectedKinds(file).some(k=>k!=='claude');}
+function skippedRecord(checkedAt:string):ClientRecord{return {...emptyRecord('claude',checkedAt),status:'skipped',reason:SKIPPED_REASON};}
+export function readDiscoveryPolicy(){return {schema:1,excluded_kinds:['claude'] as ClientKind[],policy:DISCOVERY_POLICY};}
 const CACHE_TTL = 5 * 60_000;
 const MAX_OUTPUT = 128 * 1024;
 const MAX_PATH_VALUE_CHARS = 64 * 1024;
 const MAX_PATH_ENTRIES = 512;
 const MAX_CURSOR_SCRIPT_BYTES = 32_768;
-const names = ['dsh', 'claude', 'cursor-agent', 'agent', 'grok', 'grok-build'];
+const names = ['dsh', 'cursor-agent', 'agent', 'grok', 'grok-build'];
 const unknownState = {authentication: 'unknown', quota: 'unknown', invocation: 'unknown'} as const;
-const CURSOR_VERSION_RULE = String.raw`^\d{4}\.\d{1,2}\.\d{1,2}(-\d{2}-\d{2}-\d{2})?-[a-f0-9]+$`;
 const CURSOR_VERSION_NAME = /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-(\d{2})-(\d{2})-(\d{2}))?-([a-f0-9]+)$/i;
-const CURSOR_PS1_TEMPLATE_SHA256 = 'aaec1a0192ce3661dc65b5d5ee38155f1692d0c94ccc481257e0e6d15f46fe96';
 
 function digest(value: string) { return createHash('sha256').update(value).digest('hex'); }
-async function fingerprint(file: string) {
+async function fingerprint(file: string) { assertAllowedPath(file);
   const s = await fs.stat(file);
   return `${s.size}:${s.mtimeMs}:${s.ctimeMs}`;
 }
-async function exists(file: string) { try {return (await fs.stat(file)).isFile();} catch {return false;} }
+async function exists(file: string) { assertAllowedPath(file); try {return (await fs.stat(file)).isFile();} catch {return false;} }
 function localAbsolute(file: string) {return path.isAbsolute(file) && !/^(?:\\\\|\/\/)/.test(file) && !/[\x00-\x1f]/.test(file);}
 function inside(root: string, target: string) {
   const relative = path.relative(root, target);
@@ -75,7 +81,7 @@ async function rejectLinksUnder(root: string, target: string) {
     current = path.join(current, part);
     const stat = await fs.lstat(current);
     if (stat.isSymbolicLink()) throw new Error('Cursor CLI 包含不受支持的链接');
-    const real = await fs.realpath(current);
+    const real = await fs.realpath(current);assertAllowedPath(real);
     if (!inside(root, real) || !samePath(real, current)) throw new Error('Cursor CLI 链接越出本机安装目录');
   }
 }
@@ -88,7 +94,7 @@ async function rejectLinkedAncestors(target: string) {
     current = path.join(current, part);
     const stat = await fs.lstat(current);
     if (stat.isSymbolicLink()) throw new Error('Cursor CLI 入口路径不能经过链接');
-    const real = await fs.realpath(current);
+    const real = await fs.realpath(current);assertAllowedPath(real);
     if (!samePath(real, current)) throw new Error('Cursor CLI 入口路径不能经过链接');
   }
 }
@@ -97,7 +103,8 @@ async function resolveCursorAgentLauncher(candidate: string): Promise<Launch> {
   const realCandidate = await fs.realpath(candidate);
   if (!localAbsolute(realCandidate) || !['cursor-agent.cmd', 'agent.cmd'].includes(path.basename(realCandidate).toLowerCase())) throw new Error('Cursor CLI 入口名称无效');
   const root = path.dirname(realCandidate);
-  const rootReal = await fs.realpath(root);
+  assertAllowedPath(realCandidate);
+  const rootReal = await fs.realpath(root);assertAllowedPath(rootReal);
   if (!localAbsolute(rootReal)) throw new Error('Cursor CLI 安装目录必须位于本机');
   await rejectLinksUnder(rootReal, realCandidate);
   const cmdStat = await fs.stat(realCandidate);
@@ -112,9 +119,7 @@ async function resolveCursorAgentLauncher(candidate: string): Promise<Launch> {
   const ps1Stat = await fs.stat(ps1Real);
   if (!ps1Stat.isFile() || ps1Stat.size > MAX_CURSOR_SCRIPT_BYTES) throw new Error('Cursor CLI PowerShell 包装器无效或超过大小限制');
   const ps1Text = await fs.readFile(ps1Real, 'utf8');
-  const normalizedPs1 = ps1Text.replace(/^\uFEFF/, '').replace(/\r/g, '').split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('#')).join('\n');
-  const versionRule = ps1Text.match(/^\s*\$name\s+-match\s+'([^']+)'\s*$/m)?.[1];
-  if (!ps1Text.includes('# cursor-agent-promote-staged') || versionRule !== CURSOR_VERSION_RULE || digest(normalizedPs1) !== CURSOR_PS1_TEMPLATE_SHA256) throw new Error('Cursor CLI PowerShell 包装器格式不受支持');
+  assertCursorPowerShellWrapper(ps1Text);
 
   const versions = path.join(rootReal, 'versions');
   await rejectLinksUnder(rootReal, versions);
@@ -141,7 +146,8 @@ async function resolveCursorAgentLauncher(candidate: string): Promise<Launch> {
   const files: string[] = [];
   for (const file of [packageFile, nodeFile, entryFile]) {
     await rejectLinksUnder(rootReal, file);
-    const real = await fs.realpath(file);
+    assertAllowedPath(file);
+    const real = await fs.realpath(file);assertAllowedPath(real);
     if (!inside(rootReal, real)) throw new Error('Cursor CLI 文件链接越出安装目录');
     if (!(await fs.stat(real)).isFile()) throw new Error('Cursor CLI 版本文件缺失');
     files.push(real);
@@ -157,22 +163,8 @@ async function resolveCursorAgentLauncher(candidate: string): Promise<Launch> {
 // These are fixed, read-only metadata queries. No command contains a discovered path.
 const WINDOWS_METADATA = String.raw`
 $ErrorActionPreference='SilentlyContinue'
-$out=@()
 $paths=@([Environment]::GetEnvironmentVariable('Path','User'),[Environment]::GetEnvironmentVariable('Path','Machine')) | Where-Object {$_}
-$keys=@('HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*')
-Get-ItemProperty -Path $keys | Where-Object {$_.DisplayName -match 'DeepSeek Harness|Claude|Cursor|Grok Build'} | ForEach-Object {
-  if ($_.InstallLocation) {$out+=@{root=$_.InstallLocation;source='registration'}}
-  elseif ($_.DisplayIcon) {$icon=$_.DisplayIcon -replace ',\d+$','';$icon=$icon.Trim('"');if([IO.Path]::IsPathRooted($icon)){$out+=@{root=[IO.Path]::GetDirectoryName($icon);source='registration'}}}
-}
-$shell=New-Object -ComObject WScript.Shell
-$roots=@([Environment]::GetFolderPath('StartMenu'),[Environment]::GetFolderPath('CommonStartMenu'),[Environment]::GetFolderPath('DesktopDirectory'),[Environment]::GetFolderPath('CommonDesktopDirectory'))
-foreach($root in $roots){if($root -and (Test-Path -LiteralPath $root)){
-  Get-ChildItem -LiteralPath $root -File -Filter '*.lnk' -Recurse -Depth 3 | Select-Object -First 1000 | Where-Object {$_.BaseName -match 'DeepSeek|Claude|Cursor|Grok'} | ForEach-Object {
-    $target=$shell.CreateShortcut($_.FullName).TargetPath
-    if($target -and [IO.Path]::IsPathRooted($target)){$out+=@{root=[IO.Path]::GetDirectoryName($target);source='shortcut'}}
-  }
-}}
-ConvertTo-Json -Compress -InputObject @{roots=@($out);paths=@($paths)}
+ConvertTo-Json -Compress -InputObject @{paths=@($paths)}
 `;
 
 const probe: Probe = (command, args, env) => new Promise((resolve, reject) => {
@@ -186,7 +178,7 @@ async function gatherCandidates(testHooks?: NonNullable<DiscoveryOptions['testHo
   const result: DiscoveryCandidate[] = [];
   const extensions = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : [''];
   const add = (dir: string, source: DiscoveryCandidate['source'], suffixes: string[]) => {
-    if (dir && localAbsolute(dir)) for (const suffix of suffixes) result.push({path: path.resolve(dir, suffix), source});
+    if (dir && localAbsolute(dir) && !isExcludedClientPath(dir)) for (const suffix of suffixes) {const file=path.resolve(dir,suffix);if(allowedCandidate(file))result.push({path:file,source});}
   };
   const pathSuffixes = names.flatMap(n => extensions.map(e => n + e));
   for (const dir of pathEntries([testHooks?.processPath ?? process.env.PATH ?? ''])) add(dir, 'path', pathSuffixes);
@@ -196,24 +188,19 @@ async function gatherCandidates(testHooks?: NonNullable<DiscoveryOptions['testHo
     const user = os.homedir();
     const common = [path.join(user, '.local', 'bin'), path.join(user, '.cursor', 'bin')];
     if (process.env.APPDATA) common.push(path.join(process.env.APPDATA, 'npm'));
-    if (process.env.LOCALAPPDATA) common.push(path.join(process.env.LOCALAPPDATA, 'Programs', 'claude'), path.join(process.env.LOCALAPPDATA, 'cursor-agent'));
+    if (process.env.LOCALAPPDATA) common.push(path.join(process.env.LOCALAPPDATA, 'cursor-agent'));
     for (const dir of common) add(dir, 'common', pathSuffixes);
   }
   if (!testHooks && process.platform === 'win32') {
     const installBases = [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Programs') : undefined].filter((p): p is string => !!p);
     for (const base of installBases) {
       add(path.join(base, 'DeepSeek Harness'), 'common', ['resources/runtime/cli/bin/dsh.cmd']);
-      for (const product of ['Claude', 'Grok Build', 'Cursor']) add(path.join(base, product), 'common', names.flatMap(n => ['.exe', '.cmd'].map(e => n + e)));
+      for (const product of ['Grok Build', 'Cursor']) add(path.join(base, product), 'common', names.flatMap(n => ['.exe', '.cmd'].map(e => n + e)));
     }
     try {
       const ps = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
       const metadata = JSON.parse(await probe(ps, ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_METADATA]));
-      const rows = Array.isArray(metadata) ? metadata : metadata.roots;
       for (const dir of pathEntries(Array.isArray(metadata?.paths) ? metadata.paths : [])) add(dir, 'path', pathSuffixes);
-      const installedSuffixes = ['resources/runtime/cli/bin/dsh.cmd', 'dsh.exe', 'claude.exe', 'bin/claude.exe', 'agent.exe', 'grok.exe', 'grok-build.exe', 'cursor-agent.exe', 'bin/cursor-agent.exe', 'resources/app/bin/cursor-agent.exe'];
-      for (const row of Array.isArray(rows) ? rows.slice(0, 200) : []) {
-        if (typeof row.root === 'string' && (row.source === 'registration' || row.source === 'shortcut')) add(row.root, row.source, installedSuffixes);
-      }
     } catch { /* PATH and common locations remain usable when Windows metadata is unavailable. */ }
   }
   const unique = [...new Map(result.map(c => [process.platform === 'win32' ? c.path.toLowerCase() : c.path, c])).values()];
@@ -235,7 +222,7 @@ export function pathEntries(values: string[], env: NodeJS.ProcessEnv = process.e
     for (const raw of value.split(delimiter).slice(0, MAX_PATH_ENTRIES - result.length)) {
       let dir = raw.trim().replace(/^"(.*)"$/, '$1');
       dir = dir.replace(/%([^%]+)%/g, (whole, name: string) => variables.get(name.toLowerCase()) ?? whole);
-      if (dir.includes('%') || !localAbsolute(dir)) continue;
+      if (dir.includes('%') || !localAbsolute(dir) || isExcludedClientPath(dir)) continue;
       result.push(path.resolve(dir));
     }
     if (result.length >= MAX_PATH_ENTRIES) break;
@@ -246,6 +233,8 @@ export function pathEntries(values: string[], env: NodeJS.ProcessEnv = process.e
 type Launch = {executable: string; prefixArgs: string[]; env?: Record<string, string>; files: string[]};
 /** Resolve only recognized, data-only launcher forms. Never feed a .cmd/.bat or prompt to a shell. */
 export async function resolveClientLauncher(candidatePath: string): Promise<Launch> {
+  assertAllowedPath(candidatePath);
+  if (!allowedCandidate(candidatePath)) throw Error('未知客户端入口；不执行身份试探');
   if (!localAbsolute(candidatePath)) throw new Error('客户端必须位于本机绝对路径');
   const file = path.resolve(candidatePath);
   if (/\.cmd$/i.test(file)) {
@@ -257,6 +246,7 @@ export async function resolveClientLauncher(candidatePath: string): Promise<Laun
     }
   }
   const realFile = await fs.realpath(file);
+  assertAllowedPath(realFile);
   if (!localAbsolute(realFile)) throw new Error('客户端不能链接到网络路径');
   if (!/\.(?:cmd|bat)$/i.test(file)) return {executable: file, prefixArgs: [], files: [file]};
   const stat = await fs.stat(file);
@@ -268,6 +258,7 @@ export async function resolveClientLauncher(candidatePath: string): Promise<Laun
   if (desktop) {
     const exe = path.resolve(base, desktop[1]);
     const entry = path.resolve(base, desktop[2]);
+    assertAllowedPath(exe);assertAllowedPath(entry);
     const archive = entry.match(/^(.*[\\/]app\.asar)(?:[\\/]|$)/i)?.[1];
     if (!await exists(exe) || !archive || !await exists(archive)) throw new Error('客户端安装文件不完整');
     return {executable: exe, prefixArgs: ['--expose-internals', entry], env: {ELECTRON_RUN_AS_NODE: '1'}, files: [file, exe, archive]};
@@ -277,10 +268,13 @@ export async function resolveClientLauncher(candidatePath: string): Promise<Laun
   const entryMatch = script.match(/"%(?:dp0|~dp0)%?[\\/]?(node_modules[\\/][^"\r\n]+\.(?:[cm]?js))"\s+%\*/i);
   if (entryMatch) {
     const entry = path.resolve(base, entryMatch[1]);
+    assertAllowedPath(entry);
     const relative = path.relative(base, entry);
     if (relative.startsWith('..') || path.isAbsolute(relative) || !await exists(entry)) throw new Error('客户端启动脚本路径无效');
+    const realEntry=await fs.realpath(entry);assertAllowedPath(realEntry);
     const localNode = path.join(base, 'node.exe');
-    const exe = await exists(localNode) ? localNode : process.execPath;
+    assertAllowedPath(localNode);
+    const exe = await exists(localNode) ? localNode : process.execPath;assertAllowedPath(exe);assertAllowedPath(await fs.realpath(exe));
     return {executable: exe, prefixArgs: [entry], files: [file, exe, entry]};
   }
   throw new Error('不支持的启动脚本；请使用官方 CLI 原生入口');
@@ -297,7 +291,8 @@ function identify(help: string): ClientKind | null {
 function expectedKinds(file: string): ClientKind[] {
   const name = path.basename(file).toLowerCase();
   if (name.startsWith('dsh')) return ['dsh'];
-  if (name.startsWith('claude')) return ['claude'];
+  if (name.startsWith('claude') || isExcludedClientPath(file)) return [];
+  if (/^agent(?:\.(?:exe|cmd|bat))?$/.test(name)){if(/grok/i.test(path.dirname(file)))return ['grok'];if(/cursor/i.test(path.dirname(file)))return ['cursor'];}
   if (name.startsWith('cursor-agent')) return ['cursor'];
   if (name.startsWith('grok')) return ['grok'];
   return [];
@@ -318,14 +313,15 @@ async function readOverrides(dataDir: string): Promise<Partial<Record<ClientKind
   try {
     const saved = JSON.parse(await fs.readFile(path.join(dataDir, OVERRIDE_FILE), 'utf8'));
     if (saved.schema !== 1 || saved.machine !== machineIdentity() || !saved.paths || typeof saved.paths !== 'object') return {};
-    return Object.fromEntries(KINDS.filter(k => typeof saved.paths[k] === 'string' && localAbsolute(saved.paths[k])).map(k => [k, saved.paths[k]]));
+    return Object.fromEntries(KINDS.filter(k => k!=='claude' && typeof saved.paths[k] === 'string' && localAbsolute(saved.paths[k]) && allowedCandidate(saved.paths[k])).map(k => [k, saved.paths[k]]));
   } catch {return {};}
 }
 async function inspectCandidate(candidatePath: string, run: Probe, checkedAt: string): Promise<ClientRecord> {
   const launch = await resolveClientLauncher(candidatePath);
+  for(const file of [launch.executable,...launch.prefixArgs,...launch.files])assertAllowedPath(file);
   const help = await run(launch.executable, [...launch.prefixArgs, '--help'], launch.env);
   const kind = identify(help);
-  if (!kind) throw new Error('产品身份不匹配');
+  if (!kind || kind==='claude') throw new Error('产品身份不匹配或按用户要求跳过');
   const versionText = await run(launch.executable, [...launch.prefixArgs, '--version'], launch.env);
   const cursorVersion = kind === 'cursor' ? versionText.trim().split(/\r?\n/, 1)[0]?.trim() : undefined;
   const version = cursorVersion ? (parseCursorVersionName(cursorVersion) ? cursorVersion : undefined) : versionText.match(/\b\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]+)?\b/)?.[0];
@@ -336,13 +332,14 @@ async function inspectCandidate(candidatePath: string, run: Probe, checkedAt: st
 async function readValidCache(options: DiscoveryOptions, machine: string, now: number): Promise<ClientRecord[] | null> {
   try {
     const cached = JSON.parse(await fs.readFile(path.join(options.dataDir, CACHE_FILE), 'utf8'));
-    if (cached.schema !== CACHE_VERSION || cached.machine !== machine || !Number.isFinite(cached.createdAt) || now < cached.createdAt || now - cached.createdAt >= CACHE_TTL || !Array.isArray(cached.records) || cached.records.length !== KINDS.length) return null;
+    if (cached.schema !== CACHE_VERSION || cached.policy !== DISCOVERY_POLICY || cached.machine !== machine || !Number.isFinite(cached.createdAt) || now < cached.createdAt || now - cached.createdAt >= CACHE_TTL || !Array.isArray(cached.records) || cached.records.length !== KINDS.length) return null;
     for (const kind of KINDS) {
+      if(kind==='claude')continue;
       const record = cached.records.find((r: ClientRecord) => r.kind === kind);
       if (!record || !['verified', 'missing', 'unverified'].includes(record.status)) return null;
       if (record.status === 'verified') {
         if (!record.executable || !path.isAbsolute(record.executable) || !Array.isArray(record.fingerprints) || !record.fingerprints.length || !Array.isArray(record.prefixArgs) || !record.version || !record.help || identify(record.help) !== record.kind) return null;
-        if (typeof record.candidatePath !== 'string') return null;
+        if (typeof record.candidatePath !== 'string' || !allowedCandidate(record.candidatePath) || isExcludedClientPath(record.executable) || record.fingerprints.some((f:{path:string})=>typeof f.path!=='string'||isExcludedClientPath(f.path)) || record.prefixArgs.some((arg:string)=>isExcludedClientPath(arg))) return null;
         const launch = await resolveClientLauncher(record.candidatePath);
         if (launch.executable !== record.executable || JSON.stringify(launch.prefixArgs) !== JSON.stringify(record.prefixArgs) || JSON.stringify(launch.env ?? {}) !== JSON.stringify(record.env ?? {}) || launch.files.length !== record.fingerprints.length) return null;
         for (const file of launch.files) {
@@ -352,7 +349,7 @@ async function readValidCache(options: DiscoveryOptions, machine: string, now: n
         record.supportedFlags = flags(record.help);
       }
     }
-    return cached.records;
+    return cached.records.filter((r:ClientRecord)=>r.kind!=='claude').concat(skippedRecord(new Date(now).toISOString()));
   } catch {return null;}
 }
 
@@ -361,10 +358,12 @@ export async function discoverAgentClients(options: DiscoveryOptions): Promise<C
   const machine = machineKey(options);
   if (!options.force) {const cached = await readValidCache(options, machine, now); if (cached) return cached;}
   const checkedAt = new Date(now).toISOString();
-  const records = KINDS.map(kind => emptyRecord(kind, checkedAt));
+  const records = KINDS.map(kind => kind==='claude'?skippedRecord(checkedAt):emptyRecord(kind, checkedAt));
   const overrides: Partial<Record<ClientKind, string>> = options.testHooks ? {} : await readOverrides(options.dataDir);
   const overrideCandidates = Object.values(overrides).map(file => ({path: file, source: 'common' as const}));
-  const candidates = [...overrideCandidates, ...(options.testHooks?.candidates ?? await gatherCandidates(options.testHooks))];
+  let cachedCandidates:DiscoveryCandidate[]=[];
+  if(!options.testHooks){try{const saved=JSON.parse(await fs.readFile(path.join(options.dataDir,CACHE_FILE),'utf8'));cachedCandidates=(Array.isArray(saved.records)?saved.records:[]).filter((r:ClientRecord)=>r.kind!=='claude'&&typeof r.candidatePath==='string'&&allowedCandidate(r.candidatePath)).map((r:ClientRecord)=>({path:r.candidatePath!,source:'common' as const}));}catch{}}
+  const candidates = [...overrideCandidates, ...cachedCandidates, ...(options.testHooks?.candidates ?? await gatherCandidates(options.testHooks))].filter(candidate=>allowedCandidate(candidate.path));
   const run = options.testHooks?.probe ?? probe;
   for (const candidate of candidates) {
     try {
@@ -385,7 +384,8 @@ export async function discoverAgentClients(options: DiscoveryOptions): Promise<C
   const cachePath = path.join(options.dataDir, CACHE_FILE);
   const temporary = `${cachePath}.${randomUUID()}.tmp`;
   try {
-    await fs.writeFile(temporary, JSON.stringify({schema: CACHE_VERSION, machine, createdAt: now, records}, null, 2), {encoding: 'utf8', mode: 0o600, flag: 'wx'});
+    try{const previous=await fs.readFile(cachePath,'utf8');let preserve=true;try{const saved=JSON.parse(previous);preserve=saved.records?.some((r:ClientRecord)=>r.kind==='claude'&&r.status!=='skipped')??true;}catch{}if(preserve)await fs.writeFile(cachePath+'.history-'+randomUUID()+'.json',previous,{flag:'wx',mode:0o600});}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+    await fs.writeFile(temporary, JSON.stringify({schema: CACHE_VERSION, policy:DISCOVERY_POLICY, machine, createdAt: now, records}, null, 2), {encoding: 'utf8', mode: 0o600, flag: 'wx'});
     await fs.rename(temporary, cachePath);
   } finally {await fs.rm(temporary, {force: true}).catch(() => {});}
   return records;
@@ -399,6 +399,7 @@ export function publicClientCapabilities(records: ClientRecord[]): ClientCapabil
     grok: ['--prompt-file', '--cwd', '--model', '--output-format', '--permission-mode'],
   };
   return records.map(({kind, label, status, reason, checkedAt, version, supportedFlags, help}) => {
+    if(kind==='claude')return {kind,label:LABELS[kind],status:'skipped' as const,reason:SKIPPED_REASON,checkedAt,...unknownState,available:false,supportsResume:false,executionSupported:false,reviewSupported:false};
     const planMode = kind !== 'cursor' || supportsCursorPlanMode(help);
     const headless = status === 'verified' && requiredFlags[kind].every(f => supportedFlags?.includes(f)) && planMode;
     return {kind, label:LABELS[kind], status, reason: status === 'verified' && !headless ? 'CLI 身份已验证，但当前版本缺少本程序需要的安全调用参数' : reason, checkedAt, version, ...unknownState, available: status === 'verified', supportsResume: headless && !!supportedFlags?.includes(kind === 'dsh' ? '--session-id' : '--resume'), executionSupported: headless && kind !== 'cursor', reviewSupported: headless};
@@ -406,18 +407,24 @@ export function publicClientCapabilities(records: ClientRecord[]): ClientCapabil
 }
 export async function readClientCapabilities(dataDir: string): Promise<ClientCapability[]> {return publicClientCapabilities(await discoverAgentClients({dataDir}));}
 export async function resolveAgentClient(dataDir: string, kind: ClientKind): Promise<ClientRecord> {
+  if(kind==='claude')throw Error(SKIPPED_REASON);
   const record = (await discoverAgentClients({dataDir})).find(r => r.kind === kind);
   if (!record || record.status !== 'verified') throw new Error(`${LABELS[kind] ?? kind} 未发现可用且身份已验证的 CLI`);
   return record;
 }
 
 export async function setClientOverride(options: {dataDir: string; kind: ClientKind; executable: string; /** Isolated tests only. */ testHooks?: DiscoveryOptions['testHooks']}): Promise<ClientRecord[]> {
+  if(options.kind==='claude')throw Error(SKIPPED_REASON);
+  assertAllowedPath(options.executable);
+  if(!allowedCandidate(options.executable))throw Error('未知客户端入口；不执行身份试探');
   if (!KINDS.includes(options.kind) || !localAbsolute(options.executable)) throw new Error('请选择本机 CLI 的绝对文件路径');
-  const executable = await fs.realpath(options.executable);
+  const executable = await fs.realpath(options.executable);assertAllowedPath(executable);
   if (!(await fs.stat(executable)).isFile()) throw new Error('CLI 路径必须是文件');
   const verified = await inspectCandidate(executable, options.testHooks?.probe ?? probe, new Date().toISOString());
   if (verified.kind !== options.kind) throw new Error(`所选入口实际属于 ${verified.label}，与指定客户端不匹配`);
-  const paths = await readOverrides(options.dataDir);
+  let paths = await readOverrides(options.dataDir);
+  // Preserve excluded historical overrides as data, without resolving or probing their paths.
+  try{const saved=JSON.parse(await fs.readFile(path.join(options.dataDir,OVERRIDE_FILE),'utf8'));if(saved.schema===1&&saved.machine===machineIdentity()&&saved.paths&&typeof saved.paths==='object'&&!Array.isArray(saved.paths))paths={...saved.paths,...paths};}catch{}
   paths[options.kind] = executable;
   await fs.mkdir(options.dataDir, {recursive: true});
   const target = path.join(options.dataDir, OVERRIDE_FILE);
@@ -428,3 +435,6 @@ export async function setClientOverride(options: {dataDir: string; kind: ClientK
   } finally {await fs.rm(temporary, {force: true}).catch(() => {});}
   return discoverAgentClients({dataDir: options.dataDir, force: true, ...(options.testHooks ? {testHooks: {...options.testHooks, candidates: [{path: executable, source: 'common'}, ...(options.testHooks.candidates ?? [])]}} : {})});
 }
+
+
+

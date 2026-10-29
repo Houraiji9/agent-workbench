@@ -8,12 +8,14 @@ import { relative } from '../lib/format.js';
 import { Section, Notice } from '../ui/kit.js';
 import { UpdateCard } from '../ui/UpdateCard.js';
 import { AgentClientsCard } from '../ui/AgentClientsCard.js';
+import { OnboardingCard } from '../ui/OnboardingCard.js';
 
 export function Settings() {
   const s = useStore();
   const { data } = s;
   return <div className="page-wrap settings-page">
     <header className="page-head"><div><h1>设置</h1><p>管理本机数据、项目文件夹和备份。</p></div></header>
+    <OnboardingCard />
     <div className="settings-cols">
     <UpdateCard />
     <AgentClientsCard />
@@ -40,11 +42,6 @@ export function Settings() {
       <p className="muted small">恢复备份需要先关闭工作台，再按 README 里“备份与恢复”的步骤操作，会恢复到一个新目录，不覆盖现有数据。</p>
     </Section>
 
-    <Section title="让规划 Agent 接入工作台">
-      <p>Codex、Claude 等都可以担任规划者。在所用客户端添加本机工作台 MCP 连接后，即可读取项目和提交计划；未连接时也可以复制聊天资料、导入计划。接入说明见 docs/PLANNER.md。</p>
-      <p className="muted small">没有接入时，也可以把计划内容复制给你，再用下面的“粘贴计划”导入。</p>
-    </Section>
-
     <Section title="手动导入">
       <div className="tool-row">
         <button className="btn small" onClick={() => s.openDialog('import-plan')}><ClipboardPaste size={15} />粘贴规划 Agent 的计划</button>
@@ -60,3 +57,4 @@ export function Settings() {
     </div>
   </div>;
 }
+

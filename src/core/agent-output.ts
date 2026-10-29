@@ -9,6 +9,7 @@ export type ParsedAgentOutput = {
   sessionId?: string; model?: string; modelFormat?: 'identifier' | 'display_name'; usage?: AgentUsage; finalText?: string;
   /** ACP/Anthropic fragments are not a final response. Use createAgentOutputParser for accumulation. */
   textDelta?: string; messageId?: string; resetText?: boolean; stopReason?: string;
+  toolInterruption?:{tool?:string;status?:string;code?:string};
 };
 type ObjectValue = Record<string, unknown>;
 const ignored = (): ParsedAgentOutput => ({recognized: false, terminal: false});
@@ -94,6 +95,11 @@ export function parseAgentOutput(kind: ClientKind, line: string): ParsedAgentOut
  * Messages wire format. These branches implement those public standards, not a claimed native
  * model-run verification. Unknown Grok wrappers/terminal events deliberately remain unsupported. */
 function parseGrokEvent(value: ObjectValue): ParsedAgentOutput {
+  if(value.type==='tool_call_update'&&value.status==='failed'){
+    const diagnostic=Array.isArray(value.content)?value.content.map(x=>{const item=object(x),nested=object(item?.content);return nested?.type==='text'&&typeof nested.text==='string'?nested.text:'';}).join('\n'):'';
+    const code=typeof value.errorCode==='string'?value.errorCode:/permission denied|EACCES/i.test(diagnostic)?'permission_denied':/approval (?:required|unavailable)/i.test(diagnostic)?'approval_unavailable':/cancelled the execution for tool/i.test(diagnostic)?'cancelled':undefined;
+    if(code)return {recognized:true,terminal:false,eventType:'grok/tool_interruption',toolInterruption:{status:code==='cancelled'?'cancelled':'failed',code,...(/`run_terminal_command`/.test(diagnostic)?{tool:'run_terminal_command'}:{})}};
+  }
   // Observed Grok Build 1.0.41 streaming-json: flat events, no ACP envelope.
   // Tool/thought payloads are never report text; usage is read only from the final total.
   if (value.type === 'text' && text(value.data) !== undefined) return {recognized:true,terminal:false,eventType:'grok/text',textDelta:String(value.data)};

@@ -25,7 +25,7 @@ test('执行者会话在已开工同任务修改审查安排与范围，保留�
  const b=await f.manage('manage_tasks',{action:'amend',data:{task_id:f.tid,run_id:f.rid,expected_revision:current.revision,reason:'用户在本会话补充了验收内容',changes:{scope:'仍在本项目，补充已开工任务的交互要求',acceptance:['新增明确交互验收要求']}}});assert.equal(b.status,200,JSON.stringify(b.data));
  assert.equal(f.wb.all('tasks').length,1);assert.equal(f.wb.all('runs').length,1);assert.equal(f.wb.get('runs',f.rid).amendments.length,1);
  const audits=f.wb.db.prepare("SELECT actor,data FROM audit WHERE action='amend_task'").all() as any[];assert.equal(audits[0].actor,'runner:'+f.rid);assert.match(JSON.parse(audits[0].data).user_instruction,/用户口述/);
- const detail=await f.call('get_task_detail',{task_id:f.tid});assert.equal(detail.status,200);assert.equal(detail.data.review_arrangement.requested_model,'test-review-model');
+ const detail=await f.call('get_task_detail',{task_id:f.tid,detail:'full'});assert.equal(detail.status,200);assert.equal(detail.data.review_arrangement.requested_model,'test-review-model');
 }finally{await f.app.close();}});
 test('审查者原会话办理项目管理并用简洁报告回传本人结果，重试不重复建报告',async()=>{const f=await environment();try{
  const delivered=f.wb.event(event(f.root,f.tid,f.rid,2,'submitted',{result:'隔离测试交付，供独立审查验证简洁回传和真实身份绑定，不代表生产成果。'}));assert.equal(delivered.disposition,'applied',delivered.error);
@@ -52,9 +52,9 @@ test('本项目会话不能借管理参数跨项目或借另一张审查凭据�
 test('同一交付可安排四位审查者，追加和移除不会改写其他成员或任务编号',async()=>{const f=await environment();try{
  const delivered=f.wb.event(event(f.root,f.tid,f.rid,2,'submitted',{result:'隔离多人协作测试交付，真实执行了成员安排接口，不代表真实模型审查。'}));assert.equal(delivered.disposition,'applied',delivered.error);
  const ids:string[]=[];for(const reviewer_id of ['claude','zcode','grok-build','deepseek']){const response=await f.manage('manage_reviews',{action:'assign',data:{run_id:f.rid,expected_revision:f.wb.get('tasks',f.tid).revision,reviewer_id,reason:'用户要求多位成员共同独立审查'}});assert.equal(response.status,200,JSON.stringify(response.data));ids.push(response.data.result.review_id);}
- let detail=await f.call('get_task_detail',{task_id:f.tid});assert.equal(detail.data.review_summary.counts.active,4);assert.equal(detail.data.review_summary.members.length,4);
+ let detail=await f.call('get_task_detail',{task_id:f.tid,detail:'full'});assert.equal(detail.data.review_summary.counts.active,4);assert.equal(detail.data.review_summary.members.length,4);
  const remove=await f.manage('manage_reviews',{action:'update_member',data:{action:'remove',run_id:f.rid,review_id:ids[1],expected_revision:f.wb.get('tasks',f.tid).revision,reason:'用户调整其中一位的参与安排'}});assert.equal(remove.status,200,JSON.stringify(remove.data));
- detail=await f.call('get_task_detail',{task_id:f.tid});assert.equal(detail.data.review_summary.counts.active,3);assert.equal(detail.data.review_summary.members.length,4);assert.equal(f.wb.all('tasks').length,1);assert.equal(f.wb.all('runs').length,1);
+ detail=await f.call('get_task_detail',{task_id:f.tid,detail:'full'});assert.equal(detail.data.review_summary.counts.active,3);assert.equal(detail.data.review_summary.members.length,4);assert.equal(f.wb.all('tasks').length,1);assert.equal(f.wb.all('runs').length,1);
 }finally{await f.app.close();}});
 test('范围补充使旧审查需要重新核验，但保留原报告和部署记录',async()=>{const f=await environment();try{
  const delivered=f.wb.event(event(f.root,f.tid,f.rid,2,'submitted',{result:'隔离测试原始交付与独立审查存档，验证修改范围后保留历史的行为，不代表生产成果。'}));assert.equal(delivered.disposition,'applied',delivered.error);

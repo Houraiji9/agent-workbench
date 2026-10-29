@@ -142,3 +142,18 @@ test('损坏凭据、缺少JSON和非法JSON以错误码退出，不泄露文件
   const credentials=await f.invoke([run,'register-delegation',f.write('valid',f.registration)]);
   assert.equal(credentials.code,1);assert.match(credentials.stderr,/无法读取当前 Run 的执行凭据/);noCredential(credentials,f.token);assert.equal(f.requests.length,0);
 });
+
+test('bootstrap/schema/examples/validate-only stay offline with broken config and expose versioned actionable errors',async t=>{
+ const f=await fixture(t);fs.writeFileSync(path.join(f.dir,'config/local.json'),'invalid');
+ const boot=success(await f.invoke(['bootstrap']));assert.equal(boot.schema_version,1);assert(boot.actions.includes('closeout-context'));
+ const schema=success(await f.invoke(['schema','report']));assert.equal(schema.schema_version,1);assert(schema.json_schema.properties.event_type.enum.includes('progress'));
+ const example=success(await f.invoke(['example','report']));const file=f.write('example-report',example.input);const valid=success(await f.invoke(['validate-only','report',file]));assert.equal(valid.valid,true);assert.equal(valid.submitted,false);
+ const bad=await f.invoke(['validate-only','report',f.write('bad-report',{event_type:'invented',data:{}})]);assert.equal(bad.code,1);const v=JSON.parse(bad.stdout);assert.equal(v.valid,false);assert(v.errors.some((x:any)=>x.path==='event_type'));assert.match(v.repair_command,/example report/);assert.equal(f.requests.length,0);noCredential(bad,f.token);
+});
+test('CLI closeout-context and same-session current keep credential Run distinct from current Run',async t=>{
+ const f=await fixture(t,req=>({body:req.url.endsWith('/continue_run')?{run_id:otherRun,continuation:{mode:'same_session'}}:req.url.endsWith('/get_run_context')?{authority:{run_id:otherRun},task_revision:8}: {run_id:otherRun,detail:'brief'}}));
+ const continued=success(await f.invoke([run,'continue']));assert.equal(continued.next_command.credential_run_id,run);assert.equal(continued.next_command.current_run_id,otherRun);
+ const mapping=success(await f.invoke(['current','mapping']));assert.equal(mapping.credential_run_id,run);assert.equal(mapping.current_run_id,otherRun);assert.equal(mapping.verified,false);
+ success(await f.invoke(['current','closeout-context']));const last=f.requests.at(-1)!;assert.equal(last.url,'/api/mcp/get_closeout_context');assert.equal(last.body.run_id,run);assert.equal(last.body.detail,'brief');assert.equal(last.authorization,'Bearer '+f.token);
+ const saved=fs.readdirSync(path.join(f.data,'agent-cli')).map(n=>fs.readFileSync(path.join(f.data,'agent-cli',n),'utf8')).join('');assert(!saved.includes(f.token));
+});

@@ -5,6 +5,7 @@ import {taskMemoryContext} from './project-memory.ts';
 import {z} from 'zod';import fs from 'node:fs';import path from 'node:path';import type {Workbench} from './workbench.ts';import type {Row} from './schema.ts';import {assert,hash,now} from './security.ts';import {eventSchema} from './schema.ts';import {taskAction,briefTask} from '../shared/workflow-view.ts';import {projectFileSummary} from './project-file-summary.ts';
 import {runTask,policyCapabilities} from './workflow-policy.ts';
 import {getCloseoutContext} from './closeout.ts';
+import {listOnboardingTeam,compactOnboardingTeam} from './onboarding-models.ts';
 import {contextFileReadInput,fileContextSnapshot,readContractFile,taskFileScope} from './file-context.ts';
 export const runContextReadInput=contextFileReadInput.extend({run_id:z.string()}).strict();
 export const contextInput=z.object({run_id:z.string(),mode:z.enum(['brief','delta','full']).default('brief'),section:z.enum(['plan','files','requirements','history']).optional(),known_context_hash:z.string().max(64).optional()}).strict();
@@ -46,6 +47,7 @@ export function dispatchBrief(context:Row,projectId?:string):Row{
  requests:requests.slice(0,5).map((q:Row)=>({id:q.id,project_id:q.project_id,version:q.version,status:q.status,text_preview:preview(q.text,240)})),tasks:recent.map((t:Row)=>({id:t.id,title:preview(t.title,120),goal_preview:preview(t.goal,240),status:t.status,agent_id:t.agent_id,run_id:t.current_run_id})),
  counts:{projects:projects.length,requests:requests.length,tasks:tasks.length},omitted:{projects:Math.max(0,projects.length-8),requests:Math.max(0,requests.length-5),tasks:Math.max(0,tasks.length-recent.length)},
  agents:context.agents.map((a:Row)=>({id:a.id,name:a.name,scope:preview(a.scope||'',150),allowed_kinds:a.allowed_kinds})),
+ local_models:compactOnboardingTeam(listOnboardingTeam({all:()=>context.agents} as unknown as Workbench)),
  reviewer_resources:context.reviewer_resources.map((a:Row)=>({agent_id:a.agent_id,status:a.status,source_state:a.source_state,reason:a.reason,observations:a.observations?.map((o:Row)=>({label:o.label,remaining_percent:o.remaining_percent,source_updated_at:o.source_updated_at,fresh:o.fresh}))})),
  client_capabilities:context.client_capabilities,review_policy:context.review_policy,handbook:workflowGuidance,
  references:{project:{tool:'get_project_context',arguments:{project_id:projectId,detail:'brief'}},history:{tool:'search_execution_history',arguments:{project_id:projectId,limit:5}},full:{tool:'get_dispatch_context',arguments:{project_id:projectId,detail:'full'}}}};

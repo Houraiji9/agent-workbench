@@ -7,6 +7,7 @@ import {createAgentOutputParser,type ParsedAgentOutput} from './agent-output.ts'
 import {recordUsageEvent,usageInputFromOutput} from './project-usage.ts';
 import {bindReviewContextSession} from './review-context.ts';
 import {nativeReviewResult} from './native-review-result.ts';
+import {classifyReviewInterruption,type ReviewInterruption} from './agent-route-diagnostics.ts';
 import {reviewAssignmentContext,reviewResultInput,submitReviewResult} from './review-workflow.ts';
 
 export const nativeReviewRecoveryInput=z.object({run_id:z.string().regex(/^R-[a-f0-9-]{36}$/),job_id:z.string().regex(/^AJ-[a-f0-9-]{36}$/)}).strict();
@@ -32,9 +33,11 @@ export function recoverNativeReview(wb:Workbench,input:unknown){
  assert(!fs.lstatSync(expected).isSymbolicLink(),'原生输出不能是链接',409);
  const bytes=readBounded(expected,16*1024*1024),parser=createAgentOutputParser(job.route.client);
  let finalText:string|undefined,terminalCount=0,sessionId:string|undefined,terminal:ParsedAgentOutput|undefined,failed=false;
+  let interruption:ReviewInterruption|undefined;
  for(const line of bytes.toString('utf8').split(/\r?\n/).filter(Boolean)){
   const event=parser.push(line);if(event.sessionId){assert(!sessionId||sessionId===event.sessionId,'原生输出包含多个会话',409);sessionId=event.sessionId;}
   if(event.success===false)failed=true;
+   if(event.toolInterruption)interruption=classifyReviewInterruption(undefined,event.toolInterruption);
   if(event.terminal){terminalCount++;finalText=event.finalText;terminal=event;}
  }
  assert(terminalCount===1&&sessionId&&(!job.session_id||sessionId===job.session_id)&&(!job.resume_session_id||sessionId===job.resume_session_id)&&(!a.session_id||a.session_id===sessionId),'没有唯一且绑定原调用的终态',409);
@@ -43,6 +46,7 @@ export function recoverNativeReview(wb:Workbench,input:unknown){
  if(terminal?.eventType==='grok/end'&&terminal.stopReason==='cancelled'&&finalText===undefined){
   return wb.transaction(()=>{
    const current=wb.get('agent_jobs',job.id);current.session_id=sessionId;current.actual_model=terminal?.model||current.actual_model||null;current.usage=terminal?.usage||current.usage;current.native_stop_reason=terminal?.stopReason;
+    current.interruption=current.interruption||interruption||classifyReviewInterruption(terminal?.stopReason);current.verification_limits=[...new Set([...(current.verification_limits||[]),...current.interruption.verification_limits])];
    if(!current.native_output_recovery){const input=usageInputFromOutput({...current,id:job.id,client_kind:job.route.client,agent_id:a.reviewer_id},terminal!,1,now());if(input)recordUsageEvent(wb,input);}
    current.native_output_recovery={stdout_sha256:sha256,at:now()};wb.put('agent_jobs',current,{run_id:run.id});
    a.session_id=sessionId;wb.put('review_assignments',a,{run_id:run.id});bindReviewContextSession(wb,a.id,job.id);

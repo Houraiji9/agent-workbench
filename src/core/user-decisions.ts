@@ -20,6 +20,35 @@ export function decisionView(wb:Workbench,d:Row):Row{
   const t=wb.get('tasks',d.task_id);
   return binding(wb,t)===d.binding?d:{...d,status:'stale'};
 }
+
+/** Expiry only refreshes the confirmation card; it never repeats development or review. */
+export function refreshDecision(wb:Workbench,decisionId:string){
+  assert(!wb.managementContext.getStore(),'请在工作台页面刷新确认事项',403);
+  return wb.transaction(()=>{
+    const d=wb.get('user_decisions',decisionId),t=wb.get('tasks',d.task_id);
+    assert(d.status==='pending','确认事项已处理，请刷新查看',409);
+    assert(t.current_run_id===d.run_id&&binding(wb,t)===d.binding,'任务或交付已变化，请按当前内容重新准备确认；无需因卡片过期重做开发或审查',409);
+    if(Date.parse(d.expires_at)>Date.now())return decisionReceipt(wb,d);
+    const refreshed={...d,expires_at:new Date(Date.now()+30*60*1000).toISOString(),refreshed_at:now(),refresh_count:(d.refresh_count||0)+1};
+    save(wb,refreshed);wb.audit('user','refresh_user_decision',d.id,{task_id:t.id,run_id:d.run_id});return decisionReceipt(wb,refreshed);
+  });
+}
+
+/** Only explicitly linked stages can share a page confirmation. Each selected card is checked. */
+export function resolveDecisionGroup(wb:Workbench,decisionIds:string[]){
+  assert(!wb.managementContext.getStore(),'管理连接不能代用户验收',403);
+  assert(decisionIds.length>0&&decisionIds.length<=30&&new Set(decisionIds).size===decisionIds.length,'请选择不重复的确认事项');
+  return wb.transaction(()=>{
+    const cards=decisionIds.map(id=>wb.get('user_decisions',id));
+    const group=wb.get('tasks',cards[0].task_id).delivery_group_id;
+    assert(group,'这些任务未登记共同交付关系',409);
+    for(const d of cards){
+      assert(d.action==='accept'&&wb.get('tasks',d.task_id).delivery_group_id===group,'仅可合并同一交付关系的验收事项',409);
+      assert(['pending','confirmed'].includes(decisionView(wb,d).status),'确认事项已过期或任务已变化，请先刷新',409);
+    }
+    return {delivery_group_id:group,results:cards.map(d=>resolveDecision(wb,d.id,'confirm'))};
+  });
+}
 export function decisionReceipt(wb:Workbench,d:Row){
   const current=decisionView(wb,d);
   return {request_id:d.request_id,status:current.status==='pending'?'awaiting_user_confirmation':current.status,
@@ -76,7 +105,7 @@ export function resolveDecision(wb:Workbench,decisionId:string,choice:'confirm'|
     if(d.status==='confirmed'&&choice==='confirm'||d.status==='cancelled'&&choice==='cancel')return decisionReceipt(wb,d);
     assert(d.status==='pending','确认事项已处理，请刷新查看',409);
     if(choice==='cancel'){save(wb,{...d,status:'cancelled',ended_at:now()});wb.audit('user','cancel_user_decision',d.id,{task_id:d.task_id});return decisionReceipt(wb,wb.get('user_decisions',d.id))}
-    assert(decisionView(wb,d).status==='pending','确认事项已过期或任务已变化，请让 Agent 重新准备',409);
+    assert(decisionView(wb,d).status==='pending','确认事项已过期或任务已变化，请刷新确认事项',409);
     const v=d.payload;let outcome:unknown;
     if(d.action==='accept')outcome=wb.accept(d.task_id,{revision:d.revision,mode:'user_experience',user_checks:d.checks.map(()=>true)});
     else if(d.action==='reject'){const {action:_,task_id,...data}=v;outcome=rejectAcceptance(wb,d.task_id,data)}

@@ -1,4 +1,8 @@
+import {applyReviewEdit} from '../core/review-replacement.ts';
 import {setTaskReviewArrangement} from '../core/review-workflow.ts';
+import {getOnboardingContext,verifyWorkbenchConnection,onboardingConnectionInput} from '../core/onboarding.ts';
+import {recordOnboardingModels} from '../core/onboarding-models.ts';
+import {refreshOnboardingModels,executeOnboardingDiagnostic} from '../core/onboarding-diagnostics.ts';
 import {projectMemoryHistory} from '../core/memory-management.ts';
 import {resolveRunnerRun,resolveRunnerContinuationScope} from '../core/run-continuation-scope.ts';
 import {handoffId,handoffCredentialPath,openReviewHandoff,openReviewContext,claimReviewHandoff,peerDispatchInput,peerJobInput} from '../core/open-review-handoff.ts';
@@ -18,7 +22,7 @@ import {executionContext,acknowledgeContext,reportActivity,dispatchBrief,prepare
 import {reportDeployment} from '../core/runtime-delivery.ts';
 import {getDeploymentEvidenceContext,reportDeploymentEvidence} from '../core/deployment-evidence.ts';
 import {relationshipGraph} from '../shared/workflow-view.ts';
-import {resolveDecision} from '../core/user-decisions.ts';
+import {resolveDecision,refreshDecision,resolveDecisionGroup} from '../core/user-decisions.ts';
 import {reportReviewHandoff} from '../core/review-workflow.ts';
 import {getCloseoutContext,exportCloseoutOrder,closeoutInput} from '../core/closeout.ts';
 import {getReviewContext,submitGrokReview,revokeReview,reviewContextInput,readGrokTrace,type TraceReader} from '../core/review-evidence.ts';
@@ -58,7 +62,7 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
   const readReviewTrace=grokTraceReader||((sid:string)=>readGrokTrace(sid,config.review?.grokExecutable||process.env.WORKBENCH_GROK_EXECUTABLE||'grok'));
   const importingReviews=new Set<string>();
   const openProject=(projectId:string)=>{const p=wb.get('projects',projectId);const folder=safePath(p.source_root||p.paths[0],config.authorizedRoots);assert(!wb.privatePath(folder),'项目目录不可用');assert(process.platform==='win32','当前系统未实现目录打开');spawn('explorer.exe',[folder],{shell:false,windowsHide:true,detached:true,stdio:'ignore'}).unref();return {opened:true,folder}};
-  const managementServices={integrations,readReviewTrace,revealArtifact,openProject};
+  const managementServices={integrations,readReviewTrace,revealArtifact,openProject,agents};
   const importReview=async(b:Row,caller:ReviewCaller)=>{const key=String(b.run_id);assert(!importingReviews.has(key),'这次审查正在核验，请稍后重试',409);importingReviews.add(key);try{return await submitGrokReview(wb,b,caller,readReviewTrace)}finally{importingReviews.delete(key)}};
   const sessions=new Map<string,{csrf:string;created:number}>();
   app.setErrorHandler((e:any,_req,res)=>res.code(e instanceof DomainError?e.status:e instanceof z.ZodError?400:e.statusCode||500).send({error:e instanceof z.ZodError?'输入格式不符合 schema：'+e.issues.map((i:Row)=>i.path.join('.')+' '+i.message).join('; '):e.statusCode===500?'服务内部错误，请检查运行日志':e.message}));
@@ -79,6 +83,7 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
   app.get('/api/health',async()=>({ok:true,app:'agent-workbench',version:fs.existsSync(path.join(config.root,'package.json'))?JSON.parse(fs.readFileSync(path.join(config.root,'package.json'),'utf8')).version:'unknown',pid:process.pid}));
   app.get('/api/bootstrap',async(_req,res)=>{const sid=secret(),csrf=secret();for(const[k,v]of sessions)if(Date.now()-v.created>12*3600000)sessions.delete(k);sessions.set(sid,{csrf,created:Date.now()});res.header('Set-Cookie',`wb_session=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200`);return {csrf,...wb.snapshot()}});
   app.get('/api/state',async()=>wb.snapshot());
+  app.get('/api/onboarding',async()=>getOnboardingContext(wb));
   registerProjectManagementRoutes(app,wb,revealArtifact);
   app.get('/api/agent-clients',async()=>agents.capabilities());
   app.post('/api/agent-clients/refresh',async()=>{await discoverAgentClients({dataDir:config.dataDir,force:true});return agents.capabilities()});
@@ -90,9 +95,10 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
   app.post<{Params:{id:string};Body:Row}>('/api/tasks/:id/dispatch-review',async req=>agents.dispatchReview(dispatchBody(req.params.id,req.body)));
   app.post<{Params:{id:string}}>('/api/user-decisions/:id/:choice',async req=>{
     assert(!req.headers.authorization,'确认事项请使用工作台页面',403);
-    const params=z.object({id:z.string(),choice:z.enum(['confirm','cancel'])}).parse(req.params);
-    z.object({}).strict().parse(req.body);return resolveDecision(wb,params.id,params.choice);
+    const params=z.object({id:z.string(),choice:z.enum(['confirm','cancel','refresh'])}).parse(req.params);
+    z.object({}).strict().parse(req.body);return params.choice==='refresh'?refreshDecision(wb,params.id):resolveDecision(wb,params.id,params.choice);
   });
+  app.post('/api/user-decision-groups/confirm',async req=>{const v=z.object({decision_ids:z.array(z.string()).min(1).max(30)}).strict().parse(req.body);return resolveDecisionGroup(wb,v.decision_ids)});
   app.get('/api/events',async(req,res)=>{
     res.hijack();res.raw.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});res.raw.write('event: ready\ndata: {}\n\n');const onChange=()=>res.raw.write('event: changed\ndata: {}\n\n');wb.on('change',onChange);const timer=setInterval(()=>res.raw.write(': heartbeat\n\n'),20000);req.raw.on('close',()=>{clearInterval(timer);wb.off('change',onChange)});
   });
@@ -139,13 +145,13 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
   app.post<{Params:{id:string}}>('/api/tasks/:id/rework',async req=>reworkOrder(wb,req.params.id,req.body));
   app.post('/api/receipts',async req=>wb.event(req.body,undefined,'user_imported'));
   app.get<{Params:{id:string}}>('/api/tasks/:id/review-candidates',async req=>reviewCandidates(wb,req.params.id));
-  app.post<{Params:{id:string}}>('/api/tasks/:id/review-arrangement',async req=>setTaskReviewArrangement(wb,req.params.id,req.body,{role:'user'}));
+  app.post<{Params:{id:string};Body:Row}>('/api/tasks/:id/review-arrangement',async req=>{const t=wb.get('tasks',req.params.id);return t.current_run_id?applyReviewEdit(wb,agents,'arrangement',{...req.body,run_id:t.current_run_id},{role:'user'}):setTaskReviewArrangement(wb,t.id,req.body,{role:'user'});});
   app.post<{Params:{id:string};Body:Row}>('/api/tasks/:id/reviews/manage',async req=>{
     const {action,...data}=req.body,t=wb.get('tasks',req.params.id);assert(data.run_id===t.current_run_id,'请使用当前执行记录',409);
     if(action==='add')return exportReviewOrder(wb,data,{role:'user'});
     if(action==='decide')return decideReviewCollaboration(wb,data,{role:'user'});
-    if(action==='arrange')return setReviewArrangement(wb,data,{role:'user'});
-    return updateReviewMember(wb,{...data,action},{role:'user'});
+    if(action==='arrange')return applyReviewEdit(wb,agents,'arrangement',data,{role:'user'});
+    return applyReviewEdit(wb,agents,'member',{...data,action},{role:'user'});
   });
   app.post('/api/closeout-orders',async req=>exportCloseoutOrder(wb,req.body));
   app.post('/api/review-orders',async req=>exportReviewOrder(wb,req.body,{role:'user'}));
@@ -206,6 +212,14 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
     const callerJob=role==='runner'?authenticateExecutionJob(wb,scope!,req.headers['x-workbench-execution-job-id'],req.headers['x-workbench-execution-job-token']):undefined;
     if(role==='runner'){scope=tool==='continue_run'?resolveRunnerContinuationScope(wb,scope!,b.request_id):resolveRunnerRun(wb,scope!);if(['report_run_event','submit_run_result'].includes(tool))assert(b.run_id===scope,'旧执行的完整回执不能提交到新Run；请读取当前上下文并使用report_run_activity',409);else b.run_id=scope;}
     if(role==='planner'&&tool==='get_project_memories')return projectMemories(wb,b);
+    if(['get_onboarding_context','verify_workbench_connection','record_onboarding_models','refresh_onboarding_models','run_onboarding_diagnostic'].includes(tool)){
+      assert(role==='manager','首次接入与全机团队核对请使用管理连接',403);
+      if(tool==='get_onboarding_context'){onboardingConnectionInput.parse(b);return getOnboardingContext(wb);}
+      if(tool==='verify_workbench_connection')return verifyWorkbenchConnection(wb,b,{instance:String(req.headers['x-workbench-mcp-instance']||''),client:String(req.headers['x-workbench-mcp-client']||''),version:String(req.headers['x-workbench-mcp-client-version']||'')});
+      if(tool==='record_onboarding_models')return recordOnboardingModels(wb,b,'manager');
+      if(tool==='refresh_onboarding_models')return refreshOnboardingModels(wb,b,'manager');
+      return executeOnboardingDiagnostic(wb,b,'manager');
+    }
     if(Object.hasOwn(managementTools,tool)||Object.hasOwn(managementReadTools,tool)){
       assert(['manager','runner','reviewer'].includes(role),'请使用当前会话管理或执行、审查连接',403);
       const caller=role==='manager'?{role:'manager' as const,id:'manager'}:sessionCaller(wb,role as 'runner'|'reviewer',scope!);

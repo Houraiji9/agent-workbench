@@ -65,8 +65,56 @@ function createUpdater({root,dataDir,packaged,platform=process.platform,arch=pro
   let release=null,job=null,zipHash=null,busy=false;
   const get=()=>({...state});const set=patch=>{state={...state,...patch};return get();};
   const result=path.join(dir,'last-result.json');
+  const recoveryFile=path.join(dir,'download-recovery.json');
+  // Atomic pointer only: older jobs, installer results and backups remain intact.
+  const atomicRecovery=record=>{
+    plain(recoveryFile);
+    const temporary=recoveryFile+'.'+crypto.randomUUID()+'.tmp';
+    const fd=fs.openSync(temporary,'wx');
+    try{fs.writeFileSync(fd,JSON.stringify(record,null,2));fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+    fs.renameSync(temporary,recoveryFile);
+  };
+  const saveRecovery=phase=>atomicRecovery({schema:1,product:PRODUCT,currentVersion:current,version:release.version,
+    source:API,release:{tag_name:'v'+release.version,body:release.notes,assets:[release.zip,release.sums]},
+    job:path.basename(job.dir),file:release.zip.name,sha256:zipHash,stage:supported?'extracted/AgentWorkbench':null,prepared:supported,phase});
+  function controlled(base,relative) {
+    const file=path.resolve(base,relative),rel=path.relative(base,file);
+    if(!rel||rel==='..'||rel.startsWith('..'+path.sep)||path.isAbsolute(rel))throw Error('恢复路径超出更新目录');
+    plain(file);
+    if(fs.realpathSync(file)!==file)throw Error('恢复路径不是受控普通路径');
+    return file;
+  }
+  async function validateRecovered(record) {
+    plain(recoveryFile);
+    if(record.schema!==1||record.product!==PRODUCT||record.source!==API||record.phase!=='downloaded'||
+      record.currentVersion!==current||typeof record.sha256!=='string'||!/^[a-f0-9]{64}$/.test(record.sha256)||
+      typeof record.job!=='string'||!/^[a-f0-9-]{36}$/.test(record.job))throw Error('恢复描述无效或阶段不允许恢复');
+    const info=releaseInfo(record.release);
+    if(info.version!==record.version||!newer(info.version,current)||record.file!==info.zip.name||
+      record.prepared!==supported||record.stage!==(supported?'extracted/AgentWorkbench':null))throw Error('恢复版本或安装阶段不匹配');
+    const jobDir=controlled(dir,record.job),file=controlled(jobDir,record.file);
+    if(!fs.statSync(file).isFile()||fs.statSync(file).size!==info.zip.size||await digest(file)!==record.sha256||
+      (info.zip.digest&&info.zip.digest!=='sha256:'+record.sha256))throw Error('恢复包校验失败，下载文件已改变');
+    if(supported)await validateStage(controlled(jobDir,record.stage),info.version);
+    return {info,job:{dir:jobDir,file},hash:record.sha256};
+  }
   try{plain(result);const r=JSON.parse(fs.readFileSync(result,'utf8'));if(r.status==='ready'&&r.version===current)state.message='已更新至 v'+current;else if(r.status==='error')state.message=r.message;}catch{}
+  const ready=(async()=>{
+    try {
+      plain(recoveryFile);
+      if(!fs.existsSync(recoveryFile)){
+        if(fs.existsSync(dir)&&fs.readdirSync(dir).some(name=>/^[a-f0-9-]{36}$/.test(name)))throw Error('恢复描述缺失；下载证据已保留，请检查更新目录');
+        return;
+      }
+      set({status:'recovering',message:'正在校验上次下载…'});
+      if(fs.statSync(recoveryFile).size>65536)throw Error('恢复描述过大');
+      const recovered=await validateRecovered(JSON.parse(fs.readFileSync(recoveryFile,'utf8')));
+      release=recovered.info;job=recovered.job;zipHash=recovered.hash;
+      set({status:'downloaded',latestVersion:release.version,releaseUrl:release.url,notes:release.notes,progress:100,message:'已恢复上次下载并通过校验'});
+    }catch(e){set({status:'error',message:'更新恢复失败：'+e.message});}
+  })();
   async function action(kind) {
+    await ready;
     if(busy)return get();busy=true;
     try {
       if(kind==='check') {
@@ -82,38 +130,41 @@ function createUpdater({root,dataDir,packaged,platform=process.platform,arch=pro
         set({status:'downloading',message:'正在下载新版…',progress:0});
         zipHash=await download(release,job.file,p=>set({progress:p}),fetcher);
         if(supported){set({status:'preparing',message:'正在检查安装文件…',progress:100});await extract(job.file,path.join(jobDir,'extracted'));await validateStage(path.join(jobDir,'extracted/AgentWorkbench'),release.version);}
+        saveRecovery('downloaded');
         return set({status:'downloaded',message:supported?'新版已准备好':'便携包已下载，可在文件夹中查看',progress:100});
       }
       if(kind==='open-download') {
-        if(!job||state.status!=='downloaded')throw Error('请先下载新版');plain(job.dir);await openFolder(job.dir);return get();
+        if(!job||state.status!=='downloaded')throw Error('请先下载新版');await validateRecovered(JSON.parse(fs.readFileSync(recoveryFile,'utf8')));await openFolder(job.dir);return get();
       }
       if(kind==='install') {
         if(!supported||state.status!=='downloaded'||!job)throw Error('请先下载官方便携版');
+        await validateRecovered(JSON.parse(fs.readFileSync(recoveryFile,'utf8')));
         checkInstallRoot(root,dataDir);if(await digest(job.file)!==zipHash)throw Error('下载文件已改变，请重新下载');
         const stage=path.join(job.dir,'extracted/AgentWorkbench');await validateStage(stage,release.version);
         for(const name of ['update-install.cjs','update-files.cjs'])fs.copyFileSync(path.join(__dirname,name),path.join(job.dir,name));
         fs.copyFileSync(node,path.join(job.dir,'node.exe'));
         writeJson(path.join(job.dir,'job.json'),{root,dataDir,stage,backup:path.join(job.dir,'previous-program'),version:release.version,parentPid:process.pid});
+        saveRecovery('installing');
         set({status:'installing',message:'正在退出并安装更新…'});
         const ok=await stop(async()=>{
           const out=fs.openSync(path.join(job.dir,'install.log'),'a');
           const child=spawn(path.join(job.dir,'node.exe'),[path.join(job.dir,'update-install.cjs'),path.join(job.dir,'job.json')],{cwd:job.dir,detached:true,windowsHide:true,stdio:['ignore',out,out]});fs.closeSync(out);
           await new Promise((resolve,reject)=>{child.once('error',reject);child.once('spawn',resolve);});child.unref();
         });
-        if(ok===false)throw Error('工作台尚未完成退出，请稍后重试');return get();
+        if(ok===false){saveRecovery('downloaded');throw Error('工作台尚未完成退出，请稍后重试');}return get();
       }
       throw Error('未知更新操作');
     }catch(e){return set({status:'error',message:e.message?.includes('fetch')||e.name==='TimeoutError'?'连接超时，请检查网络后重试':e.message||'更新未完成，请稍后重试'});}
     finally{busy=false;}
   }
   function markReady(){try{plain(result);if(fs.existsSync(result)){const r=JSON.parse(fs.readFileSync(result,'utf8'));if(r.status==='installed'&&r.version===current){writeJson(result,{...r,status:'ready'});set({message:'已更新至 v'+current});}}}catch{}}
-  return {get,action,markReady};
+  return {get,action,markReady,ready};
 }
 function installUpdater({win,ipcMain,base,...options}) {
   const updater=createUpdater(options);
   ipcMain.handle('workbench:update',async(event,kind)=>{
     if(win.isDestroyed()||!trustedPage(event,win.webContents,base))throw Error('更新入口不可用');
-    if(kind==='status')return updater.get();
+    if(kind==='status'){await updater.ready;return updater.get();}
     if(!['check','download','install','open-download'].includes(kind))throw Error('未知更新操作');
     return updater.action(kind);
   });return updater;

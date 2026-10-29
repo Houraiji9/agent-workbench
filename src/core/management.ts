@@ -1,3 +1,8 @@
+import {taskStatus,taskStatusOptions} from './task-status.ts';
+import {releaseHandoffInput,createReleaseHandoff,releaseSourceStatus} from './release-handoff.ts';
+import {evidencePreflightInput,runEvidencePreflight} from './run-evidence-preflight.ts';
+import {applyReviewEdit} from './review-replacement.ts';
+import type {AgentOrchestrator} from './agent-orchestration.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import {z} from 'zod';
@@ -29,7 +34,7 @@ import {arrangementProposalInput,proposeTaskArrangement,arrangementInput,changeT
 const text=z.string().trim().min(1).max(20000),key=text.max(200),version=z.number().int().positive();
 const action=<T extends z.ZodRawShape>(name:string,fields:T)=>z.object({action:z.literal(name),...fields}).strict();
 const envelope=(change:z.ZodTypeAny)=>z.object({request_id:z.string().uuid(),user_instruction:text.min(2).describe('本会话用户的明确要求；保存原话和实际办理者，不冒充用户或他人的报告。'),change}).strict();
-export type ManagementServices={integrations:Integrations;readReviewTrace:TraceReader;revealArtifact:typeof revealFile;openProject:(projectId:string)=>unknown};
+export type ManagementServices={agents?:AgentOrchestrator;integrations:Integrations;readReviewTrace:TraceReader;revealArtifact:typeof revealFile;openProject:(projectId:string)=>unknown};
 type Context={wb:Workbench;services:ManagementServices;caller?:ManagementCaller;user_instruction?:string};
 const reviewCaller=(ctx:Context)=>({role:ctx.caller?.role==='runner'?'runner' as const:ctx.caller?.role==='reviewer'?'reviewer' as const:'planner' as const,id:ctx.caller?.id||'manager',user_instruction:ctx.user_instruction,source:'conversation'});
 type Tool={description:string;schema:z.AnyZodObject;execute:(ctx:Context,v:any)=>any;asynchronous?:boolean|((v:any)=>boolean)};
@@ -76,12 +81,13 @@ export const managementTools:Record<string,Tool>={
     return wb.confirmSubscription(v.subscription_id,{version:v.version,occurred_at:v.occurred_at,note:v.note,end_date:v.end_date});
   }},
   manage_tasks:{description:'按用户会话中的决定标记已转发、取消、保存回答、验收通过或退回、新开返工。验收和退回只准备待用户确认卡片，用户在首页点击后才生效。',schema:envelope(z.discriminatedUnion('action',[
-    action('dispatch',{task_id:key,revision:version}),action('cancel',{task_id:key,revision:version}),
+    action('create_release',{data:releaseHandoffInput}),action('dispatch',{task_id:key,revision:version}),action('cancel',{task_id:key,revision:version}),
     action('reply',{task_id:key,data:replySchema}),action('accept',{task_id:key,run_id:key,revision:version}),
     action('reject',{task_id:key,revision:version,run_id:key,note:text.max(10000),artifact_hashes:z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(1),followup_task_id:key.optional()}),
     action('rework',{task_id:key,revision:version,feedback_id:key}),
     action('propose_arrangement',{task_id:key,data:arrangementProposalInput}),action('set_arrangement',{task_id:key,data:arrangementInput}),action('amend',{data:taskAmendmentInput})
-  ])),asynchronous:v=>v.action==='rework',execute:({wb},v)=>{
+  ])),asynchronous:v=>v.action==='rework',execute:({wb,caller},v)=>{
+    if(v.action==='create_release')return createReleaseHandoff(wb,v.data,{role:caller?.role||'manager',id:caller?.id||'manager',source:'conversation'});
     if(v.action==='reply')return wb.saveReply(v.task_id,v.data);
     if(v.action==='amend')return amendTask(wb,v.data);
     if(v.action==='propose_arrangement')return proposeTaskArrangement(wb,v.task_id,v.data);
@@ -94,10 +100,10 @@ export const managementTools:Record<string,Tool>={
     action('assign',{data:reviewOrderInput}),action('revoke',{review_id:key,run_id:key,revision:version,reason:text.min(5).max(2000)}),
     action('update_member',{data:reviewMemberInput}),action('decide',{data:reviewDecisionInput}),action('set_arrangement',{data:reviewArrangementInput}),
     action('return_to_executor',{run_id:key,revision:version})
-  ])),asynchronous:v=>['return_to_executor','assign','update_member'].includes(v.action),execute:(ctx,v)=>{const {wb}=ctx,caller=reviewCaller(ctx);
+  ])),asynchronous:v=>['return_to_executor','assign','update_member','set_arrangement'].includes(v.action),execute:(ctx,v)=>{const {wb}=ctx,caller=reviewCaller(ctx);
     if(v.action==='assign')return exportReviewOrder(wb,v.data,caller);
-    if(v.action==='update_member')return updateReviewMember(wb,v.data,caller);
-    if(v.action==='set_arrangement')return setReviewArrangement(wb,v.data,caller);
+    if(v.action==='update_member')return applyReviewEdit(wb,ctx.services.agents,'member',v.data,caller);
+    if(v.action==='set_arrangement')return applyReviewEdit(wb,ctx.services.agents,'arrangement',v.data,caller);
     if(v.action==='decide')return decideReviewCollaboration(wb,v.data,caller);
     if(v.action==='revoke')return revokeReview(wb,v.review_id,{run_id:v.run_id,revision:v.revision,reason:v.reason});
     return reviewFeedbackOrder(wb,v.run_id,v.revision);
@@ -140,7 +146,7 @@ export function managementContext(wb:Workbench,input:unknown){
   }
   if(v.project_id){wb.get('projects',v.project_id);for(const k of ['requests','tasks','memories','user_decisions'])if(out[k])out[k]=out[k].filter((r:Row)=>r.project_id===v.project_id);if(out.projects)out.projects=out.projects.filter((p:Row)=>p.id===v.project_id)}
   if(out.memories){const all=out.memories;out.memories=all.filter((m:Row)=>m.status!=='superseded').slice(-12).reverse().map((m:Row)=>({id:m.id,project_id:m.project_id,kind:m.kind,status:m.status,source_id:m.source_id,content_preview:m.content.slice(0,160)}));out.memory_index={total:all.length,read_tool:'get_project_memories',note:'短索引不是必读全文；按项目与编号补读相关经验。'};}
-  if(v.task_id){const detail=wb.taskDetail(v.task_id);assert(!v.project_id||detail.task.project_id===v.project_id,'任务不属于所选项目',409);out.task_detail=detail}
+  if(v.task_id){const detail=wb.taskDetail(v.task_id);assert(!v.project_id||detail.task.project_id===v.project_id,'任务不属于所选项目',409);out.task_detail=taskStatus(wb,v.task_id)}
   return out;
 }
 export const managementResultInput=z.object({request_id:z.string().uuid()}).strict();
@@ -150,7 +156,9 @@ export const managementReadTools={
   get_project_memories:{description:'分页查询项目经验短索引，按编号读取相关全文；已读content_hash用于增量，不要求每轮全读。',schema:projectMemoryInput},
   get_management_context:{description:'读取可管理项目、需求、团队、额度、订阅、任务和当前版本；修改前先读取。',schema:managementContextInput},
   get_management_result:{description:'按操作编号查询是否已保存、失败或中断；重试前核对，避免重复操作。',schema:managementResultInput},
-  get_task_detail:{description:'读取任务、执行、问题回答、产物与审查完整记录。',schema:z.object({task_id:key}).strict()},
+  get_task_detail:{description:'默认读取不超过20KiB的当前状态及证据索引；detail=full保留完整记录，section/id按需展开。',schema:taskStatusOptions.extend({task_id:key})},
+  preflight_run_evidence:{description:'只读检查交付附件和受审文件的元数据，一次返回现行大小限制及全部缺失、越权、超限问题，不写入产物。',schema:evidencePreflightInput},
+  get_release_source:{description:'读取显式发布阶段的原始审查引用及当前指纹适用性，不产生新的审查通过。',schema:z.object({task_id:key}).strict()},
   get_planning_entry:{description:'读取指定需求当前版本及规划指令。',schema:z.object({request_id:key}).strict()},
   search_external_history:{description:'通过 AgentsView 搜索外部会话，返回真实来源和连接状态；source_project 为上游项目名。',schema:z.object({query:z.string().trim().min(1).max(200),source_project:key.optional(),agent:key.optional(),from:key.optional(),to:key.optional(),cursor:z.number().int().min(0).optional()}).strict()},
   get_session_messages:{description:'分页读取已登记会话消息。',schema:z.object({session_id:key,from:z.number().int().min(0).default(0)}).strict()},
@@ -162,7 +170,9 @@ export async function readManagement(wb:Workbench,services:ManagementServices,na
   if(name==='get_project_memories')return projectMemories(wb,v);
   if(name==='get_project_files')return getProjectFiles(wb,v,{actor:'agent',actor_id:caller.id,run_id:caller.run_id,project_ids:caller.project_ids});
   if(name==='get_management_result'){const call=wb.get('management_calls',v.request_id);return call.decision_id?{...call,...decisionReceipt(wb,wb.get('user_decisions',call.decision_id))}:call}
-  if(name==='get_task_detail')return wb.taskDetail(v.task_id);
+  if(name==='get_task_detail'){const {task_id,...options}=v;return taskStatus(wb,task_id,options);}
+  if(name==='preflight_run_evidence')return runEvidencePreflight(wb,v);
+  if(name==='get_release_source')return releaseSourceStatus(wb,v.task_id);
   if(name==='get_planning_entry')return wb.planningEntry(v.request_id);
   if(name==='search_external_history')return services.integrations.search(v);
   if(name==='get_session_messages')return services.integrations.sessionPage(v.session_id,v.from);

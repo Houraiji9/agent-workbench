@@ -1,0 +1,14 @@
+Available models
+
+auto - Auto (default)
+gpt-5.3-codex-low - Codex 5.3 Low
+gpt-5.3-codex-low-fast - Codex 5.3 Low Fast
+composer-2.5 - Composer 2.5
+claude-opus-5-thinking-high - Claude Opus 5 1M Thinking
+gpt-5.6-sol-high - GPT-5.6 Sol 1M High
+cursor-grok-4.5-high - Grok 4.5
+claude-fable-5-thinking-xhigh - Claude Fable 5 1M Extra High Thinking (NO ZDR)
+grok-4.7-xhigh-fast - Grok 4.7  Extra High Fast​​
+deepseek-v41-flash-1017-max - DeepSeek V4.1 Flash 1017 Max
+
+Tip: use --model <id> (or /model <id> in interactive mode) to switch. Parameterized models also accept quoted overrides, e.g. --model 'claude-opus-4-8[context=1m,effort=high,fast=false]'.

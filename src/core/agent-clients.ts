@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
-import {readHarnessModelRoutes,resolveHarnessProvider} from './harness-models.ts';
+import {readHarnessConfigurationEvidence,resolveHarnessProvider} from './harness-models.ts';
+import {staticRouteDiagnostics} from './agent-route-diagnostics.ts';
 import {supportsCursorPlanMode} from './client-discovery.ts';
 import type {ClientRecord} from './client-discovery.ts';
 export {discoverAgentClients, readClientCapabilities, resolveAgentClient, publicClientCapabilities, setClientOverride} from './client-discovery.ts';
@@ -10,7 +11,7 @@ export {parseAgentOutput, createAgentOutputParser} from './agent-output.ts';
 export type {ParsedAgentOutput, AgentUsage} from './agent-output.ts';
 
 export type AgentInvocationOptions = {role: 'execution' | 'review'; cwd: string; artifactDir: string; model?: string | null; provider?: string; sessionId?: string; promptFile: string};
-export type AgentInvocation = {command: string; args: string[]; stdin?: string; env?: Record<string, string>; resolvedRoute?: {provider:string;model:string;source:string}};
+export type AgentInvocation = {command: string; args: string[]; stdin?: string; env?: Record<string, string>; resolvedRoute?: {provider:string;model:string;source:string};routeDiagnostics?:ReturnType<typeof staticRouteDiagnostics>};
 function scalar(value: string, name: string) {
   if (!value.trim() || value.length > 1024 || /[\x00-\x1f\x7f]/.test(value)) throw new Error(`${name} 无效`);
   return value;
@@ -38,7 +39,11 @@ export async function buildAgentInvocation(record: ClientRecord, options: AgentI
   switch (record.kind) {
     case 'dsh': {
       requireFlags(record, ['--profile', '--patch', '--json', ...(sessionId ? ['--session-id'] : [])]);
-      const provider = options.provider ? scalar(options.provider, 'provider') : model ? resolveHarnessProvider(model,await readHarnessModelRoutes(record)) : undefined;
+      const explicitProvider=options.provider?scalar(options.provider,'provider'):undefined;
+      // A failed read must not turn an explicit user route into a new permission gate.
+      const evidence=model||explicitProvider?await readHarnessConfigurationEvidence(record).catch(error=>{if(model&&!explicitProvider)throw error;return {routes:[],adapters:[]};}):{routes:[],adapters:[]};
+      const provider = explicitProvider || (model ? resolveHarnessProvider(model,evidence.routes) : undefined);
+      result.routeDiagnostics=staticRouteDiagnostics(record,{client:record.kind,model,provider},evidence.adapters);
       if(model&&provider)result.resolvedRoute={provider,model,source:options.provider?'explicit':'native_headless_config'};
       const patches: unknown[] = [
         {id: 'credentials', name: '@deepseek-ai/dsh-credentials-local', disabled: false},

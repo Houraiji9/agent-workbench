@@ -12,7 +12,7 @@ interface AgentClient {
 }
 
 const statusLabels: Record<string, string> = {
-  available: '已发现', ready: '已发现', verified: '已发现', unverified: '尚未验证', missing: '未找到', not_found: '未找到',
+  skipped: '按要求跳过', available: '已发现', ready: '已发现', verified: '已发现', unverified: '尚未验证', missing: '未找到', not_found: '未找到',
   unsupported: '暂不支持自动调用', unavailable: '暂不可用', error: '检测失败',
   auth_required: '需要登录', permission_denied: '需要权限', checking: '正在检测',
 };
@@ -59,7 +59,7 @@ export function AgentClientsCard() {
         {editing === client.kind ? <form className="agent-client-path" onSubmit={e => { e.preventDefault(); void update('/agent-clients/override', { kind: client.kind, executable: executable.trim() }, '本机路径已保存并重新检测'); }}>
           <Field label={name + ' 的程序路径'} hint="填写本机已安装程序的完整路径；仅保存在这台电脑。"><input value={executable} onChange={e => setExecutable(e.target.value)} autoFocus autoComplete="off" spellCheck={false} disabled={pending} /></Field>
           <div className="tool-row"><button className="btn small primary" disabled={pending || !executable.trim()} type="submit">保存并检测</button><button className="btn small ghost" disabled={pending} type="button" onClick={() => { setEditing(''); setExecutable(''); setError(''); }}>取消</button></div>
-        </form> : !ready && <details className="fold"><summary>高级修复</summary><button className="link small" disabled={pending} onClick={() => { setEditing(client.kind); setExecutable(''); setError(''); }}>指定已安装的程序路径</button></details>}
+        </form> : !ready && client.status !== 'skipped' && <details className="fold"><summary>高级修复</summary><button className="link small" disabled={pending} onClick={() => { setEditing(client.kind); setExecutable(''); setError(''); }}>指定已安装的程序路径</button></details>}
       </li>;
     })}</ul>
   </Section>;

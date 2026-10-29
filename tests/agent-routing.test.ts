@@ -145,12 +145,15 @@ test('Grok cancelled fingerprint segment has no verdict; resumed native report c
  const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
  try{const t=planned(f);deliver(f,t.tid,t.rid);const first=o.dispatchReview(input(f,t.tid));await until(()=>fake.launches.length===1,'原生审查先启动');
   fake.launches[0].onLine(JSON.stringify({type:'text',data:'合成客户端事件：最后一次文件指纹终端调用取消，尚未回传正式报告。'}));
+  fake.launches[0].onLine(JSON.stringify({type:'tool_call_update',status:'failed',errorCode:'approval_required'}));
   fake.launches[0].onLine(JSON.stringify({type:'end',sessionId:'synthetic-cancelled-fingerprint',stopReason:'cancelled'}));fake.releases[0]();
   const cancelled=await terminal(f,first.job_id);assert.equal(cancelled.status,'failed');assert.equal(cancelled.native_stop_reason,'cancelled');assert.equal(cancelled.process_may_be_running,false);assert.equal(cancelled.session_id,'synthetic-cancelled-fingerprint');
   assert.equal(f.wb.all('reviews').length,0);assert.equal(f.wb.get('tasks',t.tid).status,'submitted');assert.notEqual(f.wb.get('review_assignments',first.review_id!).status,'completed');
   const before=structuredClone(f.wb.get('agent_jobs',first.job_id)),next=o.dispatchReview({...input(f,t.tid),review_id:first.review_id!});
+  assert.equal(cancelled.interruption.kind,'tool_approval_unavailable');assert.equal(cancelled.interruption.cancel_source,'unknown');assert.deepEqual(next.verification_limits,cancelled.verification_limits);
   assert.equal(next.review_id,first.review_id);assert.equal(next.session_mode,'resume');assert.equal(next.previous_job_id,first.job_id);await until(()=>fake.launches.length===2,'在客户端原生会话继续');assert.equal(fake.builds[1].sessionId,'synthetic-cancelled-fingerprint');
   const report=nativeReviewResult(f,next.review_id!,{verdict:'changes_requested',findings:['合成独立报告保留实际问题，不把无报告阶段判为通过']});
+  assert.match(fs.readFileSync(fake.builds[1].promptFile,'utf8'),/工具审批不可交互/);
   fake.launches[1].onLine(JSON.stringify({type:'text',data:JSON.stringify(report)}));fake.launches[1].onLine(JSON.stringify({type:'end',sessionId:'synthetic-cancelled-fingerprint',stopReason:'end_turn'}));fake.releases[1]();assert.equal((await terminal(f,next.job_id)).status,'completed');
   assert.equal(f.wb.all('review_assignments').length,1);assert.equal(f.wb.all('reviews').length,1);const saved=f.wb.all('reviews')[0];assert.equal(saved.review_id,first.review_id);assert.equal(saved.verdict,'changes_requested');assert.equal(saved.source,'native_client_output');assert.equal(saved.client_job_id,next.job_id);assert.equal(saved.session_id,'synthetic-cancelled-fingerprint');assert.equal(saved.report_markdown,report.report_markdown);assert.equal(f.wb.get('tasks',t.tid).status,'changes_requested');const original=f.wb.get('agent_jobs',first.job_id);assert.equal(original.status,before.status);assert.equal(original.reason,before.reason);assert.equal(original.native_stop_reason,'cancelled');assert.equal(original.session_id,before.session_id);assert.deepEqual(original.files,before.files);assert.equal(original.recovery.original_status,'failed');assert.equal(original.recovery.review_assignment_id,first.review_id);assert.equal(original.recovery.review_id,saved.id);
  }finally{await o.close();f.wb.close();}
@@ -719,7 +722,7 @@ test('R3 F2：正式submitted不能掩盖processStopped false，必须保留恢�
   }
 });
 
-test('R3 审查：RA改派或撤回会停止owned旧调用，迟到最终输出不能登记旧RA', async () => {
+test('显式停止后替换或撤回只停止owned旧调用，迟到输出不能登记旧RA', async () => {
   for (const change of ['reassigned', 'revoked'] as const) {
     const f = recoveryFixture(), fake = fakeClients(), o = new AgentOrchestrator(f.wb, fake.launcher, fake.clients);
     try {
@@ -727,6 +730,10 @@ test('R3 审查：RA改派或撤回会停止owned旧调用，迟到最终输出�
       const job = o.dispatchReview(input(f, t.tid)); await until(() => fake.launches.length === 1, 'R3 旧审查调用应启动');
       startReview(f.wb, {review_id: job.review_id!, identity: 'deepseek', session_id: 'r3-old-review'});
       const lateReport = nativeReviewResult(f, job.review_id!); let replacement: string | undefined;
+      const preparation=o.prepareReviewReplacement(t.tid,{review_id:job.review_id,mode:'stop_then_replace',expected_revision:f.wb.get('tasks',t.tid).revision,reason:'用户明确停止旧owned调用再调整审查'});
+      assert.equal(preparation.status,'pending');
+      assert.throws(()=>o.dispatchReview({...input(f,t.tid),review_id:job.review_id}),/尚未确认结束/);
+      await until(()=>f.wb.get('agent_jobs',job.job_id).process_may_be_running===false,'确认旧owned调用已退出');
       if (change === 'reassigned') {
         const changed=updateReviewMember(f.wb, {run_id: t.rid,review_id:job.review_id,action:'replace', reviewer_id: 'claude', expected_revision: f.wb.get('tasks', t.tid).revision, reason: 'R3合成正式改派，旧运行必须停止'}, {role: 'user'});assert('review_id' in changed);replacement=changed.review_id;
       } else {
@@ -738,9 +745,23 @@ test('R3 审查：RA改派或撤回会停止owned旧调用，迟到最终输出�
       assert.equal(f.wb.get('agent_jobs', job.job_id).status, 'interrupted'); assert.equal(f.wb.all('reviews').length, 0);
       assert.equal(f.wb.get('review_assignments', job.review_id!).status, change === 'reassigned' ? 'cancelled' : 'revoked');
       if (replacement) {assert.equal(f.wb.get('tasks', t.tid).current_review_assignment_id, replacement); assert.equal(f.wb.get('review_assignments', replacement).status, 'awaiting_dispatch');}
-      const audits = recoveryAudits(f, job.job_id, 'cancel_agent_job'); assert.equal(audits.length, 1); assert.equal(audits[0].actor, 'system'); assert.equal(fake.launches.length, 1);
+      const audits = recoveryAudits(f, job.job_id, 'cancel_agent_job'); assert.equal(audits.length, 1); assert.equal(audits[0].actor, 'user'); assert.equal(fake.launches.length, 1);
     } finally {await o.close();f.wb.close();}
   }
+});
+
+test('审查替换明确保留并行且拒绝跨任务、过期revision和非owned停止',async()=>{
+ const f=fixture(),fake=fakeClients(),o=new AgentOrchestrator(f.wb,fake.launcher,fake.clients);
+ try{
+  const t=planned(f);deliver(f,t.tid,t.rid);const job=o.dispatchReview(input(f,t.tid));await until(()=>fake.launches.length===1,'合成旧调用启动');
+  const choice={review_id:job.review_id,mode:'retain_parallel',expected_revision:f.wb.get('tasks',t.tid).revision,reason:'用户明确保留旧调用作为并行参考'};
+  assert.equal(o.prepareReviewReplacement(t.tid,choice).status,'ready');assert.equal(fake.launches[0].signal.aborted,false);assert.equal(o.taskJobs(t.tid)[0].replacement.mode,'retain_parallel');
+  assert.throws(()=>o.prepareReviewReplacement(t.tid,{...choice,expected_revision:choice.expected_revision+1}),/任务已变化/);
+  const other=planned(f);assert.throws(()=>o.prepareReviewReplacement(other.tid,{...choice,expected_revision:f.wb.get('tasks',other.tid).revision}),/目标审查已变化/);assert.equal(fake.launches[0].signal.aborted,false);
+  fake.releases[0]();await terminal(f,job.job_id);await new Promise(resolve=>setImmediate(resolve));
+  const stopped=f.wb.get('agent_jobs',job.job_id);f.wb.put('agent_jobs',{...stopped,status:'interrupted',process_may_be_running:true,process_end_evidence:'unknown'},{run_id:t.rid});
+  assert.throws(()=>o.prepareReviewReplacement(t.tid,{...choice,mode:'stop_then_replace',expected_revision:f.wb.get('tasks',t.tid).revision}),/非本进程持有/);
+ }finally{await o.close();f.wb.close();}
 });
 
 function r3CloseoutReady(f: F) {

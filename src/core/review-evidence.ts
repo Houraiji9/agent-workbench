@@ -1,3 +1,5 @@
+import {releaseSourceStatus} from './release-handoff.ts';
+import {EVIDENCE_LIMITS} from './evidence-preflight.ts';
 import {syncReviewCollaborationState} from './review-workflow.ts';
 import {reviewConclusion} from './review-conclusion.ts';
 export {reviewConclusion} from './review-conclusion.ts';
@@ -66,10 +68,10 @@ export function getReviewContext(wb:Workbench,runId:string){
   assert(task.current_run_id===run.id&&reviewableStates.includes(task.status),'只能审查当前已交付版本',409);
   const delivery_warnings:string[]=[];try{verifyDelivery(wb,task,run)}catch(error){delivery_warnings.push((error as Error).message)}const artifacts=wb.all('artifacts').filter(a=>a.run_id===run.id&&a.current).sort((a,b)=>a.id.localeCompare(b.id));
   assert(artifacts.length>0,'没有可审查的归档产物');
-  for(const a of artifacts){const file=safePath(a.archive_path,[path.join(wb.config.dataDir,'artifacts')]);assert(hash(readBounded(file,20*1024*1024))===a.sha256,'归档产物已变化，需重新交付',409)}
+  for(const a of artifacts){const file=safePath(a.archive_path,[path.join(wb.config.dataDir,'artifacts')]);assert(hash(readBounded(file,EVIDENCE_LIMITS.file_bytes))===a.sha256,'归档产物已变化，需重新交付',409)}
   const binding={task_id:task.id,run_id:run.id,task_version:task.version,...(run.scope_revision?{scope_revision:run.scope_revision}:{}),reviewer_id:task.reviewer_id,artifacts:artifacts.map(a=>({id:a.id,sha256:a.sha256})),review_files:run.review_files||[]};
   const {reviewer_id:_reviewer,...deliveryBinding}=binding;const digest=hash(JSON.stringify(deliveryBinding));
-  return {...binding,delivery_warnings,review_scope:reviewScope(task,run),title:task.title,revision:task.revision,review_digest:digest,cwd:run.cwd,run_directory:run.directory,
+  return {...binding,source_coverage:run.source_coverage||{status:'unknown'},source_delivery:task.source_delivery?releaseSourceStatus(wb,task.id):null,evidence_limits:EVIDENCE_LIMITS,delivery_warnings,review_scope:reviewScope(task,run),title:task.title,revision:task.revision,review_digest:digest,cwd:run.cwd,run_directory:run.directory,
     artifacts:artifacts.map(a=>({id:a.id,label:a.label,sha256:a.sha256,archive_path:a.archive_path})),
     final_response:{task_id:task.id,run_id:run.id,review_digest:digest,verdict:'passed 或 changes_requested',findings:['实际发现的问题；没有则空数组'],limitations:['未验证的范围；没有则空数组']},
     instructions:task.reviewer_id==='grok-build'?'由独立 Grok Build 检查当前交付，以 final_response 返回 JSON；完成后 submit_grok_review 回传真实 session_id。若资源不足，先 get_review_candidates 再 export_review_order 改派。':'先 get_review_candidates 核对资源，再 export_review_order 生成可复制的审查单。审查者用独立审查 MCP 或执行单内的 review 命令接单、提交报告。'};

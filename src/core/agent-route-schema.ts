@@ -28,5 +28,6 @@ export const agentJobInput=z.object({
 }).strict();
 export const agentControlInput=z.object({job_id:z.string().regex(/^AJ-[a-f0-9-]{36}$/),expected_revision:z.number().int().positive(),reason:z.string().trim().min(5).max(2000)}).strict();
 export const agentRecoveryInput=agentControlInput.extend({confirmed:z.literal(true)}).strict();
+export const reviewReplacementInput=z.object({review_id:z.string().regex(/^RA-[a-f0-9-]{36}$/),mode:z.enum(['retain_parallel','stop_then_replace']),expected_revision:z.number().int().positive(),reason:z.string().trim().min(5).max(2000)}).strict();
 export const mainExecutionControlInput=z.object({expected_revision:z.number().int().positive(),main_execution_control:z.enum(['user','automatic'])}).strict();
 export type AgentRoute=z.infer<typeof agentRouteSchema>;

@@ -1,3 +1,4 @@
+import {EVIDENCE_LIMITS} from './evidence-preflight.ts';
 import {verifyRuntime} from './runtime-delivery.ts';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -52,10 +53,10 @@ export function restoreCloseoutStatus(wb:Workbench,t:Row,r:Row){
 }
 export function verifyDelivery(wb:Workbench,t:Row,r:Row,options:{allowSuccessor?:boolean}={}):Array<SuccessorEvidence&{path:string;sha256:string}>{
   const evidence:Array<SuccessorEvidence&{path:string;sha256:string}>=[];
-  for(const a of artifacts(wb,r.id))assert(hash(readBounded(safePath(a.archive_path,[path.join(wb.config.dataDir,'artifacts')]),20*1024*1024))===a.sha256,'归档产物已被更改，请新开执行重新交付和审查',409);
+  for(const a of artifacts(wb,r.id))assert(hash(readBounded(safePath(a.archive_path,[path.join(wb.config.dataDir,'artifacts')]),EVIDENCE_LIMITS.file_bytes))===a.sha256,'归档产物已被更改，请新开执行重新交付和审查',409);
   for(const f of r.review_files||[]){
     assert(fs.existsSync(f.path),'受审文件已删除，请新开执行重新交付和审查：'+f.path,409);
-    const currentHash=hash(readBounded(safePath(f.path,t.allowed_paths),20*1024*1024));
+    const currentHash=hash(readBounded(safePath(f.path,t.allowed_paths),EVIDENCE_LIMITS.file_bytes));
     if(currentHash!==f.sha256){const successor=options.allowSuccessor?reviewedSourceSuccessor(wb,runTask(t,r),r,f.path,currentHash):null;assert(successor,'受审文件已变化，请新开执行重新交付和审查：'+f.path,409);evidence.push({...successor,path:f.path,sha256:currentHash});}
   }
   return evidence;

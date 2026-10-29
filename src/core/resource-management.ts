@@ -10,7 +10,7 @@ import { agentIconKeys } from '../shared/resource-options.ts';
 
 const text=z.string().trim().min(1).max(100);
 const kinds=z.enum(['engineering','frontend_light','review','research','operations']);
-const model=z.object({id:text,name:text,purpose:z.string().trim().max(500),access:z.string().max(300).optional(),kind:z.literal('mode').optional(),retire_at:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()}).strict();
+const model=z.object({id:text,name:text,purpose:z.string().trim().max(500),provider:z.string().min(1).max(300).optional(),status:z.enum(['advertised','configured','invocation_verified']).optional(),access:z.string().max(300).optional(),kind:z.literal('mode').optional(),retire_at:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()}).strict();
 const agentInput=z.object({version:z.number().int().nonnegative(),preset_id:z.string().max(100).nullable().optional(),name:text,scope:z.string().trim().min(1).max(10000),restriction:z.string().trim().max(10000),model:z.string().max(200).nullable(),icon_key:z.enum(agentIconKeys),allowed_kinds:z.array(kinds).min(1).max(5),models:z.array(model).max(60).refine(ms=>new Set(ms.map(m=>m.id)).size===ms.length,'模型名称不能重复')}).strict();
 const versionInput=z.object({version:z.number().int().nonnegative()}).strict();
 export function currentModels(wb:Workbench):ModelGroup[]{
@@ -38,7 +38,7 @@ export function saveAgent(wb:Workbench,aid:string|null,input:unknown):Row{
     const key=aid||id('A'),at=now(),catalogGroup=modelCatalog.find(g=>g.agent_id===aid);
     const row={...(old||{}),id:key,name:v.name,scope:v.scope,restriction:v.restriction,model:v.model,icon_key:v.icon_key,allowed_kinds:[...new Set(v.allowed_kinds)],
       preset_id:old?.preset_id||preset?.id||null,account_ids:old?.account_ids||[],pool_ids:old?.pool_ids||[],activity:old?.activity||'unknown',source:old?.source||'user_entered',version:v.version+1,updated_at:at,
-      model_group:{agent_id:key,as_of:old?.model_group?.as_of||catalogGroup?.as_of||preset?.as_of||at.slice(0,10),sources:old?.model_group?.sources||catalogGroup?.sources||preset?.sources||[],models:v.models}};
+      model_group:{agent_id:key,as_of:old?.model_group?.as_of||catalogGroup?.as_of||preset?.as_of||at.slice(0,10),registration_updated_at:at,sources:old?.model_group?.sources||catalogGroup?.sources||preset?.sources||[],models:v.models}};
     wb.put('agents',row);wb.audit('user',old?'edit_agent':'add_agent',key,{before:old,after:row});return row;
   });
 }

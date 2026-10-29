@@ -1,5 +1,5 @@
 import {taskAction,actionGroups,type ActionGroup} from '../../shared/workflow-view.js';
-import {UserDecision,pendingDecisions} from '../ui/UserDecision.js';
+import {UserDecision,pendingDecisions,groupedDecisions,DecisionGroup} from '../ui/UserDecision.js';
 // 今天：接力棒在你手里的事放最前面，其次是 Agent 正在做的，再是最近完成。右侧是日程、额度与连接。
 import React,{useState} from 'react';
 import { Copy, ArrowRight, MessageCircleQuestion, CircleCheckBig, LifeBuoy, ClipboardPaste, Sparkles, CalendarClock, Gauge, PlugZap, Folder } from 'lucide-react';
@@ -67,7 +67,7 @@ export function Today() {
             const count=rows.length+extras.length+cards.length;if(!count||(groupFilter!=='all'&&groupFilter!==group))return null;
             // 待安排多为“复制后交给执行者”的例行动作，用紧凑行显示，免得淹没需要思考的事项。
             const compact=group==='arrange';
-            const content=<><div className={'turn-list'+(compact?' compact-list':'')}>{cards.slice(0,limit).map(d=><UserDecision key={d.id} decision={d}/>)}{extras.slice(0,limit).map((q:R)=><RequestTurn key={q.id} q={q}/>)}{rows.slice(0,limit).map((t:R)=><TaskTurn key={t.id} t={t} compact={compact}/>)}</div>{count>limit&&<button className="btn ghost" onClick={()=>setLimit(n=>n+20)}>显示更多{actionGroups[group]}</button>}</>;
+            const content=<><div className={'turn-list'+(compact?' compact-list':'')}>{groupedDecisions(cards,data).slice(0,limit).map(d=>d.cards?<DecisionGroup key={d.id} group={d}/>:<UserDecision key={d.id} decision={d}/>)}{extras.slice(0,limit).map((q:R)=><RequestTurn key={q.id} q={q}/>)}{rows.slice(0,limit).map((t:R)=><TaskTurn key={t.id} t={t} compact={compact}/>)}</div>{count>limit&&<button className="btn ghost" onClick={()=>setLimit(n=>n+20)}>显示更多{actionGroups[group]}</button>}</>;
             return <section className={'attention-group'+(group==='arrange'?' arrange-group':'')} aria-label={actionGroups[group]} key={group}><h3>{actionGroups[group]} <span className="count">{count}</span></h3>{content}</section>;
           })}
         </Section>}

@@ -1,4 +1,7 @@
 import {peerDispatchInput,peerJobInput} from '../core/open-review-handoff.ts';
+import {randomUUID} from 'node:crypto';
+import {onboardingModelsInput} from '../core/onboarding-models.ts';
+import {onboardingRefreshInput,onboardingDiagnosticInput} from '../core/onboarding-diagnostics.ts';
 import {chatContextInput} from '../core/chat-planning.ts';
 import {nativeReviewRecoveryInput} from '../core/native-review-recovery.ts';
 import {delegationInput,delegationReportInput} from '../core/workflow-policy.ts';
@@ -23,6 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {loadConfig} from '../core/config.ts';
 import {planSchema,eventSchema} from '../core/schema.ts';
+const instanceId=randomUUID();
 const configuredRole=process.env.WORKBENCH_ROLE;
 if(configuredRole&&!['manager','planner','chat_planner'].includes(configuredRole))throw Error('WORKBENCH_ROLE 仅支持 manager、planner 或 chat_planner');
 const c=loadConfig(),runner=process.env.WORKBENCH_RUN_ID,reviewer=process.env.WORKBENCH_REVIEW_ID;
@@ -35,8 +39,15 @@ const credentials=JSON.parse(fs.readFileSync(path.join(c.dataDir,reviewer?'revie
 const token=reviewer||runner?credentials.token:manager?credentials.manager:chatPlanner?credentials.chat_planner:credentials.planner;
 if(!token)throw Error('工作台后台需要升级：请从托盘退出并重新打开工作台，然后重连 MCP。');
 const server=new McpServer({name:'agent-workbench',version:'0.1.0'},{instructions:'工作台记录项目流转，模型负责理解用户要求。当前执行或审查会话可直接办理本项目管理：先读 get_management_context 获取版本，用 request_id 幂等、user_instruction 记录用户原话；历史保留实际办理者。审查成员、模型和任务补充可在同任务修改，无须新开关联单或让用户重复转述。主执行启动仍由用户控制；本人获直接做授权可接单；执行者可直接调用独立审查和获准子代理。审查者用 submit_review_report 回传本人结论。多人意见分别保留，负责人记录继续、返修或补审决定。用户最终验收仍由用户确认，不能代填他人报告。按需读取 brief/delta，缺失时补读必要资料，不重复读取全项目。'});
-const call=async(name:string,input:any)=>{if(runner)input={...input,run_id:runner};if(reviewer)input={...input,review_id:reviewer};try{const res=await fetch(`http://127.0.0.1:${c.port}/api/mcp/${name}`,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json',...(runner&&process.env.WORKBENCH_EXECUTION_JOB_ID&&process.env.WORKBENCH_EXECUTION_JOB_TOKEN?{'x-workbench-execution-job-id':process.env.WORKBENCH_EXECUTION_JOB_ID,'x-workbench-execution-job-token':process.env.WORKBENCH_EXECUTION_JOB_TOKEN}:{})},body:JSON.stringify(input),signal:AbortSignal.timeout(['submit_grok_review','create_workbench_backup','refresh_integration'].includes(name)?120000:name==='create_project_diagram'?100000:['wait_run_update','get_agent_job'].includes(name)?40000:['get_dispatch_context','get_agent_clients','get_review_candidates'].includes(name)?120000:15000)});const data=await res.json();return {content:[{type:'text' as const,text:JSON.stringify(data,null,2)}],isError:!res.ok}}catch(error){console.error('工作台 MCP 请求失败：',(error as Error).message);return {content:[{type:'text' as const,text:'后台不可用，请先启动工作台；没有创建第二份账本。'}],isError:true}}};
+const call=async(name:string,input:any)=>{if(runner)input={...input,run_id:runner};if(reviewer)input={...input,review_id:reviewer};try{const res=await fetch(`http://127.0.0.1:${c.port}/api/mcp/${name}`,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json','x-workbench-mcp-instance':instanceId,'x-workbench-mcp-client':server.server.getClientVersion()?.name||'unknown','x-workbench-mcp-client-version':server.server.getClientVersion()?.version||'unknown',...(runner&&process.env.WORKBENCH_EXECUTION_JOB_ID&&process.env.WORKBENCH_EXECUTION_JOB_TOKEN?{'x-workbench-execution-job-id':process.env.WORKBENCH_EXECUTION_JOB_ID,'x-workbench-execution-job-token':process.env.WORKBENCH_EXECUTION_JOB_TOKEN}:{})},body:JSON.stringify(input),signal:AbortSignal.timeout(['submit_grok_review','create_workbench_backup','refresh_integration','refresh_onboarding_models'].includes(name)?120000:name==='run_onboarding_diagnostic'?180000:name==='create_project_diagram'?100000:['wait_run_update','get_agent_job'].includes(name)?40000:['get_dispatch_context','get_agent_clients','get_review_candidates'].includes(name)?120000:15000)});const data=await res.json();return {content:[{type:'text' as const,text:JSON.stringify(data,null,2)}],isError:!res.ok}}catch(error){console.error('工作台 MCP 请求失败：',(error as Error).message);return {content:[{type:'text' as const,text:'后台不可用，请先启动工作台；没有创建第二份账本。'}],isError:true}}};
 function register(name:string,description:string,schema:z.ZodRawShape){server.tool(name,description,schema,async input=>call(name,input))}
+if(manager){
+  register('get_onboarding_context','只读首次接入状态与引导提示词，不探测客户端或调用模型',{});
+  register('verify_workbench_connection','由目标 Codex 新 MCP 会话记录实际握手和工具连通；本地转接脚本不能代填',{});
+  register('refresh_onboarding_models','核对本机非 Claude 客户端提供的精确模型 ID；未验证项保留未知，不进行模型生成',onboardingRefreshInput.shape);
+  register('record_onboarding_models','保存本机有来源的模型资料；不能伪造实际调用成功',onboardingModelsInput.shape);
+  register('run_onboarding_diagnostic','对明确选定的非 Claude 型号执行一次最小诊断；UUID幂等、不重试、不付费降级',onboardingDiagnosticInput.shape);
+}
 if(!manager&&!runner&&!reviewer&&!chatPlanner){const tool=managementReadTools.get_project_memories;register('get_project_memories',tool.description,tool.schema.shape)}
 if(manager){for(const [name,tool] of Object.entries({...managementTools,...managementReadTools}))register(name,tool.description,tool.schema.shape)}
 if(runner||reviewer){for(const [name,tool] of Object.entries({...managementTools,...managementReadTools}))if([...sessionManagementWrites,...sessionManagementReads].includes(name))register(name,tool.description,tool.schema.shape)}
