@@ -202,7 +202,7 @@ function NowCard({ detail, relay, run, who, current, lastMessage }: { detail: R;
       break;
     case 'submitted': case 'in_review':
       body = noReview ? null : <>
-        {t.review_stage==='awaiting_decision'&&<p>查看下方各方意见，记录负责人决定。</p>}
+        {t.review_stage==='awaiting_decision'&&<p>核对下方各方审查意见，可交回执行者收尾，也可继续添加审查者。</p>}
         {t.review_handoff_issue&&<blockquote className="agent-says">{t.review_handoff_issue}</blockquote>}
         {!detail.review_summary?.members?.some((m:R)=>!['cancelled','superseded','revoked'].includes(m.status))&&<div className="now-actions">
           {t.review_route&&!automationActive(t.automation)&&<button className="btn primary" disabled={s.busy} onClick={()=>void dispatchTask(s,t,true)}>开始独立审查</button>}

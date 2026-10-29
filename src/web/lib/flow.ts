@@ -43,6 +43,7 @@ export const statusText: R = {
   review_waiting: '审查待继续',
   review_arranged: '审查待接单',
   review_decision: '待负责人决定',
+  review_ready_closeout: '审查已通过，待交回收尾',
   awaiting_confirmation: '收尾完成，待你试用',
   in_review: '待执行者收尾',
   awaiting_closeout: '待执行者收尾', closing: '正在收尾', closeout_waiting_input: '收尾等你回答', closeout_blocked: '收尾遇到阻碍',
@@ -56,7 +57,7 @@ export const toneOfStatus: Record<string, Tone> = {
   awaiting_planning: 'you', ready: 'you', awaiting_dispatch: 'you', waiting_input: 'you',
   awaiting_confirmation: 'you', in_review: 'you', awaiting_closeout:'you', closing:'working', closeout_waiting_input:'you', closeout_blocked:'problem',
   dispatched: 'working', running: 'working',
-  submitted: 'review', review_running:'review', review_waiting:'you', review_arranged:'quiet', review_decision:'you',
+  submitted: 'review', review_running:'review', review_waiting:'you', review_arranged:'quiet', review_decision:'you', review_ready_closeout:'you',
   blocked: 'problem', failed: 'problem', changes_requested: 'problem',acceptance_rejected:'problem',rework_linked:'quiet',
   accepted: 'done', cancelled: 'quiet', planned: 'quiet',
 };
@@ -88,7 +89,8 @@ export function relayOf(t: R, name: (id: string) => string, executor?: string): 
   if(t.status==='awaiting_confirmation'&&t.delivery_target==='runtime'&&!t.deployment?.verified)return r(5,'agent','working','等待本机安装验证','执行者先完成运行目录更新与验证，再交你试用');
   if(waitingForDependencies(t))return r(2,'none','quiet','等待前序任务完成','先完成下方列出的任务并确认验收，再交给执行者');
   if(hasPendingDecision(t))return r(['accept','reject'].includes(t.pending_user_decision.action)?6:4,'you','you',t.pending_user_decision.title,'查看已填好的事项，确认后生效');
-  if(['submitted','in_review'].includes(t.status)&&t.review_stage==='awaiting_decision')return r(4,'you','you','审查报告已齐，等待负责人决定','查看各方意见，记录继续推进、退回修改或追加审查的理由');
+  if(['submitted','in_review'].includes(t.status)&&t.review_stage==='awaiting_decision'&&t.review_can_proceed)return r(4,'you','you','审查已通过，可交回执行者收尾','交回执行者完成剩余事项，也可继续添加审查者；收尾后仍由你试用确认');
+  if(['submitted','in_review'].includes(t.status)&&t.review_stage==='awaiting_decision')return r(4,'you','you','审查报告已齐，等待负责人决定','核对各方意见，交回执行者收尾，或继续追加审查；决定依据会保留');
   if(['submitted','in_review'].includes(t.status)&&t.review_stage!=='awaiting_decision'&&t.review_stage!=='completed'){
     if(progress.total){const copy=reviewHandoffCopy(t);return r(4,copy.holder as Holder,progress.running||progress.starting?'review':'you',copy.headline,copy.next);}
     if(t.automation?.role==='review'&&['failed','interrupted'].includes(t.automation.status)&&!t.automation.superseded)return r(4,'you','you','审查待继续，尚未收到报告','继续原会话或手动交接；本次调用失败记录保留');
@@ -112,7 +114,7 @@ export function relayOf(t: R, name: (id: string) => string, executor?: string): 
     case 'changes_requested': return r(4, 'you', 'problem', `${reviewer} 审查后要求修改`, '在原会话继续，只处理本轮新增修改意见');
     case 'acceptance_rejected': return r(6,'you','problem','你已确认本次结果不通过',`复制返工要求，交给 ${doer} 修改`);
     case 'rework_linked': return r(3,'none','quiet','本次验收未通过，已由后续任务接替','查看后续任务的进展；原交付与意见保留在这里');
-    case 'in_review': case 'awaiting_closeout': return r(5, t.closeout_delivery==='agent'?'agent':'you', t.closeout_delivery==='agent'?'working':'you', skippedReview ? `${doer} 已交付，等待收尾` : leadContinuedReview(t)?'负责人决定继续，等待执行者收尾':'成果已交付，等待执行者收尾', t.closeout_delivery==='agent'?(skippedReview?`${doer} 交付后继续完成剩余事项`:leadContinuedReview(t)?`${doer} 按负责人决定继续完成剩余事项`:`${doer} 收到审查结果后继续完成剩余事项`):`复制收尾单，交回 ${doer}`);
+    case 'in_review': case 'awaiting_closeout': return r(5, t.closeout_delivery==='agent'?'agent':'you', t.closeout_delivery==='agent'?'working':'you', skippedReview ? `${doer} 已交付，等待收尾` : leadContinuedReview(t)?'负责人决定继续，等待执行者收尾':t.review_can_proceed?'审查已通过，等待执行者收尾':'成果已交付，等待执行者收尾', t.closeout_delivery==='agent'?(skippedReview?`${doer} 交付后继续完成剩余事项`:leadContinuedReview(t)?`${doer} 按负责人决定继续完成剩余事项`:`${doer} 收到审查结果后继续完成剩余事项`):`复制收尾单，交回 ${doer}`);
     case 'closing': return r(5, 'agent', 'working', `${doer} 正在收尾`, '等执行者完成剩余事项，再试用验收');
     case 'closeout_waiting_input': return r(5, 'you', 'you', `${doer} 收尾时需要你回答`, '保存回答并复制回执行者');
     case 'closeout_blocked': return r(5, 'you', 'problem', `${doer} 收尾遇到阻碍`, '查看原因，协助执行者继续，或新开执行处理修改');

@@ -44,6 +44,12 @@ export function invalidateCloseout(wb:Workbench,r:Row,reason:string){
   r.closeout_history=[...(r.closeout_history||[]),{...r.closeout,superseded_at:now(),superseded_reason:reason}];
   r.closeout=null;wb.put('runs',r,{task_id:r.task_id});
 }
+/** Recover a workflow label from the same delivery's recorded executor facts. */
+export function restoreCloseoutStatus(wb:Workbench,t:Row,r:Row){
+  if(t.current_run_id!==r.id||!['submitted','in_review'].includes(t.status)||!r.closeout||r.closeout.digest!==binding(wb,t,r).digest)return;
+  const status=({awaiting_dispatch:'awaiting_closeout',closing:'closing',closeout_waiting_input:'closeout_waiting_input',closeout_blocked:'closeout_blocked',completed:'awaiting_confirmation'} as Row)[r.closeout.status];
+  if(status)t.status=status;
+}
 export function verifyDelivery(wb:Workbench,t:Row,r:Row,options:{allowSuccessor?:boolean}={}):Array<SuccessorEvidence&{path:string;sha256:string}>{
   const evidence:Array<SuccessorEvidence&{path:string;sha256:string}>=[];
   for(const a of artifacts(wb,r.id))assert(hash(readBounded(safePath(a.archive_path,[path.join(wb.config.dataDir,'artifacts')]),20*1024*1024))===a.sha256,'归档产物已被更改，请新开执行重新交付和审查',409);

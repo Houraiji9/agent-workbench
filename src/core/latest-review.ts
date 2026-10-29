@@ -22,10 +22,16 @@ export function reviewProceedAuthority(wb:Workbench,runId:string){
  const reports=wb.runRows('reviews',runId).filter(v=>!v.revoked_at&&(v.review_id?members.some(a=>a.id===v.review_id):assignments.length===0||members.some(a=>a.status==='completed'&&a.result_id===v.id)));
  const hashes=wb.runRows('artifacts',runId).filter(a=>a.current).map(a=>a.sha256).sort();
  const matched=review&&JSON.stringify([...(review.artifact_hashes||[])].sort())===JSON.stringify(hashes);
+ const currentReport=(v:Row,a?:Row)=>!v.revoked_at&&!v.historical&&JSON.stringify([...(v.artifact_hashes||[])].sort())===JSON.stringify(hashes)&&(v.review_digest||a?.review_digest)===digest;
+ // Agreement is a recorded fact, not a new lead or user acceptance decision.
+ // Keep adverse reports visible even when their member was later removed.
+ const unanimous=!!r.review_collaboration_multi&&members.length>1&&members.every(a=>a.status==='completed'&&reports.some(v=>
+   v.id===a.result_id&&(!v.review_id||v.review_id===a.id)&&v.reviewer_id===a.reviewer_id&&v.verdict==='passed'&&currentReport(v,a)))&&
+   !wb.runRows('reviews',runId).some(v=>v.verdict==='changes_requested'&&currentReport(v,assignments.find(a=>a.id===v.review_id||a.result_id===v.id)));
  // Pre-assignment Runs used the latest SQL decision, including timestamp ties.
  // A Run with cancelled assignments must never fall back to that legacy rule.
  const eligible=assignments.length===0||(!r.review_collaboration_multi&&members.length<=1&&reports.length<=1&&reports.some(v=>v.id===review?.id));
- return {can_proceed:decision?decision.decision==='continue':!!(eligible&&review?.verdict==='passed'&&matched&&(!r.scope_revision||review.review_digest===digest)),decision,review};
+ return {can_proceed:decision?decision.decision==='continue':!!(unanimous||eligible&&review?.verdict==='passed'&&matched&&(!r.scope_revision||review.review_digest===digest)),decision,review};
 }
 
 /** User trial is independent of review permission. Capture facts, never manufacture a pass. */

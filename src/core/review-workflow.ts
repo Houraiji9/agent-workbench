@@ -3,7 +3,7 @@ import {handoffText} from './compact-order.ts';
 import {agentRouteSchema} from './agent-route-schema.ts';
 import {agentClientKind} from './agent-client-kind.ts';
 import {userReviewSelection} from './priority-policy.ts';
-import {stageCloseout,invalidateCloseout,writeCloseoutOrder,closeoutStates} from './closeout.ts';
+import {stageCloseout,invalidateCloseout,writeCloseoutOrder,closeoutStates,restoreCloseoutStatus} from './closeout.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import {z} from 'zod';
@@ -234,6 +234,7 @@ export function syncReviewCollaborationState(wb:Workbench,t:Row,r:Row,options:{a
  if(authority.decision?.decision==='rework'){t.status='changes_requested';t.review_stage='awaiting_decision';return;}
  if(running.length){t.status='in_review';t.review_stage='running';return;}
  if(pending.length){t.status='submitted';t.review_stage='awaiting_dispatch';return;}
+ if(!authority.decision&&authority.can_proceed){if(!r.closeout)stageCloseout(wb,t,r);else restoreCloseoutStatus(wb,t,r);t.review_stage='completed';return;}
  const reports=wb.all('reviews').filter(v=>v.run_id===r.id&&!v.revoked_at&&(v.review_id?members.some(a=>a.id===v.review_id):!all.length||members.some(a=>a.result_id===v.id)));
  const legacy=!r.review_collaboration_multi&&(!all.length||members.length<=1&&reports.length<=1);
  if(options.allowLegacyResult&&legacy&&authority.review){if(authority.can_proceed){if(!r.closeout)stageCloseout(wb,t,r);}else{t.status=authority.review.verdict==='changes_requested'?'changes_requested':'submitted';invalidateCloseout(wb,r,'审查结果尚未获准继续');}t.review_stage='completed';return;}

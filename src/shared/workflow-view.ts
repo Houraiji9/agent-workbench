@@ -2,13 +2,13 @@ import {waitingForDependencies} from './execution-order.js';
 import {reviewProgress} from './review-progress.js';
 type Row=Record<string,any>;
 export type ActionGroup='answer'|'decision'|'trial'|'arrange'|'working'|'waiting'|'done';
-export const actionGroups:Record<ActionGroup,string>={answer:'待回答',decision:'异常需决定',trial:'待试用',arrange:'待安排',working:'正在处理',waiting:'等待前序',done:'已结束'};
+export const actionGroups:Record<ActionGroup,string>={answer:'待回答',decision:'待决定',trial:'待试用',arrange:'待安排',working:'正在处理',waiting:'等待前序',done:'已结束'};
 /** Display the reviewer's actual receipt without rewriting the task lifecycle. */
 export const hasSameSessionContinuation=(t:Row):boolean=>!!t.same_session_continuation?.run_id&&t.same_session_continuation.run_id===t.current_run_id&&t.same_session_continuation.agent_id===t.agent_id&&['ready','awaiting_dispatch','dispatched','changes_requested','awaiting_closeout'].includes(t.status);
 export function taskDisplayStatus(t:Row):string{
  if(hasSameSessionContinuation(t)&&taskAction(t).owner==='agent'&&t.status!=='awaiting_closeout')return 'continuation_pending';
  if(['submitted','in_review'].includes(t.status)){
-  if(t.review_stage==='awaiting_decision')return 'review_decision';
+  if(t.review_stage==='awaiting_decision')return t.review_can_proceed?'review_ready_closeout':'review_decision';
   if(t.review_stage!=='completed'){
    const p=reviewProgress(t);if(p.running||p.starting)return 'review_running';if(p.waiting)return 'review_waiting';if(p.pending)return 'review_arranged';
    if(!p.total&&t.review_stage==='running')return 'review_running';
@@ -27,6 +27,7 @@ export function taskAction(t:Row):{group:ActionGroup;owner:'user'|'agent'|'revie
     &&t.automation.run_id===t.current_run_id&&!!t.current_run_id
     &&t.automation.process_may_be_running===false&&!t.automation.recovery_required
     &&['awaiting_closeout','closing','closeout_blocked','closeout_waiting_input','awaiting_confirmation'].includes(t.status);
+  if(['submitted','in_review'].includes(t.status)&&t.review_stage==='awaiting_decision'&&t.review_can_proceed)return {group:'arrange',owner:'user',label:'审查已通过，可交回执行者收尾'};
   if(['submitted','in_review'].includes(t.status)&&t.review_stage==='awaiting_decision')return {group:'decision',owner:'user',label:'审查报告已齐，待负责人决定'};
   if(['submitted','in_review'].includes(t.status)&&t.review_stage!=='awaiting_decision'&&t.review_stage!=='completed'){
     const progress=reviewProgress(t),copy=reviewHandoffCopy(t);

@@ -54,7 +54,7 @@ export function Today() {
 
         {!empty && <Section title={<>轮到你了 {yourCount > 0 && <span className="count">{yourCount}</span>}</>} label="轮到你了">
           {/* 先按“要做的动作”分流，再用搜索和下拉细筛；没有事项的动作不占位置。 */}
-          <div className="attention-kinds" role="group" aria-label="按动作筛选待办">{[['all','全部'],['answer','待回答'],['trial','待试用'],['decision','异常需决定'],['arrange','待安排']].map(([key,label])=>{const count=key==='all'?yourCount:yours.filter((t:R)=>taskAction(t).group===key).length+(key==='arrange'?visibleRequests.length:0)+(key==='decision'?visibleDecisions.length:0);if(!count&&key!=='all'&&groupFilter!==key)return null;return <button key={key} className={'chip'+(groupFilter===key?' on':'')} aria-pressed={groupFilter===key} onClick={()=>{setGroupFilter(key);setLimit(20)}}>{label}（{count}）</button>})}</div>
+          <div className="attention-kinds" role="group" aria-label="按动作筛选待办">{[['all','全部'],['answer','待回答'],['trial','待试用'],['decision','待决定'],['arrange','待安排']].map(([key,label])=>{const count=key==='all'?yourCount:yours.filter((t:R)=>taskAction(t).group===key).length+(key==='arrange'?visibleRequests.length:0)+(key==='decision'?visibleDecisions.length:0);if(!count&&key!=='all'&&groupFilter!==key)return null;return <button key={key} className={'chip'+(groupFilter===key?' on':'')} aria-pressed={groupFilter===key} onClick={()=>{setGroupFilter(key);setLimit(20)}}>{label}（{count}）</button>})}</div>
           <div className="attention-filters">
             <input aria-label="搜索待办" placeholder="搜索要处理的事项" value={search} onChange={e=>{setSearch(e.target.value);setLimit(20)}}/>
             <select aria-label="按项目筛选待办" value={projectFilter} onChange={e=>{setProjectFilter(e.target.value);setLimit(20)}}><option value="">全部项目</option>{data.projects.map((p:R)=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
@@ -161,7 +161,7 @@ function TaskTurn({ t, compact }: { t: R; compact?: boolean }) {
   else if (['waiting_input','closeout_waiting_input'].includes(t.status)&&t.question_answered)actions=<button className="btn primary" disabled={s.busy} onClick={()=>void continueTask(s,t)}>把答复交回原会话</button>;
   else if (['waiting_input','closeout_waiting_input'].includes(t.status)) actions = <button className="btn primary" onClick={open}><MessageCircleQuestion size={16} />去回答</button>;
   else if(['submitted','in_review'].includes(t.status)&&!['completed','awaiting_decision'].includes(t.review_stage)&&!reviewSkippedTask(t))actions=<button className="btn primary" disabled={s.busy} onClick={()=>void copyReviewHandoff(s,t)}><Copy size={16}/>交给审查者</button>;
-  else if(['submitted','in_review'].includes(t.status)&&t.review_stage==='awaiting_decision')actions=<button className="btn primary" onClick={open}>查看审查意见</button>;
+  else if(['submitted','in_review'].includes(t.status)&&t.review_stage==='awaiting_decision')actions=<button className="btn primary" onClick={open}>{t.review_can_proceed?'交回执行者收尾':'处理审查与收尾'}</button>;
   else if(['in_review','awaiting_closeout'].includes(t.status))actions=<button className="btn primary" disabled={s.busy} onClick={()=>void continueTask(s,t)}><Copy size={16}/>原会话继续收尾</button>;
   else if(t.status==='submitted')actions=<button className="btn primary" disabled={s.busy} onClick={()=>void continueTask(s,t)}>继续收尾</button>;
   else if(t.status==='acceptance_rejected')actions=<button className="btn primary" disabled={s.busy} onClick={()=>void copyRework(s,t)}><Copy size={16}/>复制返工要求</button>;

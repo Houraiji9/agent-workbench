@@ -6,7 +6,7 @@ test('100项合成待办按动作分组、筛选与分页；待安排始终展�
   await page.goto('/');const filters=page.getByRole('group',{name:'按动作筛选待办'});
   await expect(page.getByRole('combobox',{name:'待办排序'})).toBeVisible();
   await page.getByRole('combobox',{name:'待办排序'}).selectOption('oldest');
-  for(const label of ['待回答','待试用','异常需决定','待安排'])await expect(filters.getByRole('button',{name:label+'（25）',exact:true})).toBeVisible();
+  for(const label of ['待回答','待试用','待决定','待安排'])await expect(filters.getByRole('button',{name:label+'（25）',exact:true})).toBeVisible();
   await expect(page.locator('.arrange-group')).toBeVisible();await expect(page.locator('.arrange-group summary')).toHaveCount(0);
   await expect(page.locator('.arrange-group .turn').first()).toBeVisible();await expect(page.locator('.arrange-group .turn-actions').first().getByRole('button',{name:'生成并复制执行单'})).toBeVisible();
   await filters.getByRole('button',{name:'待安排（25）',exact:true}).click();await expect(page.locator('.arrange-group .turn').first()).toBeVisible();
