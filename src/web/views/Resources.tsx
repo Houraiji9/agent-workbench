@@ -194,16 +194,19 @@ function Connections() {
       <header><span className="dot" /><strong>{i.name}</strong><span className="muted">{i.status === 'connected' ? '已连接' : i.status === 'not_connected' ? '未连接' : '连接中断'}</span></header>
       <p>{i.id === 'tokenMonitor' ? '同步各工具的额度和用量。' : '查找各 Agent 的历史会话。'}</p>
       {i.error && <Notice tone="warn">{i.error}</Notice>}
+      {i.status === 'connected' && i.snapshot?.data_freshness === 'stale' && <Notice tone="warn">连接正常，来源中的部分数据尚未更新。额度按原采集时间显示。</Notice>}
       
       <dl className="facts compact">
         <dt>最近成功</dt><dd>{i.last_success ? fullDate(i.last_success, s.tz) : '还没有'}</dd>
         <dt>最近尝试</dt><dd>{i.last_attempt ? fullDate(i.last_attempt, s.tz) : '还没有'}</dd>
+        {i.snapshot?.source_updated_at && <><dt>来源更新</dt><dd>{fullDate(i.snapshot.source_updated_at, s.tz)}</dd></>}
+        {i.id === 'agentsView' && i.snapshot?.imported_count != null && <><dt>已收录</dt><dd>{i.snapshot.imported_count} 条会话摘要{i.snapshot.next_cursor ? ' · 可继续读取更早记录' : ''}</dd></>}
       </dl>
       <div className="tool-row">
         <button className="btn small" disabled={s.busy} onClick={() => void s.act(() => api('/integrations/' + i.id + '/refresh', {}), '检查完成')}><RefreshCw size={15} />测试连接并刷新</button>
         {i.snapshot?.next_cursor && <button className="btn small ghost" disabled={s.busy} onClick={() => void s.act(() => api('/integrations/' + i.id + '/refresh', { cursor: i.snapshot.next_cursor }), '已读取后续会话')}><ChevronsDown size={15} />读取更早的会话</button>}
       </div>
     </article>)}
-    <p className="muted small">两个数据服务由桌面版自动启动；从托盘退出工作台时一起结束（Token Monitor 自己的采集程序保留）。</p>
+    <p className="muted small">桌面版会维护由工作台托管的数据服务。自行运行的 Token Monitor 或其他外部服务需保持开启；连接暂时中断时保留最近记录，并自动重试。</p>
   </div>;
 }

@@ -98,7 +98,7 @@ a { color: var(--brand); }
 .nav-item.on::before { content: ""; position: absolute; left: -14px; top: 10px; bottom: 10px; width: 4px; border-radius: 0 4px 4px 0; background: var(--baton); }
 .nav-badge { margin-left: auto; min-width: 22px; height: 22px; padding: 0 7px; border-radius: 99px; background: var(--baton); color: #2b1a00; font-size: 12.5px; font-weight: 700; display: grid; place-items: center; }
 .side-foot { margin-top: auto; display: grid; gap: 8px; }
-.conn-line { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid rgba(255, 255, 255, .07); border-radius: 10px; background: rgba(255, 255, 255, .03); color: var(--side-dim); text-align: left; cursor: pointer; font-size: 12.5px; }
+.conn-line { display: grid; gap: 4px; min-width: 0; line-height: 1.5; overflow-wrap: anywhere; padding: 10px 12px; border: 1px solid rgba(255, 255, 255, .07); border-radius: 10px; background: rgba(255, 255, 255, .03); color: var(--side-dim); text-align: left; cursor: pointer; font-size: 12.5px; }
 .conn-line:hover { background: rgba(255, 255, 255, .06); }
 .conn { display: flex; align-items: center; gap: 8px; }
 .conn i, .conn-list i, .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--quiet); flex: none; display: inline-block; }
@@ -132,7 +132,7 @@ kbd { font: 600 11.5px var(--mono); padding: 2px 6px; border: 1px solid var(--li
 .empty strong { font-size: 15.5px; color: var(--ink); }
 .empty p { margin: 0 0 6px; max-width: 46ch; font-size: 14px; }
 .empty-icon { color: var(--ink-3); }
-.notice { padding: 11px 14px; border-radius: 10px; background: var(--working-soft); color: var(--ink); font-size: 14px; border: 1px solid color-mix(in srgb, var(--working) 22%, transparent); }
+.notice { padding: 11px 14px; line-height: 1.6; overflow-wrap: anywhere; border-radius: 10px; background: var(--working-soft); color: var(--ink); font-size: 14px; border: 1px solid color-mix(in srgb, var(--working) 22%, transparent); }
 .notice.n-warn { background: var(--baton-soft); border-color: color-mix(in srgb, var(--baton) 35%, transparent); }
 .notice.n-error { background: var(--problem-soft); border-color: color-mix(in srgb, var(--problem) 35%, transparent); color: var(--ink); }
 .notice-actions { display: flex; margin-top: 10px; }
@@ -280,8 +280,8 @@ kbd { font: 600 11.5px var(--mono); padding: 2px 6px; border: 1px solid var(--li
 .meter.m-mid i { background: var(--baton); }
 .meter.m-low i { background: var(--problem); }
 .conn-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; font-size: 13.5px; }
-.conn-list li { display: flex; gap: 10px; align-items: baseline; }
-.conn-list small { display: block; color: var(--ink-3); font-size: 12px; }
+.conn-list li { display: flex; gap: 10px; align-items: baseline; min-width: 0; overflow-wrap: anywhere; }
+.conn-list small { display: block; color: var(--ink-3); font-size: 12px; line-height: 1.5; }
 .welcome { padding: 26px 28px; border-radius: var(--r); background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); }
 .welcome-ico { color: var(--baton); }
 .welcome h2 { font-size: 21px; margin: 8px 0 14px; }
@@ -428,7 +428,7 @@ kbd { font: 600 11.5px var(--mono); padding: 2px 6px; border: 1px solid var(--li
 .team-back { display: inline-flex; margin-bottom: 8px; }
 
 /* —— 额度 —— */
-.source-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; margin-bottom: 16px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); font-size: 13.5px; color: var(--ink-2); }
+.source-line { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; line-height: 1.6; overflow-wrap: anywhere; padding: 10px 14px; margin-bottom: 16px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); font-size: 13.5px; color: var(--ink-2); }
 .source-line.warn { background: var(--baton-soft); border-color: color-mix(in srgb, var(--baton) 35%, transparent); }
 .source-line .link { margin-left: auto; }
 .quota-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; align-items: start; }
@@ -528,10 +528,12 @@ kbd { font: 600 11.5px var(--mono); padding: 2px 6px; border: 1px solid var(--li
 .conn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; align-items: start; }
 .conn-grid > p { grid-column: 1 / -1; margin: 0; }
 .conn-card { padding: 18px 20px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); }
-.conn-card header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.conn-card header strong { font-size: 16px; }
+.conn-card { min-width: 0; }
+.conn-card header { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-bottom: 10px; }
+.conn-card header strong { font-size: 16px; min-width: 0; overflow-wrap: anywhere; }
 .conn-card header .muted { margin-left: auto; font-size: 13px; }
-.conn-card > p { color: var(--ink-2); font-size: 14px; }
+.conn-card > p { color: var(--ink-2); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; margin-bottom: 8px; }
+.conn-card > p:last-child { margin-bottom: 0; }
 
 /* —— 记录 —— */
 .search-panel { padding: 16px; border-radius: var(--r); background: var(--surface); border: 1px solid var(--line); margin-bottom: 18px; }
@@ -577,13 +579,14 @@ kbd { font: 600 11.5px var(--mono); padding: 2px 6px; border: 1px solid var(--li
 .form { display: grid; gap: 16px; }
 .field { display: grid; gap: 6px; }
 .field-label { font-size: 14px; font-weight: 650; color: var(--ink); }
-.field-hint { font-size: 12.5px; color: var(--ink-3); }
+.field-hint { font-size: 12.5px; line-height: 1.5; color: var(--ink-3); overflow-wrap: anywhere; }
 .subscription-form .field { align-content: start; }
 .subscription-form input:not([type=checkbox]):not([type=radio]), .subscription-form select { height: 42px; }
 .subscription-form input:focus::placeholder { color: transparent; }
 .field input, .field textarea, .field select, .inline-form select { width: 100%; padding: 9px 12px; border: 1px solid var(--line-2); border-radius: var(--r-s); background: var(--surface); outline: none; font-size: 14.5px; }
+.field input:not([type=checkbox]):not([type=radio]), .field select, .inline-form select { min-height: 40px; }
 .field input:focus, .field textarea:focus, .field select:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
-.field textarea { resize: vertical; line-height: 1.6; }
+.field textarea { resize: vertical; line-height: 1.6; min-height: 96px; }
 .field textarea.mono { font: 12.5px/1.55 var(--mono); }
 .check { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; cursor: pointer; }
 .check input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--brand); flex: none; }
@@ -704,7 +707,7 @@ kbd { font: 600 11.5px var(--mono); padding: 2px 6px; border: 1px solid var(--li
 .msg b { font-size: 12.5px; color: var(--ink-2); }
 .msg pre { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13.5px/1.6 var(--font); max-height: 340px; overflow: auto; }
 .summary-text { white-space: pre-wrap; overflow-wrap: anywhere; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); font-size: 14px; max-height: 200px; overflow: auto; }
-.copy-box { width: 100%; font: 12.5px/1.5 var(--mono); padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); resize: vertical; }
+.copy-box { width: 100%; min-height: 84px; font: 12.5px/1.5 var(--mono); padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); resize: vertical; }
 
 /* Markdown 安全排版 */
 .md { font-size: 14.5px; line-height: 1.75; overflow-wrap: anywhere; }
@@ -956,7 +959,7 @@ kbd { font: 600 11.5px var(--mono); padding: 2px 6px; border: 1px solid var(--li
 .chip.on { border-color: var(--brand); background: var(--brand); color: var(--brand-ink); }
 .attention-kinds { margin-bottom: 10px; }
 .attention-filters { margin-bottom: 4px; }
-.attention-filters input, .attention-filters select { padding: 7px 10px; font-size: 13.5px; color: var(--ink-2); }
+.attention-filters input, .attention-filters select { min-height: 36px; padding: 7px 10px; font-size: 13.5px; color: var(--ink-2); }
 
 /* 待安排：例行的“复制交给执行者”用紧凑单列，按钮始终在右侧 */
 .turn-list.compact-list { gap: 8px; }

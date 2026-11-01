@@ -1,7 +1,7 @@
-const {stopBackend}=require('./lifecycle.cjs');
+const {stopBackend,createIntegrationSupervisor}=require('./lifecycle.cjs');
 const {installExternalLinks}=require('./external-links.cjs');
 const {installUpdater}=require('./updater.cjs');
-const {app, BrowserWindow, Tray, Menu, nativeImage, dialog, screen, ipcMain, shell} = require('electron');
+const {app, BrowserWindow, Tray, Menu, nativeImage, dialog, screen, ipcMain, shell, powerMonitor} = require('electron');
 const {fork, spawn} = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -18,7 +18,7 @@ const port = Number(process.env.WORKBENCH_PORT || settings.port || 4317);
 const base = `http://127.0.0.1:${port}`;
 const node = app.isPackaged ? path.join(process.resourcesPath, 'runtime/node.exe') : process.env.WORKBENCH_NODE;
 const owner = crypto.randomUUID();
-let win, tray, trayMenu, backend, starting, booting, updater, quitting = false, ready = false;
+let win, tray, trayMenu, backend, integrations, booting, updater, quitting = false, ready = false;
 app.setName('工作台');
 app.setAppUserModelId('local.agent.workbench');
 app.setPath('userData', path.join(dataDir, 'desktop-profile'));
@@ -51,18 +51,21 @@ function restore() { if (!win || win.isDestroyed()) return; win.show(); if(win.i
 function powershell(file, args = []) {
   return new Promise((resolve, reject) => {
     const child=spawn('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',path.join(root,file),...args],
-      {cwd:root,windowsHide:true,stdio:['ignore','ignore','pipe'],env:{...process.env,WORKBENCH_NODE:node,WORKBENCH_DATA_DIR:dataDir}});
-    let error='';child.stderr.on('data', b=>error+=b.toString());
-    child.on('error',reject);child.on('exit',code=>{child.stderr.destroy();code===0?resolve():reject(new Error(error.slice(-1500)||'本机数据服务未能启动'));});
+      {cwd:root,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...process.env,WORKBENCH_NODE:node,WORKBENCH_DATA_DIR:dataDir}});
+    let error='',output='';child.stderr.setEncoding('utf8');child.stdout.setEncoding('utf8');
+    child.stderr.on('data', b=>error=(error+b).slice(-1500));
+    child.stdout.on('data',b=>output=(output+b).slice(-3000));
+    child.on('error',reject);child.on('close',code=>{code===0?resolve(output.trim()):reject(new Error(error||'本机数据服务未能启动'));});
   });
 }
 async function stop(afterStop) {
   if (quitting) return false;
   quitting=true;ready=false;log('exiting');
+  const integrationsStopped=integrations?.stop();
   if(win&&!win.isDestroyed())win.hide();
   // Explicit exit during indexing must wait before cleaning its owned children.
   await booting?.catch(()=>{});
-  await starting?.catch(()=>{});
+  await integrationsStopped;
   try { await stopBackend(backend); }
   catch(e) { log('backend_cleanup_failed',{message:e.message});quitting=false;restore();dialog.showErrorBox('工作台尚未退出','后台未能结束，请稍后重试。现有进程未被当作退出成功。');return false; }
   if(!process.env.WORKBENCH_SKIP_INTEGRATIONS) {
@@ -100,10 +103,10 @@ async function startBackend() {
   if(quitting)return;
   await win.loadURL(base);if(quitting)return;ready=true;log('window_ready');
   updater?.markReady();
-  if(!process.env.WORKBENCH_SKIP_INTEGRATIONS) {
+  if(!quitting&&!process.env.WORKBENCH_SKIP_INTEGRATIONS) {
     // Optional sources never prevent access to the local ledger.
-    starting=powershell('scripts/启动数据服务.ps1',['-OwnerId',owner]);
-    starting.catch(e=>log('integrations_error',{message:e.message}));
+    integrations=createIntegrationSupervisor({run:()=>powershell('scripts/启动数据服务.ps1',['-OwnerId',owner]),log,powerMonitor});
+    void integrations.poll();
   }
 }
 if(!locked || process.argv.includes('--quit')) app.quit();

@@ -19,4 +19,35 @@ async function stopBackend(child, graceMs = 10000) {
     await exited;
   } finally { clearTimeout(timer); }
 }
-module.exports={stopBackend};
+// A single flight covers startup, the low frequency check and resume. Shutdown
+// removes every future trigger before awaiting the last launch, so cleanup cannot
+// race a late PowerShell launch. Repeated identical failures are logged once.
+function createIntegrationSupervisor({run, log, powerMonitor, intervalMs = 60000,
+  setIntervalFn = setInterval, clearIntervalFn = clearInterval}) {
+  let current, stopped = false, lastResult;
+  function poll() {
+    if (stopped) return Promise.resolve();
+    if (current) return current;
+    current = Promise.resolve().then(run).then(output => {
+      const result = 'ok:' + (output || '');
+      if (lastResult !== result) log('integrations_checked', {message: output || '本机数据服务已检查'});
+      lastResult = result;
+    }, error => {
+      const message = error.message || String(error), result = 'error:' + message;
+      if (lastResult !== result) log('integrations_error', {message});
+      lastResult = result;
+    }).finally(() => { current = undefined; });
+    return current;
+  }
+  const onResume = () => { void poll(); };
+  const timer = setIntervalFn(onResume, intervalMs);
+  timer?.unref?.();
+  powerMonitor.on('resume', onResume);
+  return {poll, async stop() {
+    stopped = true;
+    clearIntervalFn(timer);
+    powerMonitor.removeListener('resume', onResume);
+    await current;
+  }};
+}
+module.exports={stopBackend,createIntegrationSupervisor};

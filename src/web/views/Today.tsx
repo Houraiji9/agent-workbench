@@ -267,7 +267,7 @@ function Connections() {
     <div className="side-card-head"><PlugZap size={17} /><h2>数据连接</h2><button className="link" onClick={() => s.go({ page: 'resources', tab: 'connections' })}>管理</button></div>
     <ul className="conn-list">
       {s.data.integrations.map((i: R) => <li key={i.id} className={'c-' + i.status}>
-        <i /><span>{i.name}<small>{i.status === 'connected' ? `已连接 · ${relative(i.last_success, s.tz)}读取` : i.status === 'not_connected' ? '未连接' : i.last_success ? `连接中断 · 最近成功 ${relative(i.last_success, s.tz)}` : '连接中断'}</small></span>
+        <i /><span>{i.name}<small>{i.status === 'connected' ? i.snapshot?.data_freshness === 'stale' ? '已连接 · 部分来源数据待更新' : `已连接 · ${relative(i.last_success, s.tz)}读取` : i.status === 'not_connected' ? '未连接' : i.last_success ? `暂未连通 · 最近成功 ${relative(i.last_success, s.tz)}` : '暂未连通 · 自动重试中'}</small></span>
       </li>)}
     </ul>
   </section>;

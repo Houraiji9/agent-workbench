@@ -1,6 +1,6 @@
 // 全局状态：账本快照、路由、任务抽屉、对话框、提示与实时同步。
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { api, setCsrf } from '../api.js';
+import { api } from '../api.js';
 import type { R } from '../lib/flow.js';
 import { snapshotRefresh } from './snapshot.js';
 import {readRecentProjects,recentProjectsKey,type RecentProjects} from '../../shared/request-projects.js';
@@ -100,16 +100,20 @@ export function StoreProvider({ children, fallback }: { children: (ready: boolea
   );
   const refresh = useCallback(() => refresher.current!(), []);
 
-  const hasDecisions=!!data?.user_decisions?.some((d:R)=>d.status==='pending');
-  useEffect(()=>{if(!hasDecisions)return;const timer=setInterval(()=>void refresh(),30000);return ()=>clearInterval(timer)},[hasDecisions,refresh]);
-
   // 启动：建立页面会话与操作凭据，然后挂实时同步。
   useEffect(() => {
     mounted.current = true;
-    let es: EventSource | undefined, disposed = false, timer: ReturnType<typeof setTimeout> | undefined;
+    let es: EventSource | undefined, disposed = false, initialized = false, recovering = false;
+    let timer: ReturnType<typeof setTimeout> | undefined, lastCheck = Date.now();
+    const retry = () => {
+      if (disposed) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void recover(), 3000);
+    };
     const connect = () => {
       if (disposed) return;
       if (timer) clearTimeout(timer);
+      es?.close(); streamReady.current = false;
       const current = new EventSource('/api/events'); es = current;
       const active = () => !disposed && es === current;
       current.addEventListener('ready', () => {
@@ -123,17 +127,50 @@ export function StoreProvider({ children, fallback }: { children: (ready: boolea
         if (!active()) return;
         streamReady.current = false; setLive('retrying'); current.close(); es = undefined;
         if (timer) clearTimeout(timer);
-        timer = setTimeout(connect, 3000);
+        // 先通过可续期的普通请求恢复页面会话，再重开 SSE。
+        retry();
       };
     };
-    api('/bootstrap').then(v => {
-      if (disposed) return;
-      setCsrf(v.csrf);
-      const { csrf: _c, ...rest } = v;
-      setData(rest);
-      connect();
-    }).catch(e => { if (!disposed) setBootError((e as Error).message); });
-    return () => { disposed = true; mounted.current = false; streamReady.current = false; es?.close(); if (timer) clearTimeout(timer); };
+    const recover = async () => {
+      if (disposed || recovering) return;
+      recovering = true;
+      try {
+        if (!initialized) {
+          const value = await api('/bootstrap');
+          if (disposed) return;
+          const {csrf: _c, ...rest} = value;
+          setData(rest); setBootError(''); initialized = true;
+        } else await refresh();
+        if (!disposed) { lastCheck = Date.now(); connect(); }
+      } catch (error) {
+        if (!disposed) {
+          setLive('retrying');
+          if (!initialized) setBootError((error as Error).message);
+          retry();
+        }
+      } finally { recovering = false; }
+    };
+    // 托盘、休眠与断网恢复不重载页面，保留对话框、草稿及滚动位置。
+    const resume = () => { if (document.visibilityState !== 'hidden') void recover(); };
+    const visible = () => { if (document.visibilityState === 'visible') resume(); };
+    window.addEventListener('focus', resume);
+    window.addEventListener('online', resume);
+    document.addEventListener('visibilitychange', visible);
+    const health = setInterval(() => {
+      if (document.visibilityState === 'hidden' || recovering) return;
+      const now = Date.now(), slept = now - lastCheck > 60000;
+      lastCheck = now;
+      // SSE 静默挂起时仍定期取快照；定时器长暂停后同时重建连接。
+      if (slept || !es) void recover();
+      else void refresh().catch(() => {});
+    }, 30000);
+    void recover();
+    return () => {
+      disposed = true; mounted.current = false; streamReady.current = false;
+      es?.close(); if (timer) clearTimeout(timer); clearInterval(health);
+      window.removeEventListener('focus', resume); window.removeEventListener('online', resume);
+      document.removeEventListener('visibilitychange', visible);
+    };
   }, [refresh]);
 
   // 连接仍在但快照读取失败时也会重试，不必等下一次数据变动。
