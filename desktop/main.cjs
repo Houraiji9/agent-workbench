@@ -55,7 +55,20 @@ function powershell(file, args = []) {
     let error='',output='';child.stderr.setEncoding('utf8');child.stdout.setEncoding('utf8');
     child.stderr.on('data', b=>error=(error+b).slice(-1500));
     child.stdout.on('data',b=>output=(output+b).slice(-3000));
-    child.on('error',reject);child.on('close',code=>{code===0?resolve(output.trim()):reject(new Error(error||'本机数据服务未能启动'));});
+    let settled=false,drainTimer,exitCode;
+    const finish=spawnError=>{
+      if(settled)return;settled=true;clearTimeout(drainTimer);
+      // We own these capture pipes, not any long-lived service that inherited
+      // their handles. Never wait indefinitely for such a descendant to close.
+      child.stdout.destroy();child.stderr.destroy();
+      if(spawnError)reject(spawnError);
+      else exitCode===0?resolve(output.trim()):reject(new Error(error||'本机数据服务未能启动'));
+    };
+    child.once('error',finish);
+    child.once('exit',code=>{exitCode=code;drainTimer=setTimeout(()=>finish(),100);});
+    // A short bounded drain retains trailing diagnostics; close can finish it
+    // sooner, but PowerShell's own exit is sufficient even if close never comes.
+    child.once('close',code=>{exitCode??=code;finish();});
   });
 }
 async function stop(afterStop) {

@@ -254,7 +254,10 @@ export class Workbench extends EventEmitter {
     const record={...e,id:e.event_id,digest,received_at:now(),source,disposition:'pending'};
     this.transaction(()=>{this.put('events',record,{run_id:e.run_id,seq:e.seq,digest});this.audit(source,'receive_event',e.event_id,{run_id:e.run_id,seq:e.seq})});this.drain(r.id);return this.get('events',e.event_id);
   }
-  drain(rid:string){let r=this.get('runs',rid);while(true){const event=this.all('events').find(e=>e.run_id===rid&&e.seq===r.seq+1&&e.disposition==='pending');if(!event)break;
+  drain(rid:string){let r=this.get('runs',rid);while(true){
+      // The unique (run_id,seq) index selects one candidate without decoding the full history.
+      const record=this.db.prepare('SELECT data FROM events WHERE run_id=? AND seq=?').get(rid,r.seq+1) as {data:string}|undefined;
+      const event=record?JSON.parse(record.data):undefined;if(!event||event.disposition!=='pending')break;
       const created:string[]=[];const resultFile=path.join(r.directory,'RESULT.md');let previousResult:Buffer|undefined;try{if(fs.existsSync(resultFile))previousResult=readBounded(resultFile)}catch{}
       try{this.transaction(()=>{assert(event.source!=='user_via_agent','旧版管理连接回执已停用，请由执行者使用独立连接重新回报',403);this.applyEvent(event as any,created);event.disposition='applied';event.applied_at=now();this.put('events',event,{run_id:rid,seq:event.seq,digest:event.digest})})}catch(error){for(const f of created){try{fs.unlinkSync(f)}catch{}}try{if(previousResult)atomicWrite(resultFile,previousResult)}catch{}if(!(error instanceof DomainError)){event.disposition='pending';delete event.applied_at;event.error='暂时无法应用：'+(error as Error).message;this.put('events',event,{run_id:rid,seq:event.seq,digest:event.digest});break;}event.disposition='rejected';event.error=(error as Error).message;this.transaction(()=>{this.put('events',event,{run_id:rid,seq:event.seq,digest:event.digest});const current=this.get('runs',rid);current.seq=event.seq;current.has_started??=this.all('events').some(e=>e.run_id===rid&&e.disposition==='applied'&&e.event_type==='started');this.put('runs',current,{task_id:current.task_id});this.audit('validation','reject_event',event.id,{error:event.error})})}r=this.get('runs',rid);
     }}

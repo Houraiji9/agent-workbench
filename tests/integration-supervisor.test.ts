@@ -37,7 +37,7 @@ test('重复失败不刷日志，成功恢复与再次失败保留各自变化',
   broken=false;await s.control.poll();await s.control.poll();assert.equal(s.logs.length,2);
   broken=true;await s.control.poll();assert.equal(s.logs.length,3);await s.control.stop();
 });
-test('桌面退出先撤销resume并等当前启动，然后才清理自管服务，之后不能复活',async()=>{
+for(const startupCode of [0,1])test(`实际main在PowerShell exit=${startupCode}但close/stdio end永不到时，保留诊断并完成巡检和退出`,{timeout:5000},async()=>{
   const root=path.join(ROOT,'.test-tmp','integration-main-'+randomUUID()),powerMonitor=new EventEmitter(),order:string[]=[],children:any[]=[];
   const app:any=new EventEmitter();Object.assign(app,{isPackaged:false,setName(){},setAppUserModelId(){},setPath(){},requestSingleInstanceLock:()=>true,whenReady:()=>Promise.resolve(),exit:()=>order.push('app-exit')});
   const backend:any=new EventEmitter();Object.assign(backend,{pid:12001,exitCode:null});
@@ -50,18 +50,26 @@ test('桌面退出先撤销resume并等当前启动，然后才清理自管服�
   let healthCalls=0;
   const module={exports:{} as any};
   const dependencies:any={electron,'./lifecycle.cjs':{createIntegrationSupervisor,stopBackend:async()=>order.push('backend-stop')},'./external-links.cjs':{installExternalLinks(){}},'./updater.cjs':{installUpdater:()=>({markReady(){}})},'node:child_process':{
-    fork:()=>backend,spawn:(_exe:string,args:string[])=>{const child:any=new EventEmitter();child.stderr=new PassThrough();child.stdout=new PassThrough();child.args=args;children.push(child);order.push(args.some(a=>a.endsWith('停止数据服务.ps1'))?'cleanup-spawn':'startup-spawn');return child;}
+    fork:()=>backend,spawn:(_exe:string,args:string[])=>{const child:any=new EventEmitter();child.stderr=new PassThrough();child.stdout=new PassThrough();child.kill=()=>assert.fail('must not kill an inherited-pipe descendant');child.args=args;children.push(child);order.push(args.some(a=>a.endsWith('停止数据服务.ps1'))?'cleanup-spawn':'startup-spawn');return child;}
   }};
-  vm.runInNewContext(fs.readFileSync(path.join(ROOT,'desktop/main.cjs'),'utf8'),{require:(id:string)=>dependencies[id]||createRequire(import.meta.url)(id),module,__dirname:path.join(ROOT,'desktop'),process:{env:{WORKBENCH_ROOT:root,WORKBENCH_NODE:process.execPath},argv:[]},fetch:async()=>++healthCalls===1?{ok:false}:{json:async()=>({app:'agent-workbench',pid:backend.pid})},AbortSignal,setTimeout});
+  vm.runInNewContext(fs.readFileSync(path.join(ROOT,'desktop/main.cjs'),'utf8'),{require:(id:string)=>dependencies[id]||createRequire(import.meta.url)(id),module,__dirname:path.join(ROOT,'desktop'),process:{env:{WORKBENCH_ROOT:root,WORKBENCH_NODE:process.execPath},argv:[]},fetch:async()=>++healthCalls===1?{ok:false}:{json:async()=>({app:'agent-workbench',pid:backend.pid})},AbortSignal,setTimeout,clearTimeout});
   for(let i=0;i<30&&!children.length;i++)await new Promise(resolve=>setImmediate(resolve));
   assert.equal(children.length,1);assert.equal(powerMonitor.listenerCount('resume'),1);
   const stopping=module.exports.stopForUpdate();await new Promise(resolve=>setImmediate(resolve));
   assert.equal(powerMonitor.listenerCount('resume'),0);assert.deepEqual(order,['startup-spawn']);
   powerMonitor.emit('resume');assert.equal(children.length,1);
-  children[0].emit('close',0);
-  for(let i=0;i<30&&children.length<2;i++)await new Promise(resolve=>setImmediate(resolve));
+  children[0].stdout.write('startup output');children[0].stderr.write('startup diagnostic');
+  children[0].emit('exit',startupCode);
+  assert.equal(children[0].stdout.destroyed,false);assert.equal(children[0].stderr.readableEnded,false);
+  children[0].stdout.write(' late stdout');children[0].stderr.write(' late stderr');
+  for(let i=0;i<100&&children.length<2;i++)await new Promise(resolve=>setTimeout(resolve,5));
   assert.equal(children.length,2);assert.deepEqual(order,['startup-spawn','backend-stop','cleanup-spawn']);
-  assert(children[1].args.includes('-OwnerId'));children[1].emit('close',0);await stopping;
+  assert(children[0].stdout.destroyed);assert(children[0].stderr.destroyed);
+  const events=fs.readFileSync(path.join(root,'data/desktop-lifecycle.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
+  const result=events.find(event=>event.event===(startupCode===0?'integrations_checked':'integrations_error'));
+  assert(result);assert(result.message.includes(startupCode===0?'late stdout':'late stderr'));
+  assert(children[1].args.includes('-OwnerId'));children[1].emit('exit',0);await stopping;
+  assert(children[1].stdout.destroyed);assert(children[1].stderr.destroyed);
   powerMonitor.emit('resume');await new Promise(resolve=>setImmediate(resolve));assert.equal(children.length,2);assert.equal(order.at(-1),'app-exit');
 });
 
