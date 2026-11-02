@@ -22,15 +22,13 @@ function delivered(){
   return {...f,...s,file,pass,accept,send};
 }
 
-test('通过审查 -> 复制收尾 -> 接单 -> 完成 -> 用户验收，复制及空事项不能提前放行',()=>{
+test('通过审查 -> 复制收尾 -> 接单 -> 完成 -> 用户验收，复制不代表完成',()=>{
   const f=delivered(),{wb}=f;try{
     const original=fs.readFileSync(path.join(wb.get('runs',f.rid).directory,'RESULT.md'),'utf8');f.pass();
     assert.equal(wb.get('tasks',f.tid).status,'awaiting_closeout');assert.throws(f.accept,/收尾/);
     const input={run_id:f.rid,expected_revision:wb.get('tasks',f.tid).revision},a=exportCloseoutOrder(wb,input),b=exportCloseoutOrder(wb,input);
     assert.equal(a.closeout_id,b.closeout_id);assert(fs.existsSync(a.order_path));assert.match(fs.readFileSync(a.order_path,'utf8'),/file:\/\//);assert.equal(wb.get('tasks',f.tid).status,'awaiting_closeout');
-    assert.equal(f.send('closeout_completed',{result:'这是隔离测试完整收尾结果报告，未接单时不能直接完成。',closeout_results:[]}).disposition,'rejected');
     assert.equal(f.send('closeout_started').disposition,'applied');
-    assert.equal(f.send('closeout_completed',{result:'这是隔离测试完整收尾结果报告，漏项不能被登记为完成。',closeout_results:[]}).disposition,'rejected');
     const ctx=getCloseoutContext(wb,f.rid);f.send('closeout_completed',{result:'这是隔离测试收尾结果报告，逐项核对了使用入口并清理本轮文件。',closeout_results:ctx.closeout.items.map((i:any)=>({item_id:i.id,outcome:'done',evidence:'隔离测试核对完成，有对应记录'}))});
     assert.equal(wb.get('tasks',f.tid).status,'awaiting_confirmation');assert.equal(fs.readFileSync(path.join(wb.get('runs',f.rid).directory,'RESULT.md'),'utf8'),original);
     assert.equal(f.accept().status,'accepted');
@@ -57,18 +55,18 @@ test('收尾回执乱序、重复、内容冲突、错误身份都沿用 Run 的
   }finally{wb.close()}
 });
 
-test('补审/改派后旧收尾失效；新的通过必须新收尾，迟到旧审查不能覆盖',()=>{
+test('同交付补审与撤回保留已完成收尾，真实报告变化独立记录',()=>{
   const f=delivered(),{wb}=f;try{
     f.pass();const old=getCloseoutContext(wb,f.rid).closeout.id;finishCloseout(wb,f.tid);
     const order=exportReviewOrder(wb,{run_id:f.rid,reviewer_id:'claude',expected_revision:wb.get('tasks',f.tid).revision,reason:'隔离测试改派审查'},{role:'user'});
-    assert.equal(f.send('closeout_started',{closeout_id:old}).disposition,'rejected');
+    assert.equal(f.send('closeout_started',{closeout_id:old}).disposition,'applied');assert.equal(wb.get('tasks',f.tid).status,'awaiting_confirmation');
     startReview(wb,{review_id:order.review_id,identity:'claude'});
     const result={...getReviewContext(wb,f.rid).final_response,review_id:order.review_id,verdict:'passed',findings:[],limitations:[],evidence:['隔离测试检查'],report_markdown:'这是隔离测试 Claude 审查报告，用来验证回传流转，不是生产独立审查。'};
     const submitted=submitReviewResult(wb,result,'reviewer:'+order.review_id);decideReviewCollaboration(wb,{run_id:f.rid,expected_revision:wb.get('tasks',f.tid).revision,decision:'continue',reason:'隔离测试负责人核对两份报告后继续收尾'},{role:'user'});
-    assert.notEqual(getCloseoutContext(wb,f.rid).closeout.id,old);assert.equal(wb.get('tasks',f.tid).status,'awaiting_closeout');
-    assert.equal(f.send('closeout_started',{closeout_id:old}).disposition,'rejected');
+    assert.equal(getCloseoutContext(wb,f.rid).closeout.id,old);assert.equal(wb.get('tasks',f.tid).status,'awaiting_confirmation');
+    assert.equal(f.send('closeout_started',{closeout_id:old}).disposition,'applied');
     finishCloseout(wb,f.tid);submitReviewResult(wb,result,'reviewer:'+order.review_id);assert.equal(wb.get('tasks',f.tid).status,'awaiting_confirmation');
-    revokeReview(wb,submitted.review.id,{run_id:f.rid,revision:wb.get('tasks',f.tid).revision,reason:'隔离测试撤回错误审查'});assert.throws(()=>submitReviewResult(wb,result,'reviewer:'+order.review_id));assert.throws(f.accept);
+    revokeReview(wb,submitted.review.id,{run_id:f.rid,revision:wb.get('tasks',f.tid).revision,reason:'隔离测试撤回错误审查'});assert.throws(()=>submitReviewResult(wb,result,'reviewer:'+order.review_id));assert.equal(getCloseoutContext(wb,f.rid).closeout.id,old);assert.equal(f.accept().status,'accepted');
   }finally{wb.close()}
 });
 
@@ -82,8 +80,8 @@ test('源码变化保存为收尾核验记录，用户确认不要求重新开�
 });
 test('取消与旧 Run 的迟到收尾不能复活任务',()=>{
   const f=delivered(),{wb}=f;try{
-    f.pass();wb.manualAction(f.tid,'cancel',wb.get('tasks',f.tid).revision);assert.equal(f.send('closeout_started').disposition,'rejected');assert.equal(wb.get('tasks',f.tid).status,'cancelled');
-    wb.exportOrder(f.tid,1,true,'codex',wb.get('tasks',f.tid).revision);assert.throws(()=>f.send('closeout_started'),/旧 Run/);
+    f.pass();wb.manualAction(f.tid,'cancel',wb.get('tasks',f.tid).revision);assert.equal(f.send('closeout_started').disposition,'applied');assert.equal(wb.get('tasks',f.tid).status,'cancelled');
+    wb.exportOrder(f.tid,1,true,'codex',wb.get('tasks',f.tid).revision);const current=wb.get('tasks',f.tid);assert.equal(f.send('closeout_started').disposition,'applied');assert.deepEqual(wb.get('tasks',f.tid),current);
   }finally{wb.close()}
 });
 

@@ -45,6 +45,8 @@
 | 订阅和未来安排的新增、修改、删除、实际发生确认 | manage_subscriptions：create / update / delete / confirm |
 | 标记已转发、取消任务、回答问题、通过、退回、返工 | manage_tasks：dispatch / cancel / reply / accept / reject / rework |
 | 修订当前 Task/Run 范围 | `manage_tasks` action `amend`：传 `task_id`、`run_id`、`expected_revision`、`reason` 与 `changes`（可含 `goal`、`scope`、`acceptance`、`tests`、`required_files`、`context_contract`）；运行中即时应用，交付内容变化可同一 Run 再次 submitted，旧交付归档保留；reviewer/model-only 修改留在当前 Run |
+| 只补事实、说明或证据引用 | `manage_tasks` action `append_note`：`data` 含 `task_id`、`run_id`、`expected_revision`、`note`，可选 `references:[{kind:"text|run|review|artifact",value:"说明或已有ID"}]`；引用实体须属于目标项目。保留实际作者，不改变范围、审查、收尾或任务状态，备注不构成部署验证 |
+| 整合负责人显式完成协作单收尾 | `manage_tasks` action `complete_integrated_closeout`：`data` 含目标 `task_id/run_id/expected_revision`、整合来源 `source_run_id/source_expected_revision`、`result/closeout_results`，可选 `coverage_note/limitations`；一次绑定双 Run，以当前办理者身份记录覆盖依据与限制，不冒充协作单原执行者回执 |
 | 设置或建议执行安排 | `manage_tasks` action `set_arrangement`：传 `task_id` 与 `data.arrangement`、当前 revision，可选 `agent_id` 或 `execution_policy`；按现有同 Task 生命周期应用，不热启动。`propose_arrangement` 只用于用户要建议时 |
 | 设置审查安排 | `manage_reviews.set_arrangement`：按当前 Run 设置 `reviewer_id`，可选 `requested_model`、`route`，并提交版本与原因 |
 | 新增、移除或替换审查成员 | `manage_reviews.update_member`：`action=remove` 或 `replace`，使用当前 `review_id`、版本与原因；replace 时填写新 reviewer/model |
@@ -60,6 +62,10 @@
 | 查询、读成果、历史检索 | get_management_context / get_task_detail / read_artifact / search_execution_history / search_external_history / get_session_messages |
 
 完整参数以 `tools/list` 或 `workbench tools` 返回的 schema 为准。规划先读取 `get_dispatch_context`、`get_project_context` 与相关项目经验，再 `submit_task_plan`、`export_execution_order`，由用户启动新的外部主执行；不会因为保存了备忘就自动开工。项目经验用于复用决定、问题、失败尝试和交接，不要求每次读日志：先取短索引，再按任务选相关经验全文；同会话只看变化，换会话读取相关最小交接包。可用 `get_project_memories` 时按工具 schema 读取索引、指定 ID 全文或已知 hash 的增量。候选和过时条目保留来源但不作为现行事实。执行和审查也按任务选择经验，审查者独立核对当前证据。`export_execution_order` 保留为文件导出与兼容入口，导出不代表已调用。
+
+纯补注用 `append_note`，不得用 `progress`、`submitted` 或 `amend` 代替：progress 是执行进度事件，submitted 是交付新版本，amend 是真正修改目标、范围、验收或资料要求，会使受影响的审查与收尾需要重新核验。部署事实使用本 Run 执行者的 `get_deployment_context/report_deployment_evidence`，便携安装用 `report_runtime_deployment`；说明性备注不代替这些回执。
+
+查询只返回现状，不自动修复或关闭任务。主单完成不会自动关闭依赖或协作单；整合负责人需读取目标与来源两个 Run 的当前 revision，明确提交 `complete_integrated_closeout`，引用已有独立审查和部署事实，逐项记录覆盖及未知事项。原执行者、报告来源和历史保留，不能把 Codex 的整合核对记为 Claude 本人回执。用户已授权整体目标后，当前会话持续办理实施、审查、上线核验和收尾，直到待用户试用确认；中途回答追问后继续，不把状态问答当作停止指示。
 
 ## 通过、退回和审查
 

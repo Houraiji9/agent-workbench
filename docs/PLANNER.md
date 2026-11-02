@@ -27,6 +27,10 @@
 
 用户口述调整由当前会话直接保存。项目资料用 `manage_projects`；任务方案与资料用 `manage_tasks.amend`；执行安排用 `set_arrangement`；审查成员用 `manage_reviews`。保留原值和来源，不为 reviewer/model 变化造空任务。详细参数以当前 MCP schema 为准。
 
+只补事实或证据引用用 `manage_tasks.append_note`，保留实际作者及说明性性质，不改任务范围、审查或收尾。不要用 progress、submitted、amend 补注：它们分别表示执行进度、新交付和内容修订。真正修改目标、范围、验收或资料要求才用 amend；旧审查保留，新内容重新核验。
+
+主单成功不自动关闭依赖或协作单，查询也不办理收尾。整合负责人已覆盖协作成果时，读取目标与来源两个 Run 的现状和 revision，显式调用 `manage_tasks.complete_integrated_closeout`，以自己的身份逐项写明覆盖、已有独审与部署事实及限制；不改写 Claude 等原执行者身份，不代写其回执。用户授权整体目标后，持续至上线核验、相关收尾完成并等待用户试用确认；回答中途追问后继续处理剩余事项。
+
 执行者通过 Run 固定入口报告 started、submitted 和收尾。已有上下文不重新通读执行单；需要单项资料时用 `get_run_context(section=plan|files|requirements|history)`。同会话传已知 hash 取 delta；未知 hash 返回当前简版。文件清单是导航，可以因实际关联补读，并记录原因。
 
 审查者先看本轮差异、方案和指定证据，围绕改动及直接影响选择验证；发现风险再补读，不默认遍历工程或全量测试。同会话复审只给新变化和未解决问题。审查结果可直接返回 `verdict/findings/limitations/evidence/report_markdown` 的 JSON，工作台绑定当前单据并保存。型号未知照实保留，原生报告不因缺少接单回执或额度快照而拒收。独立报告必须来自实际审查者。

@@ -21,6 +21,8 @@ import {addAuthorizedRoot,authorizeProject} from './roots.ts';
 import {reviewOrderInput,exportReviewOrder,reviewFeedbackOrder,reviewMemberInput,reviewDecisionInput,reviewArrangementInput,updateReviewMember,decideReviewCollaboration,setReviewArrangement} from './review-workflow.ts';
 import {revokeReview} from './review-evidence.ts';
 import {taskAmendmentInput,amendTask} from './task-amendment.ts';
+import {appendTaskNoteInput,appendTaskNote} from './task-notes.ts';
+import {integratedCloseoutInput,completeIntegratedCloseout} from './integrated-closeout.ts';
 import {scopeManagementInput,type ManagementCaller} from './session-management.ts';
 import {projectMemoryInput,projectMemories} from './project-memory.ts';
 import {manageMemoryInput} from './memory-management.ts';
@@ -80,16 +82,19 @@ export const managementTools:Record<string,Tool>={
     if(v.action==='delete')return wb.deleteSubscription(v.subscription_id,{version:v.version});
     return wb.confirmSubscription(v.subscription_id,{version:v.version,occurred_at:v.occurred_at,note:v.note,end_date:v.end_date});
   }},
-  manage_tasks:{description:'按用户会话中的决定标记已转发、取消、保存回答、验收通过或退回、新开返工。验收和退回只准备待用户确认卡片，用户在首页点击后才生效。',schema:envelope(z.discriminatedUnion('action',[
+  manage_tasks:{description:'管理任务与显式协作收尾。补充事实用append_note，不改状态；改目标范围才用amend（使旧审查/收尾失效）；整合负责人用complete_integrated_closeout以本人身份绑定主Run与协作Run完成收尾。验收/退回仅准备用户确认卡。',schema:envelope(z.discriminatedUnion('action',[
     action('create_release',{data:releaseHandoffInput}),action('dispatch',{task_id:key,revision:version}),action('cancel',{task_id:key,revision:version}),
     action('reply',{task_id:key,data:replySchema}),action('accept',{task_id:key,run_id:key,revision:version}),
     action('reject',{task_id:key,revision:version,run_id:key,note:text.max(10000),artifact_hashes:z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(1),followup_task_id:key.optional()}),
     action('rework',{task_id:key,revision:version,feedback_id:key}),
-    action('propose_arrangement',{task_id:key,data:arrangementProposalInput}),action('set_arrangement',{task_id:key,data:arrangementInput}),action('amend',{data:taskAmendmentInput})
-  ])),asynchronous:v=>v.action==='rework',execute:({wb,caller},v)=>{
+    action('propose_arrangement',{task_id:key,data:arrangementProposalInput}),action('set_arrangement',{task_id:key,data:arrangementInput}),action('amend',{data:taskAmendmentInput}),
+    action('append_note',{data:appendTaskNoteInput}),action('complete_integrated_closeout',{data:integratedCloseoutInput})
+  ])),asynchronous:v=>v.action==='rework',execute:({wb,caller,user_instruction},v)=>{
     if(v.action==='create_release')return createReleaseHandoff(wb,v.data,{role:caller?.role||'manager',id:caller?.id||'manager',source:'conversation'});
     if(v.action==='reply')return wb.saveReply(v.task_id,v.data);
     if(v.action==='amend')return amendTask(wb,v.data);
+    if(v.action==='append_note')return appendTaskNote(wb,v.data,caller?.id||'manager');
+    if(v.action==='complete_integrated_closeout')return completeIntegratedCloseout(wb,v.data,caller||{role:'manager',id:'manager'},user_instruction||'');
     if(v.action==='propose_arrangement')return proposeTaskArrangement(wb,v.task_id,v.data);
     if(v.action==='set_arrangement')return changeTaskArrangement(wb,v.task_id,v.data);
     if(v.action==='accept'||v.action==='reject')return prepareDecision(wb,v.action,v);
@@ -146,7 +151,8 @@ export function managementContext(wb:Workbench,input:unknown){
   }
   if(v.project_id){wb.get('projects',v.project_id);for(const k of ['requests','tasks','memories','user_decisions'])if(out[k])out[k]=out[k].filter((r:Row)=>r.project_id===v.project_id);if(out.projects)out.projects=out.projects.filter((p:Row)=>p.id===v.project_id)}
   if(out.memories){const all=out.memories;out.memories=all.filter((m:Row)=>m.status!=='superseded').slice(-12).reverse().map((m:Row)=>({id:m.id,project_id:m.project_id,kind:m.kind,status:m.status,source_id:m.source_id,content_preview:m.content.slice(0,160)}));out.memory_index={total:all.length,read_tool:'get_project_memories',note:'短索引不是必读全文；按项目与编号补读相关经验。'};}
-  if(v.task_id){const detail=wb.taskDetail(v.task_id);assert(!v.project_id||detail.task.project_id===v.project_id,'任务不属于所选项目',409);out.task_detail=taskStatus(wb,v.task_id)}
+  if(v.task_id){const detail=wb.taskDetail(v.task_id);assert(!v.project_id||detail.task.project_id===v.project_id,'任务不属于所选项目',409);out.task_detail=taskStatus(wb,v.task_id);if(out.tasks)out.tasks=[out.task_detail.task];if(out.user_decisions)out.user_decisions=out.user_decisions.filter((d:Row)=>d.task_id===v.task_id);}
+  out.task_operations={append_note:'仅补充事实与证据引用，不改状态或范围；不要用progress/submitted/amend代替',amend:'实际修改目标、范围或验收要求；当前审查和收尾需重新核对',complete_integrated_closeout:'明确指定主Run与协作Run，以当前实际办理者身份完成协作收尾；不自动关闭其他依赖，也不代用户验收'};
   return out;
 }
 export const managementResultInput=z.object({request_id:z.string().uuid()}).strict();

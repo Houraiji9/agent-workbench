@@ -31,4 +31,7 @@ export const cliHelp=`用法：agent.ts <Run ID|current> <动作> [参数]
 Run动作：context [known_hash]；context-section <plan|files|requirements|history>；read <JSON文件>；start；report <JSON文件>；register-delegation <JSON文件>；report-delegation <JSON文件>；review；continue；job <Job ID>；wait <revision>；closeout <JSON文件>；closeout-context [brief|full]；deployment <manifest_sha256>；deployment-context；deployment-evidence <JSON文件>；manage <工具名> <JSON文件>；recover-review <Job ID>；mapping。
 current 读取 WORKBENCH_CREDENTIAL_RUN_ID / WORKBENCH_RUN_ID，或当前 CODEX_THREAD_ID/CODEX_SESSION_ID 的成功命令映射。续接后保留 credential_run_id，用服务端正式链解析 current_run_id；映射不授予新权限。
 最小回报JSON：{"event_type":"progress","data":{"message":"填写真实进度"}}
-先看 example report，再用 validate-only report input.json 校验；校验不提交。`;
+progress只回报实际执行进度。纯补注用 manage manage_tasks，action=append_note，data含task_id/run_id/expected_revision/note，可选references；不得用progress/submitted/amend补注。真正改范围才amend。
+整合负责人收尾用manage_tasks action=complete_integrated_closeout，显式绑定目标task_id/run_id/expected_revision与来源source_run_id/source_expected_revision，提交result/closeout_results，可选coverage_note/limitations；以自己身份记录，不代写原执行者回执。独审、部署事实和未知事项各自保留来源。
+查询只读，主单成功不自动关闭依赖；用户授权整体目标后持续至待试用确认，回答中途追问后继续。
+先看 example report，再用 validate-only report input.json 校验；校验不提交。管理参数用schema manage_tasks查看完整schema。`;

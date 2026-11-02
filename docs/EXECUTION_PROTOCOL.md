@@ -138,6 +138,10 @@ RESULT 内容必须覆盖：完成内容、变更文件、测试命令及实际�
 
 ## 执行收尾回报
 
+纯事实补注使用 `manage_tasks` action `append_note`，`data` 为 `task_id/run_id/expected_revision/note`，可选 `references:[{kind,value}]`；kind 为 text、run、review 或 artifact，实体引用须存在于目标项目。备注保留实际作者且标注未验证，不改变 scope、独立审查、收尾或状态。不得借 progress、submitted、amend 补注；真正修改范围才 amend，新交付才 submitted，执行进度才 progress。部署核验继续使用正式部署回执。
+
+整合负责人可用 `manage_tasks` action `complete_integrated_closeout`，在 `data` 显式绑定目标 `task_id/run_id/expected_revision` 与整合来源 `source_run_id/source_expected_revision`，提交 `result/closeout_results`，按需附 `coverage_note/limitations`。这是当前办理者以自己身份记录的整合收尾；原执行者、独立审查和部署事实各保留来源，未验证事项照实保留，不伪造原协作执行者回执。先查询两单最新状态与版本，再逐项提交，主单成功不自动关闭依赖，查询不产生收尾操作。用户授权整体目标后，继续办理剩余实施、审查、上线核验和收尾至待试用确认；中途状态问答后继续。
+
 收尾继续使用同一 Run 的签名、身份、cwd 和连续 seq；Run 的作者交付保持 submitted，Task 表示当前交接阶段。原 RESULT.md 不被收尾覆盖。
 
 | 回报 | 允许的 Task 阶段 | 结果 |
@@ -152,7 +156,7 @@ RESULT 内容必须覆盖：完成内容、变更文件、测试命令及实际�
 
 重复事件 ID + 相同内容幂等；内容冲突拒绝；乱序等待；非法转换留档并消费 seq。先查询 get_closeout_context 的 next_seq 再回报。复制收尾单、保存用户回答、读取上下文均不自动开始工作。收尾记录及报告随备份恢复，原始源码仍由项目路径管理。
 
-一般审查可由当前执行者直接发起，或由已启用的 auto_review 调用独立客户端；审查者本人 started 才标记审查中。RA 绑定入口可用 `scripts/review.ts <RA ID> manage <tool> <JSON路径>` 调用本单授权的管理工具；审查结果可用 `verdict`、`findings`、`limitations`、`evidence`、`report_markdown` 简短提交，由服务端合并当前 RA 模板。多名审查者分别回报，lead 明确写下最终决定及异议处理依据。export_review_order 保留 delivery_mode=manual|agent 作为旧协议兼容；仅生成文件入口不等于调用。旧调用失败可使用 report_review_handoff，以 revision 校验并撤销该 RA 权限，交由有权限的执行/审查会话按当前记录续办或由规划者处理；不要求用户重复确认或转发。Reviewer 只能提交审查，执行者只能提交自己的收尾，用户才能验收。
+一般审查可由当前执行者直接发起，或由已启用的 auto_review 调用独立客户端；审查者本人 started 才标记审查中。RA 绑定入口可用 `scripts/review.ts <RA ID> manage <tool> <JSON路径>` 调用本单授权的管理工具；审查结果可用 `verdict`、`findings`、`limitations`、`evidence`、`report_markdown` 简短提交，由服务端合并当前 RA 模板。多名审查者分别回报，lead 明确写下最终决定及异议处理依据。export_review_order 保留 delivery_mode=manual|agent 作为旧协议兼容；仅生成文件入口不等于调用。旧调用失败可使用 report_review_handoff，以 revision 校验并撤销该 RA 权限，交由有权限的执行/审查会话按当前记录续办或由规划者处理；不要求用户重复确认或转发。Reviewer 只能提交本人审查；执行回执使用本人身份，整合负责人另以显式双 Run 绑定记录整合收尾；用户才能验收。
 
 ## 会话直接管理（2026-10-23）
 

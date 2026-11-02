@@ -32,13 +32,38 @@ function binding(wb:Workbench,t:Row,r:Row){
   if(task.delivery_profile||r.delivery_version!==undefined){payload.delivery_profile_sha256=deliveryProfileDigest(resolveDeliveryProfile(task,wb.get('projects',t.project_id)));payload.delivery_version=r.delivery_version??null;}
   return {review_decision_id:authority.decision?.id||null,review_id:reviewSkipped(task)?null:boundReview,artifact_hashes:hashes,digest:hash(JSON.stringify(payload))};
 }
-/** Called inside the caller's transaction. A new review always gets a new closeout identity. */
-export function stageCloseout(wb:Workbench,t:Row,r:Row){
-  const b=binding(wb,t,r);
-  if(r.closeout){r.closeout_history=[...(r.closeout_history||[]),{...r.closeout,superseded_at:now()}]}
+function deliveryDigest(wb:Workbench,t:Row,r:Row){
+  const task=runTask(t,r);
+  return hash(JSON.stringify({run:r.id,version:r.task_version,scope_revision:r.scope_revision||0,files:artifacts(wb,r.id).map(a=>[a.id,a.sha256]),review_files:r.review_files||[],profile:deliveryProfileDigest(resolveDeliveryProfile(task,wb.get('projects',t.project_id))),delivery_version:r.delivery_version??null}));
+}
+/** Review additions update evidence, not the fact that this delivery was closed out. */
+export function completedCloseoutMatchesDelivery(wb:Workbench,t:Row,r:Row){
+  if(r.closeout?.status!=='completed')return false;
+  if(r.closeout.delivery_digest)return r.closeout.delivery_digest===deliveryDigest(wb,t,r);
+  // Legacy completed records predate delivery_digest. Content edits and resubmission
+  // already invalidate them; preserve them while their archived delivery is unchanged.
+  const files=artifacts(wb,r.id);return files.length>0&&JSON.stringify(r.closeout.artifact_hashes||[])===JSON.stringify(files.map(a=>a.sha256).sort());
+}
+function proposedCloseout(wb:Workbench,t:Row,r:Row){
+  // Scope changes and explicit reopening must never reuse a historical report path.
+  // Include the record being replaced so a read-only preview matches staging.
+  const b=binding(wb,t,r),delivery=deliveryDigest(wb,t,r),generation=(r.closeout_history?.length||0)+(r.closeout?1:0),hex=hash(JSON.stringify({binding:b.digest,delivery,generation})),key=`${hex.slice(0,8)}-${hex.slice(8,12)}-4${hex.slice(13,16)}-8${hex.slice(17,20)}-${hex.slice(20,32)}`;
   const items=r.closeout_items?.length?r.closeout_items:t.closeout_items?.length?t.closeout_items:['核对原始需求、交付报告和审查意见，完成本任务剩余事项','检查交付使用入口、文档及本轮临时文件，写明实际处理结果'];
-  r.closeout={id:id('CO'),...b,status:'awaiting_dispatch',created_at:now(),items:items.map((text:string,i:number)=>({id:'C'+(i+1),text})),results:[]};
+  return {id:'CO-'+key,...b,delivery_digest:delivery,status:'awaiting_dispatch',created_at:now(),items:items.map((text:string,i:number)=>({id:'C'+(i+1),text})),results:[],delivery_mode:reviewSkipped(t)?'agent':t.review_delivery||'manual'};
+}
+/** Called inside the caller's transaction. Completed work survives same-delivery reviews. */
+export function stageCloseout(wb:Workbench,t:Row,r:Row){
+  if(completedCloseoutMatchesDelivery(wb,t,r))return;
+  const next=proposedCloseout(wb,t,r);
+  if(r.closeout){r.closeout_history=[...(r.closeout_history||[]),{...r.closeout,superseded_at:now()}]}
+  r.closeout=next;
   t.closeout_delivery=reviewSkipped(t)?'agent':t.review_delivery||'manual';r.closeout.delivery_mode=t.closeout_delivery;t.status='awaiting_closeout';wb.put('runs',r,{task_id:t.id});
+}
+/** Explicit write paths only. Reading context never creates or replaces a record. */
+export function ensureCloseout(wb:Workbench,t:Row,r:Row){
+  assert(t.current_run_id===r.id&&!['accepted','cancelled','rework_linked'].includes(t.status),'当前任务已结束或执行已变更',409);
+  if(!completedCloseoutMatchesDelivery(wb,t,r)&&(!r.closeout||r.closeout.digest!==binding(wb,t,r).digest))stageCloseout(wb,t,r);
+  return r.closeout;
 }
 export function invalidateCloseout(wb:Workbench,r:Row,reason:string){
   if(!r.closeout)return;
@@ -47,7 +72,7 @@ export function invalidateCloseout(wb:Workbench,r:Row,reason:string){
 }
 /** Recover a workflow label from the same delivery's recorded executor facts. */
 export function restoreCloseoutStatus(wb:Workbench,t:Row,r:Row){
-  if(t.current_run_id!==r.id||!['submitted','in_review'].includes(t.status)||!r.closeout||r.closeout.digest!==binding(wb,t,r).digest)return;
+  if(t.current_run_id!==r.id||!['submitted','in_review'].includes(t.status)||!r.closeout||!completedCloseoutMatchesDelivery(wb,t,r)&&r.closeout.digest!==binding(wb,t,r).digest)return;
   const status=({awaiting_dispatch:'awaiting_closeout',closing:'closing',closeout_waiting_input:'closeout_waiting_input',closeout_blocked:'closeout_blocked',completed:'awaiting_confirmation'} as Row)[r.closeout.status];
   if(status)t.status=status;
 }
@@ -64,13 +89,13 @@ export function verifyDelivery(wb:Workbench,t:Row,r:Row,options:{allowSuccessor?
 export function getCloseoutContext(wb:Workbench,rid:string){
   const r=wb.get('runs',rid),t=wb.get('tasks',r.task_id);
   assert(t.current_run_id===rid,'请在当前执行办理收尾',409);
-  if(!r.closeout){stageCloseout(wb,t,r);wb.put('tasks',t,{project_id:t.project_id});}
-  const b=binding(wb,t,r);if(r.closeout.digest!==b.digest){stageCloseout(wb,t,r);wb.put('tasks',t,{project_id:t.project_id});}
-  return {task_id:t.id,run_id:rid,task_version:t.version,revision:t.revision,agent_id:r.agent_id,cwd:r.cwd,next_seq:r.seq+1,task_status:t.status,closeout:r.closeout,review:latestReview(wb,rid)||null,review_decision:reviewProceedAuthority(wb,rid).decision,review_files:r.review_files||[],result:r.result,original_request:t.original_request,goal:t.goal,scope:t.scope,allowed_paths:t.allowed_paths,forbidden_actions:t.forbidden_actions};
+  const hasDelivery=artifacts(wb,rid).length>0,terminal=['accepted','cancelled','rework_linked'].includes(t.status);
+  const current=!!r.closeout&&(completedCloseoutMatchesDelivery(wb,t,r)||hasDelivery&&r.closeout.digest===binding(wb,t,r).digest);
+  const closeout=current||terminal?r.closeout||null:hasDelivery?proposedCloseout(wb,t,r):null;
+  return {task_id:t.id,run_id:rid,task_version:t.version,revision:t.revision,agent_id:r.agent_id,cwd:r.cwd,next_seq:r.seq+1,task_status:t.status,closeout,closeout_preview:!!closeout&&!current&&!terminal,review_binding_changed:!!r.closeout&&hasDelivery&&r.closeout.digest!==binding(wb,t,r).digest,review:latestReview(wb,rid)||null,review_decision:reviewProceedAuthority(wb,rid).decision,review_files:r.review_files||[],result:r.result,original_request:t.original_request,goal:t.goal,scope:t.scope,allowed_paths:t.allowed_paths,forbidden_actions:t.forbidden_actions};
 }
 export function assertCloseoutComplete(wb:Workbench,t:Row,r:Row){
-  const b=binding(wb,t,r);
-  assert(t.status==='awaiting_confirmation'&&r.closeout?.status==='completed'&&r.closeout.digest===b.digest,'请先由执行者完成收尾，再确认验收',409);
+  assert(t.status==='awaiting_confirmation'&&completedCloseoutMatchesDelivery(wb,t,r),'请先完成当前交付的收尾，再确认验收',409);
   // User confirmation records the experienced result of this delivery. Source and
   // installation verification belong to their recorded checks, not this click.
   // A later project edit must not invalidate the user's ability to confirm an old task.
@@ -78,6 +103,7 @@ export function assertCloseoutComplete(wb:Workbench,t:Row,r:Row){
 function quote(s:string){return "'"+s.replaceAll("'","''")+"'"}
 /** Exporting or copying never starts work. Safe to repeat for the same closeout. */
 export function writeCloseoutOrder(wb:Workbench,rid:string){
+  const target=wb.get('runs',rid),task=wb.get('tasks',target.task_id);ensureCloseout(wb,task,target);wb.put('tasks',task,{project_id:task.project_id});
   const c=getCloseoutContext(wb,rid),r=wb.get('runs',rid),t=wb.get('tasks',r.task_id),dir=safePath(path.join(r.directory,'closeouts',c.closeout.id),[r.directory],true);
   const order=path.join(dir,'CLOSEOUT.md');
   const cmd=`& ${quote(process.execPath)} --import ${quote(import.meta.resolve('tsx'))} ${quote(path.join(ROOT,'scripts/closeout.ts'))} ${rid}`;
@@ -90,21 +116,15 @@ export function writeCloseoutOrder(wb:Workbench,rid:string){
 export function exportCloseoutOrder(wb:Workbench,input:unknown){const v=closeoutOrderInput.parse(input),r=wb.get('runs',v.run_id),t=wb.get('tasks',r.task_id);assert(t.revision===v.expected_revision,'任务已变化，请刷新',409);return writeCloseoutOrder(wb,r.id)}
 /** Shares the existing signed event stream, transaction and replay protection. Run remains submitted. */
 export function applyCloseoutEvent(wb:Workbench,e:RunEvent,t:Row,r:Row,created:string[]){
-  const c=getCloseoutContext(wb,r.id);Object.assign(r,wb.get('runs',r.id));assert(e.data.closeout_id===c.closeout.id,'收尾单已更新或编号不符',409);
+  if(['accepted','cancelled','rework_linked'].includes(t.status)||completedCloseoutMatchesDelivery(wb,t,r)){
+    r.seq=e.seq;r.updated_at=now();t.revision++;t.updated_at=now();wb.put('runs',r,{task_id:t.id});wb.put('tasks',t,{project_id:t.project_id});wb.audit('run:'+r.id,'late_closeout_activity',t.id,{event_id:e.event_id,event_type:e.event_type,preserved_status:t.status});return;
+  }
+  ensureCloseout(wb,t,r);assert(e.data.closeout_id===r.closeout.id,'收尾单已更新或编号不符',409);
   const allowed:Record<string,string[]>={closeout_started:['awaiting_closeout','closeout_blocked','closeout_waiting_input'],closeout_progress:['closing'],closeout_waiting_input:['closing'],closeout_blocked:['closing'],closeout_completed:['closing']};
   if(!allowed[e.event_type]?.includes(t.status))wb.audit('run:'+r.id,'workflow_advisory',t.id,{previous_status:t.status,event_type:e.event_type,note:'接收实际收尾回报，未按建议顺序办理'});
   const closeout=r.closeout;
   if(e.event_type==='closeout_completed'){
-    const source:Row[]=[],runtime:Row[]=[],warnings:string[]=[];try{source.push(...verifyDelivery(wb,t,r,{allowSuccessor:true}))}catch(error){warnings.push((error as Error).message)}try{runtime.push(...verifyRuntime(wb,t,r,{allowSuccessor:true}))}catch(error){warnings.push((error as Error).message)}if(!reviewSkipped(runTask(t,r))&&!reviewProceedAuthority(wb,r.id).can_proceed)warnings.push('独立审查未通过或待完成');
-    closeout.verification_warnings=warnings;
-    assert(e.data.result&&e.data.result.trim().length>=20,'请提交完整收尾报告（至少20字）');
-    const results=e.data.closeout_results||[];
-    closeout.unreported_items=closeout.items.filter((i:Row)=>!results.some(x=>x.item_id===i.id));
-    closeout.results=results;closeout.result=e.data.result;closeout.completed_at=now();closeout.status='completed';
-    const file=safePath(path.join(r.directory,'closeouts',closeout.id,'CLOSEOUT-RESULT.md'),[r.directory],true);
-    atomicWrite(file,e.data.result);created.push(file);closeout.report_path=file;closeout.report_sha256=hash(e.data.result);
-    if(source.length||runtime.length)closeout.successor_evidence={source,runtime};
-    t.status='awaiting_confirmation';
+    completeCloseoutRecord(wb,t,r,e.data,created);
   }else{
     if(e.event_type==='closeout_started'){closeout.started_at||=now()}
     if(['closeout_blocked','closeout_waiting_input'].includes(e.event_type))assert(e.data.message.trim().length>=5,'请写清楚收尾阻碍或需要回答的问题');
@@ -112,6 +132,24 @@ export function applyCloseoutEvent(wb:Workbench,e:RunEvent,t:Row,r:Row,created:s
   }
   closeout.message=e.data.message;closeout.updated_at=now();r.seq=e.seq;r.updated_at=now();t.revision++;t.updated_at=now();
   wb.put('runs',r,{task_id:t.id});wb.put('tasks',t,{project_id:t.project_id});wb.audit('run:'+r.id,e.event_type,t.id,{event_id:e.event_id,closeout_id:closeout.id});
+}
+
+/** Shared storage for executor and explicit integrator reports; no synthetic identity events. */
+export function completeCloseoutRecord(wb:Workbench,t:Row,r:Row,data:{result?:string;closeout_results?:Row[];provenance?:Row},created:string[]){
+  const closeout=r.closeout;assert(closeout,'缺少当前收尾记录',409);
+  assert(data.result&&data.result.trim().length>=20,'请提交完整收尾报告（至少20字）');
+  const source:Row[]=[],runtime:Row[]=[],warnings:string[]=[];
+  try{source.push(...verifyDelivery(wb,t,r,{allowSuccessor:true}))}catch(error){warnings.push((error as Error).message)}
+  try{runtime.push(...verifyRuntime(wb,t,r,{allowSuccessor:true}))}catch(error){warnings.push((error as Error).message)}
+  if(!reviewSkipped(runTask(t,r))&&!reviewProceedAuthority(wb,r.id).can_proceed)warnings.push('本任务独立审查未通过或待完成；整合主单证据如有则另行记录');
+  const results=data.closeout_results||[];
+  closeout.unreported_items=closeout.items.filter((i:Row)=>!results.some(x=>x.item_id===i.id));
+  closeout.results=results;closeout.result=data.result;closeout.completed_at=now();closeout.status='completed';closeout.delivery_digest=deliveryDigest(wb,t,r);closeout.verification_warnings=warnings;
+  Object.assign(closeout,data.provenance||{source:'executor',recorded_by:{role:'runner',run_id:r.id,agent_id:r.agent_id}});
+  const file=safePath(path.join(r.directory,'closeouts',closeout.id,'CLOSEOUT-RESULT.md'),[r.directory],true);
+  atomicWrite(file,data.result);created.push(file);closeout.report_path=file;closeout.report_sha256=hash(data.result);
+  if(source.length||runtime.length)closeout.successor_evidence={source,runtime};
+  t.status='awaiting_confirmation';
 }
 
 export function migrateCloseout(wb:Workbench){

@@ -3,7 +3,7 @@ import {EVIDENCE_LIMITS} from './evidence-preflight.ts';
 import {syncReviewCollaborationState} from './review-workflow.ts';
 import {reviewConclusion} from './review-conclusion.ts';
 export {reviewConclusion} from './review-conclusion.ts';
-import {stageCloseout,invalidateCloseout,reviewableStates,closeoutStates,verifyDelivery} from './closeout.ts';
+import {stageCloseout,invalidateCloseout,reviewableStates,closeoutStates,verifyDelivery,completedCloseoutMatchesDelivery} from './closeout.ts';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -150,7 +150,7 @@ export function revokeReview(wb:Workbench,reviewId:string,input:unknown){
     wb.put('reviews',review,{run_id:run.id});
     const assignment=review.review_id?wb.maybe('review_assignments',review.review_id):wb.all('review_assignments').find(a=>a.run_id===run.id&&a.result_id===review.id);if(assignment){assignment.status='revoked';wb.put('review_assignments',assignment,{run_id:run.id});}
     if(review.historical){wb.audit('user','revoke_historical_review',review.id,{run_id:run.id,reason:v.reason});return review;}
-    if(latest?.id===review.id||run.review_decision){run.review_decision=null;wb.put('runs',run,{task_id:task.id});invalidateCloseout(wb,run,'审查已撤回');}syncReviewCollaborationState(wb,task,run,{allowLegacyResult:latest?.id!==review.id});
+    if(latest?.id===review.id||run.review_decision){run.review_decision=null;wb.put('runs',run,{task_id:task.id});if(!completedCloseoutMatchesDelivery(wb,task,run))invalidateCloseout(wb,run,'审查已撤回');}syncReviewCollaborationState(wb,task,run,{allowLegacyResult:latest?.id!==review.id});
     task.revision++;task.updated_at=now();wb.put('tasks',task,{project_id:task.project_id});
     wb.audit('user','revoke_review',review.id,{run_id:run.id,reason:v.reason});return review;
   });

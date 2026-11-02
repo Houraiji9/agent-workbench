@@ -4,14 +4,14 @@ import fs from 'node:fs';
 import {fixture,setup,event,finishCloseout} from './helpers.ts';
 import {exportReviewOrder} from '../src/core/review-workflow.ts';
 import {prepareDecision} from '../src/core/user-decisions.ts';
-import {getCloseoutContext} from '../src/core/closeout.ts';
+import {ensureCloseout} from '../src/core/closeout.ts';
 
 function delivered(){
  const f=fixture(),s=setup(f.wb,f.root),{wb,root}=f;
  wb.event(event(root,s.tid,s.rid,1));
  assert.equal(wb.event(event(root,s.tid,s.rid,2,'submitted',{result:'隔离测试交付：验证用户试用确认与审查情况独立记录，不操作真实账本。'})).disposition,'applied');
  const pass=()=>wb.review({run_id:s.rid,reviewer_id:'grok-build',performed:true,evidence:'合成测试中的审查事实，不是真实外部审查',verdict:'passed',artifact_hashes:wb.all('artifacts').filter(a=>a.run_id===s.rid&&a.current).map(a=>a.sha256)});
- const close=()=>{getCloseoutContext(wb,s.rid);finishCloseout(wb,s.tid)};
+ const close=()=>{const t=wb.get('tasks',s.tid),r=wb.get('runs',s.rid);ensureCloseout(wb,t,r);wb.put('tasks',t,{project_id:t.project_id});finishCloseout(wb,s.tid)};
  const accept=(extra={})=>wb.accept(s.tid,{revision:wb.get('tasks',s.tid).revision,checks:[true],...extra});
  return {...f,...s,pass,close,accept};
 }

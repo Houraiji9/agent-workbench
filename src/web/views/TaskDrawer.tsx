@@ -111,7 +111,8 @@ function TaskBody({ detail }: { detail: R }) {
     {pendingDecisions(s.data,true).some(d=>d.task_id===t.id)?pendingDecisions(s.data,true).filter(d=>d.task_id===t.id).map(d=><UserDecision key={d.id} decision={d}/>):<NowCard detail={detail} relay={relay} run={run} who={who} current={current} lastMessage={lastMessage} />}
     <ReviewCollaboration key={t.id+':'+t.revision} detail={detail}/>
     <TaskOrder task={t}/>
-    {run?.closeout?.result&&<section className="block" aria-label="收尾结果"><h2>执行者收尾结果</h2><ul className="plain-list">{run.closeout.items.map((item:R)=><li key={item.id}><strong>{item.text}</strong><p>{run.closeout.results.find((x:R)=>x.item_id===item.id)?.evidence}</p></li>)}</ul><details className="fold"><summary>完整收尾报告</summary><pre className="pre">{run.closeout.result}</pre></details></section>}
+    {run?.closeout?.result&&<CloseoutResult closeout={run.closeout}/>}
+    {run?.notes?.length>0&&<TaskNotes notes={run.notes}/>}
 
     <section className="block" aria-label="成果">
       <h2>成果 {detail.artifacts.length > 0 && <span className="count">{detail.artifacts.length}</span>}</h2>
@@ -314,6 +315,21 @@ function Timeline({ detail, events }: { detail: R; events: R[] }) {
     {t.acceptance_record?.confirmed_at && <li className="tl-accepted"><span className="tl-dot" /><div><b>你确认完成</b><small>{fullDate(t.acceptance_record.confirmed_at, s.tz)}</small></div></li>}
     {t.status === 'cancelled' && <li className="tl-off"><span className="tl-dot" /><div><b>任务已取消</b><small>{fullDate(t.updated_at, s.tz)}</small></div></li>}
   </ol>;
+}
+
+function TaskNotes({notes}:{notes:R[]}){
+ const s=useStore(),ordered=[...notes].reverse();
+ const list=(items:R[])=> <ul className="plain-list">{items.map(n=><li key={n.id}><p>{n.note}</p><small className="muted">{n.actor} · {fullDate(n.at,s.tz)} · 说明性备注，未经验证</small>{n.references?.length>0&&<details className="fold"><summary>备注引用（{n.references.length}）</summary><ul>{n.references.map((ref:R,i:number)=><li key={i}>{ref.kind}：{ref.value}</li>)}</ul></details>}</li>)}</ul>;
+ return <section className="block" aria-label="事实与证据备注"><h2>事实与证据备注 <span className="count">{notes.length}</span></h2><p className="muted small">保留实际作者；备注不代表独立审查、部署验证或用户验收。</p>{list(ordered.slice(0,5))}{ordered.length>5&&<details className="fold"><summary>更早的备注（{ordered.length-5}）</summary>{list(ordered.slice(5))}</details>}</section>;
+}
+
+function CloseoutResult({closeout:c}:{closeout:R}){
+ const s=useStore(),integration=c.integration,actor=c.recorded_by;
+ return <section className="block" aria-label="收尾结果"><h2>{c.source==='integration_owner'?'整合负责人收尾':'执行者收尾'}结果</h2>
+  {actor&&<p className="muted small">记录者：{typeof actor==='string'?actor:[actor.role,actor.id,actor.agent_id?s.name(actor.agent_id):null,actor.run_id].filter(Boolean).join(' · ')}</p>}
+  {integration&&<><p>整合主单：<button className="link inline" onClick={()=>s.openTask(integration.source_task_id)}>{integration.source_task_id}</button> · <code>{integration.source_run_id}</code></p><details className="fold"><summary>整合来源、文件覆盖与未验证事项</summary><p>{integration.coverage_note||'未补充覆盖说明。'}</p><pre className="pre">{JSON.stringify({review:integration.source?.review,deployment:integration.source?.deployment,deployment_evidence:integration.source?.deployment_evidence,deployment_applicability:integration.deployment_applicability,coverage:integration.coverage,limitations:integration.limitations,warnings:c.verification_warnings||integration.warnings},null,2)}</pre></details></>}
+  <ul className="plain-list">{(c.items||[]).map((item:R)=><li key={item.id}><strong>{item.text}</strong><p>{c.results?.find((x:R)=>x.item_id===item.id)?.evidence}</p></li>)}</ul><details className="fold"><summary>完整收尾报告</summary><pre className="pre">{c.result}</pre></details>
+ </section>;
 }
 
 function MoreInfo({ detail, run }: { detail: R; run?: R }) {

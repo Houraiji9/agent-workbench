@@ -2,7 +2,7 @@ import type {Row} from './schema.ts';
 import {type HandoffRole} from '../shared/task-handoff.ts';
 
 /** Workbench records advice; client authorization and truthful evidence remain separate. */
-export const workflowGuidance='工作台负责引导、记录和汇总。流程顺序、资源快照、模型、阅读清单与预算是建议，不是操作许可。按当前用户要求自主推进，按需补读；结果、来源和未验证项如实回报。';
+export const workflowGuidance='工作台负责引导、记录和汇总。流程顺序、资源快照、模型、阅读清单与预算是建议，不是操作许可。按当前用户要求自主推进；回答中途追问后继续整体目标，完成已授权收尾再交用户试用。补充事实用append_note，实际改范围才amend；整合负责人可显式关联主Run与协作Run办理收尾。结果、来源和未验证项如实回报。';
 
 export function preview(value:unknown,limit=700):string {
   const text=typeof value==='string'?value:JSON.stringify(value??null);
@@ -28,6 +28,8 @@ export function briefContext(context:Row,role:HandoffRole='executor'):Row {
   if(context.previous_findings)out.previous_findings=context.previous_findings.slice(-5).map((f:Row)=>({id:f.id,findings:preview(f.findings,900)}));
   if(context.amendments)out.amendments=context.amendments.slice(-3).map((a:Row)=>({id:a.id,reason:preview(a.reason||'',400),changes:preview(a.changes,700)}));
   if(context.delegations)out.delegations=context.delegations.slice(-8).map((d:Row)=>({id:d.id,status:d.status,goal:preview(d.goal,150)}));
+  if(context.notes)out.notes={total:context.notes.length,items:context.notes.slice(-5).map((n:Row)=>({id:n.id,at:n.at,actor:n.actor,note:preview(n.note,300),verification:n.verification})),full_ref:'get_run_context(section=history)'};
+  if('closeout_summary' in context)out.closeout_summary=context.closeout_summary;
   return out;
 }
 
@@ -45,5 +47,5 @@ export function contextSection(context:Row,section:string,role:HandoffRole='exec
   if(section==='plan')return {handoff:context.handoff};
   if(section==='files')return {files:{output_dir:context.file_context?.contract?.output_dir||null,suggested:(context.file_context?.files||[]).filter((f:Row)=>!f.roles?.length||f.roles.includes(role))}};
   if(section==='requirements')return Object.fromEntries(['goal','scope','acceptance','tests','review_scope','required_files','delivery_profile'].filter(key=>key in context).map(key=>[key,context[key]]));
-  return Object.fromEntries(['project_memory','amendments','previous_findings','review_changes','user_feedback'].filter(key=>key in context).map(key=>[key,context[key]]));
+  return Object.fromEntries(['project_memory','amendments','previous_findings','review_changes','user_feedback','notes','closeout_summary'].filter(key=>key in context).map(key=>[key,context[key]]));
 }
