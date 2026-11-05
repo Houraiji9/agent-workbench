@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
-import {fileURLToPath} from 'node:url';
+import {fileURLToPath, pathToFileURL} from 'node:url';
 import {buildAgentInvocation, discoverAgentClients, publicClientCapabilities, setClientOverride, type DiscoveryOptions} from '../src/core/agent-clients.ts';
 import {pathEntries, resolveClientLauncher} from '../src/core/client-discovery.ts';
+import {harnessImagePatch, HARNESS_IMAGE_ENTRY, HARNESS_IMAGE_SERVER} from '../src/core/harness-image-tools.ts';
 
 const root = path.resolve(process.env.WORKBENCH_TEST_OUTPUT_DIR || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.test-tmp'));
 const helps = {
@@ -66,7 +67,7 @@ test('过期、损坏及旧结构缓存不会接受历史客户端身份', async
   await discoverAgentClients({dataDir, testHooks: injected}); assert.equal(counter.count, 8);
 });
 
-test('非Claude候选伪装、无版本及危险脚本不通过；Claude始终跳过且零探测', async t => {
+test('候选伪装、无版本及危险脚本不通过；Claude仅经身份和版本验证后可用', async t => {
   const {dir} = await fixture(t); const file = await candidate(dir, 'grok.exe');
   for (const output of ['unknown tool', helps.grok]) {
     const records = await discoverAgentClients({dataDir:path.join(dir,'data'),force:true,testHooks:{...hooks(file,'grok'),probe:async()=>output}});
@@ -75,9 +76,9 @@ test('非Claude候选伪装、无版本及危险脚本不通过；Claude始终�
   const cmd=await candidate(dir,'grok.cmd');await fs.writeFile(cmd,'@echo off\necho pretend & dangerous-command %*');
   await assert.rejects(resolveClientLauncher(cmd),/不支持/);
   const excluded=await candidate(dir,'claude.exe');let probes=0;
-  const records=await discoverAgentClients({dataDir:path.join(dir,'excluded-data'),testHooks:{...hooks(excluded,'claude'),probe:async()=>{probes++;return helps.claude;}}});
-  assert.equal(records.find(r=>r.kind==='claude')?.status,'skipped');assert.equal(probes,0);
-  await assert.rejects(resolveClientLauncher(excluded),/按用户要求跳过/);
+  const records=await discoverAgentClients({dataDir:path.join(dir,'included-data'),testHooks:{...hooks(excluded,'claude'),probe:async(_exe,args)=>{probes++;return args.includes('--version')?'2.1.310':helps.claude;}}});
+  assert.equal(records.find(r=>r.kind==='claude')?.status,'verified');assert.equal(probes,2);
+  assert.equal((await resolveClientLauncher(excluded)).executable,excluded);
 });
 
 test('DSH 官方桌面 cmd 只解析入口，直接启动 Electron Node，不使用 shell', async t => {
@@ -114,6 +115,41 @@ test('Harness 的任意 provider 单独选择，overlay 值不能注入 YAML', a
   await assert.rejects(buildAgentInvocation(client, {...options(dir, promptFile), provider: 'x\n- id: injected'}), /provider 无效/);
 });
 
+test('Harness headless 生图 overlay 附加原生 MCP insert，保留 OpenAI provider 与客户端默认模型', async t => {
+  const {dir, promptFile} = await fixture(t), discovered = await record(dir, 'dsh');
+  const source = path.join(dir, 'native-headless-config.json'), entry = path.join(dir, 'fixture-harness.mjs');
+  const original = JSON.stringify([
+    {id: 'openai-models', name: '@deepseek-ai/dsh-llm-pi-ai', config: {providers: {openai: {apiKey: 'fixture-provider-secret', baseURL: 'https://fixture.invalid/v1', models: [{id: 'fixture-openai-text'}]}}}},
+    {id: 'agent-default-model', name: '@deepseek-ai/dsh-agent-default-model', config: {provider: 'openai', model: 'fixture-openai-text'}},
+  ], null, 2);
+  await fs.writeFile(source, original);
+  await fs.writeFile(entry, `import fs from 'node:fs'; if (JSON.stringify(process.argv.slice(2)) !== JSON.stringify(['--profile','headless','--dump-config'])) process.exit(2); process.stdout.write(fs.readFileSync(${JSON.stringify(source)}, 'utf8'));`);
+  const client = {...discovered, executable: process.execPath, prefixArgs: [entry], supportedFlags: [...(discovered.supportedFlags || []), '--dump-config']};
+  const launch = {nodePath: process.execPath, scriptPath: path.join(dir, '中文 工具', 'image-bridge.ts'), loaderPath: path.join(dir, '中文 loader', 'tsx.mjs'), credentialFile: path.join(dir, 'bridge-credential.json'), cwd: dir};
+  const imageToolsPatch = harnessImagePatch(launch), beforePatch = JSON.stringify(imageToolsPatch);
+  for (const route of [{model: 'fixture-openai-text'}, {model: 'fixture-openai-text', provider: 'openai'}, {model: undefined}]) {
+    const invoke = await buildAgentInvocation(client, {...options(dir, promptFile), ...route, imageToolsPatch});
+    assert.equal(invoke.args[invoke.args.indexOf('--profile') + 1], 'headless');
+    const overlay = JSON.parse(await fs.readFile(invoke.args[invoke.args.indexOf('--patch') + 1], 'utf8'));
+    const defaultModel = overlay.filter((p: {id?: string}) => p.id === 'agent-default-model');
+    if (route.model) {
+      assert.equal(defaultModel.length, 1);
+      assert.deepEqual(defaultModel[0].config, {provider: 'openai', model: 'fixture-openai-text'});
+      assert.equal(invoke.resolvedRoute?.provider, 'openai');
+    } else assert.deepEqual(defaultModel, [], 'leaving model unset must retain the native default');
+    assert(!overlay.some((p: {id?: string; name?: string}) => p.id === 'deepseek-account' || p.name === '@deepseek-ai/dsh-llm-pi-ai'));
+    assert.deepEqual(overlay.at(-1), {insert: [{id: HARNESS_IMAGE_ENTRY, name: '@deepseek-ai/dsh-mcp-client', config: {
+      serverName: HARNESS_IMAGE_SERVER, transport: 'stdio', command: process.execPath,
+      args: ['--import', pathToFileURL(launch.loaderPath).href, launch.scriptPath],
+      env: {WORKBENCH_EXTERNAL_TOOLS_CREDENTIAL_FILE: launch.credentialFile}, cwd: dir, toolCallTimeoutMs: 120000, failOnStartupError: true,
+    }}]});
+    assert(!JSON.stringify(overlay).includes('fixture-provider-secret'));
+    assert(!JSON.stringify(overlay).includes('fixture.invalid'));
+    assert.equal(await fs.readFile(source, 'utf8'), original, 'native provider config must remain byte-for-byte unchanged');
+  }
+  assert.equal(JSON.stringify(imageToolsPatch), beforePatch);
+});
+
 test('Grok 传真实 prompt 文件、模型、cwd 和 resume，空格中文符号保持 argv 边界', async t => {
   const {dir, promptFile} = await fixture(t); const client = await record(dir, 'grok');
   const invoke = await buildAgentInvocation(client, options(dir, promptFile));
@@ -125,12 +161,21 @@ test('Grok 传真实 prompt 文件、模型、cwd 和 resume，空格中文符�
   assert(!invoke.args.includes('--session-id')); assert.equal(invoke.stdin, undefined);
 });
 
-test('Claude排除记录不能形成调用且公开能力始终不可用', async t => {
+test('Claude按当前工作群授权可续接并公开真实能力，仍不启用跳过权限', async t => {
   const {dir,promptFile}=await fixture(t);const client=await record(dir,'claude');
-  assert.equal(client.status,'skipped');
-  await assert.rejects(buildAgentInvocation(client,options(dir,promptFile)),/未验证|跳过|不可用/);
+  assert.equal(client.status,'verified');
+  const invocation=await buildAgentInvocation(client,options(dir,promptFile));
+  assert.equal(invocation.args[invocation.args.indexOf('--resume')+1],'session-123');
+  assert(!invocation.args.some(a=>/bypass|skip-permissions/.test(a)));
   const capability=publicClientCapabilities([client])[0];
-  assert.equal(capability.available,false);assert.equal(capability.reviewSupported,false);assert.equal(capability.executionSupported,false);
+  assert.equal(capability.available,true);assert.equal(capability.reviewSupported,true);assert.equal(capability.executionSupported,true);
+});
+
+test('Codex discovery reads exec/resume help and Claude camelCase allowedTools survives flag parsing',async t=>{
+  const {dir}=await fixture(t),codex=await candidate(dir,'codex.exe'),claude=await candidate(dir,'claude.exe');
+  const records=await discoverAgentClients({dataDir:path.join(dir,'new-clients'),testHooks:{candidates:[{path:codex,source:'common'},{path:claude,source:'common'}],probe:async(exe,args)=>args.includes('--version')?'2.1.310':exe===codex?'Codex CLI Usage: codex exec resume [SESSION_ID] --json --config --sandbox --model':helps.claude+' --mcp-config --allowedTools --allowed-tools'}});
+  assert.equal(records.find(r=>r.kind==='codex')?.status,'verified');assert(publicClientCapabilities(records).find(r=>r.kind==='codex')?.supportsResume);
+  assert(records.find(r=>r.kind==='claude')?.supportedFlags?.includes('--allowedTools'));
 });
 
 test('Cursor 只读审查引用任务文件，执行不得静默打开 force', async t => {
@@ -370,7 +415,7 @@ test('gatherCandidates discovers User and Machine PATH entries when process PATH
     dataDir: path.join(dir, 'data'), force: true,
     testHooks: {processPath, persistedPathValues: [path.dirname(cursor.wrapper), machinePath], machineId: 'persisted-path-machine', now: 1000,
       probe: async (exe, args) => {
-        assert.notEqual(exe,claude,'Claude must never be probed');
+        if(exe===claude)return args.at(-1)==='--version'?'2.1.310':helps.claude;
         assert.equal(exe, cursor.node);
         return args.at(-1) === '--version' ? '2026.10.22-27dcf5f' : helps.cursor;
       }},
@@ -378,8 +423,8 @@ test('gatherCandidates discovers User and Machine PATH entries when process PATH
   assert.notEqual(processPath, path.dirname(cursor.wrapper));
   assert.equal(records.find(r => r.kind === 'cursor')?.status, 'verified');
   assert.equal(records.find(r => r.kind === 'cursor')?.candidatePath, cursor.wrapper);
-  assert.equal(records.find(r => r.kind === 'claude')?.status, 'skipped');
-  assert.equal(records.find(r => r.kind === 'claude')?.candidatePath, undefined);
+  assert.equal(records.find(r => r.kind === 'claude')?.status, 'verified');
+  assert.equal(records.find(r => r.kind === 'claude')?.candidatePath, claude);
 });
 
 test('Cursor entry ancestors and same-root PowerShell symlinks are rejected', async t => {

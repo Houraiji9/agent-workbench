@@ -1,6 +1,6 @@
 // 团队：每位 Agent 擅长什么、手里有什么、最近一次能观测到的会话活动。
 import React,{useLayoutEffect,useRef,useState} from 'react';
-import { Copy, PencilLine, ArrowLeft, Plus, Trash2, RotateCcw, Search } from 'lucide-react';
+import { Copy, PencilLine, ArrowLeft, Plus, Trash2, RotateCcw, Search, Plug } from 'lucide-react';
 import {api} from '../api.js';
 import { useStore } from '../app/store.js';
 import { type R, isTheirTurn, isYourTurn, byUrgency } from '../lib/flow.js';
@@ -11,6 +11,8 @@ import { TaskRow } from './Projects.js';
 import { isModelRetired } from '../../shared/model-policy.js';
 import {ExecutionList} from '../ui/ExecutionOrder.js';
 import {waitingForDependencies} from '../../shared/execution-order.js';
+import { ExternalServices } from './ExternalServices.js';
+import { ApiAgents } from './ApiAgents.js';
 
 function agentStats(s: ReturnType<typeof useStore>, a: R) {
   const tasks = (s.data.tasks as R[]).filter(t=>!s.data.projects.some((p:R)=>p.id===t.project_id&&(p.shelved||p.archived)));
@@ -34,6 +36,7 @@ function agentStats(s: ReturnType<typeof useStore>, a: R) {
 
 export function Team() {
   const s = useStore();
+  const [apiCreateRequested,setApiCreateRequested]=useState(false);
   const agents = (s.data.agents as R[]).filter(a => !a.archived);
   const routeId = (s.data.agents as R[]).find(a => a.id === s.route.id)?.merged_into || s.route.id;
   const selected = agents.find(a => a.id === routeId);
@@ -54,9 +57,9 @@ export function Team() {
   }, [listMode]);
   const mine = !s.route.tab || s.route.tab === 'mine';
   return <div className={'page-wrap' + (mine ? ' team-page' : '')}>
-    <header className="page-head"><div><h1>团队</h1><p>谁擅长什么、手里有什么。规划 Agent 会按这些分工选人。</p></div><button className="btn primary" onClick={()=>s.openDialog('agent-add')}><Plus size={16}/>新增团队</button></header>
-    <Tabs label="团队管理" value={s.route.tab||'mine'} onChange={tab=>s.go({page:'team',tab})} tabs={[[ 'mine','我的团队'],['presets','预设库'],['removed','已移除']]}/>
-    {s.route.tab==='presets'?<PresetLibrary/>:s.route.tab==='removed'?<RemovedAgents/>:<>
+    <header className="page-head"><div><h1>团队</h1><p>谁擅长什么、手里有什么。规划 Agent 会按这些分工选人。</p></div>{s.route.tab!=='external'&&<div className="team-api-actions"><button className={'btn'+(s.route.tab==='api'?' primary':'')} onClick={()=>{setApiCreateRequested(true);s.go({page:'team',tab:'api'});}}><Plug size={16} aria-hidden="true"/>添加 API 型 Agent</button>{s.route.tab!=='api'&&<button className="btn primary" onClick={()=>s.openDialog('agent-add')}><Plus size={16}/>新增团队</button>}</div>}</header>
+    <Tabs label="团队管理" value={s.route.tab||'mine'} onChange={tab=>s.go({page:'team',tab})} tabs={[[ 'mine','我的团队'],['api','API 型 Agent'],['external','外部服务'],['presets','预设库'],['removed','已移除']]}/>
+    {s.route.tab==='api'?<ApiAgents createRequested={apiCreateRequested} onCreateHandled={()=>setApiCreateRequested(false)}/>:s.route.tab==='external'?<ExternalServices/>:s.route.tab==='presets'?<PresetLibrary/>:s.route.tab==='removed'?<RemovedAgents/>:<>
     <div className={'team' + (selected ? ' has-pick' : '')}>
       <div ref={listRef} className="agent-grid" role="list" aria-label="Agent 列表" tabIndex={0} onScroll={event=>{
         if (event.currentTarget.clientHeight) listPositions.current[listMode] = event.currentTarget.scrollTop;
@@ -66,7 +69,7 @@ export function Team() {
           return <button role="listitem" key={a.id} className={'agent-card' + (selected?.id === a.id ? ' on' : '')} onClick={() => s.go({ page: 'team', id: a.id })} aria-label={a.name}>
             <AgentIcon name={a.name} id={a.icon_key||a.id} size={40} />
             <span className="ac-body">
-              <strong>{a.name}</strong>
+              <strong>{a.name}{a.preset_id==='api-agent'&&<span className="api-agent-badge">API</span>}</strong>
               <small className="ac-scope">{a.scope}</small>
               <span className="ac-stats">
                 {st.doing.length > 0 && <span className="t-working">在做 {st.doing.length}</span>}
@@ -96,8 +99,8 @@ function AgentPanel({ a }: { a: R }) {
     <button className="crumb team-back" onClick={() => s.go({ page: 'team' })}><ArrowLeft size={15} />全部成员</button>
     <div className="ap-head">
       <AgentIcon name={a.name} id={a.icon_key||a.id} size={52} />
-      <div><h2>{a.name}</h2><p className="muted">分工与模型</p></div>
-      <button className="btn small" onClick={() => s.openDialog('agent-edit', { agent: a })}><PencilLine size={15} />编辑分工</button>
+      <div><h2>{a.name}</h2><p className="muted">{a.preset_id==='api-agent'?'API 型 Agent':'分工与模型'}</p></div>
+      <button className="btn small" onClick={() => a.preset_id==='api-agent'?s.go({page:'team',tab:'api',id:a.id}):s.openDialog('agent-edit', { agent: a })}><PencilLine size={15} />{a.preset_id==='api-agent'?'配置 API 与密钥':'编辑分工'}</button>
       <button className="icon-btn" title="删除成员" aria-label={'删除 '+a.name} onClick={()=>s.openDialog('resource-remove',{kind:'agent',item:a})}><Trash2 size={15}/></button>
     </div>
     <dl className="facts">
@@ -106,7 +109,7 @@ function AgentPanel({ a }: { a: R }) {
       <dt>最近会话</dt><dd>{st.last ? `${relative(st.last, s.tz)} · 共 ${st.sessions} 个` : '暂无记录'}</dd>
     </dl>
     <button className="btn" onClick={() => void s.copy(`请使用工作台 MCP 的 get_dispatch_context，查看 ${a.name} 的分工、任务队列、额度和模型列表，判断它现在适合接什么工作。`, `评估请求已复制，发给规划 Agent 即可`)}><Copy size={16} />问规划 Agent：它现在适合接什么</button>
-    {catalog && <Section title="模型与建议用途" aside={<button className="link" onClick={()=>s.openDialog('agent-edit',{agent:a,modelsOpen:true})}><PencilLine size={14}/>编辑模型</button>}>
+    {catalog && a.preset_id!=='api-agent' && <Section title="模型与建议用途" aside={<button className="link" onClick={()=>s.openDialog('agent-edit',{agent:a,modelsOpen:true})}><PencilLine size={14}/>编辑模型</button>}>
       <div className="model-list">{catalog.models.map((m:R) => {
         const retired = isModelRetired(m,s.tz);
         return <div className="model-row" key={m.id}><div><strong>{m.name}{m.kind === 'mode' && <small> · 模式</small>}</strong><p>{m.purpose}</p>{m.access && <small className="muted">{retired ? '已下线' : m.access}</small>}</div>

@@ -1,0 +1,63 @@
+.external-services { display: grid; gap: 16px; min-width: 0; }
+.external-services .section { margin: 0; }
+.ext-intro, .ext-connection header, .ext-preset header, .ext-preset footer { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.ext-intro h2 { font-size: 19px; margin-bottom: 6px; }
+.ext-intro p, .ext-form-intro p { color: var(--ink-2); font-size: 14px; }
+.ext-feedback { color: var(--done); margin: 0; }
+.ext-connections { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 14px; }
+.ext-connection, .ext-preset { border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); padding: 18px; min-width: 0; }
+.ext-connection h3, .ext-preset h3 { font-size: 16px; overflow-wrap: anywhere; }
+.ext-connection header p, .ext-vendor, .ext-probe, .ext-scope { font-size: 13px; color: var(--ink-2); margin: 6px 0 0; overflow-wrap: anywhere; }
+.ext-check-hint { color: var(--ink-2); font-size: 13px; margin: 0 0 14px; }
+.ext-protocol, .ext-support { color: var(--ink-2); font-size: 13px; margin: 0; overflow-wrap: anywhere; }
+.ext-connection > .ext-protocol { margin-top: 10px; }
+.ext-support { padding: 8px 10px; background: var(--surface-2); border-radius: var(--r-s); }
+.ext-state, .ext-kind { background: var(--quiet-soft); color: var(--ink-2); border-radius: 6px; padding: 2px 8px; font-size: 12px; white-space: nowrap; }
+.ext-state.active { background: var(--working-soft); color: var(--working); }
+.ext-connection-facts { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; margin: 14px 0 8px; color: var(--ink-2); }
+.ext-connection-facts > span { display: inline-flex; gap: 5px; align-items: center; }
+.ext-connection footer { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 16px; }
+.ext-connection footer > .icon-btn { margin-left: auto; }
+.ext-library-tools { margin-bottom: 16px; }
+.ext-preset-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: 14px; }
+.ext-preset { display: flex; flex-direction: column; gap: 10px; }
+.ext-preset header { gap: 8px; }
+.ext-preset footer { margin-top: auto; align-items: center; flex-wrap: wrap; }
+.ext-preset .ext-vendor { margin: 0; }
+.ext-capabilities, .ext-docs { display: flex; flex-wrap: wrap; gap: 6px 10px; }
+.ext-capabilities small { color: var(--ink-2); align-self: center; font-size: 12px; }
+.ext-capabilities span { font-size: 12px; padding: 2px 7px; color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; }
+.ext-preset-note { color: var(--ink-2); font-size: 13px; overflow-wrap: anywhere; margin: 0 0 8px; }
+.ext-docs a { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; min-height: 28px; }
+.ext-invocations { display: grid; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.ext-invocation { width: 100%; display: flex; justify-content: space-between; gap: 16px; padding: 12px 16px; text-align: left; background: var(--surface); border: 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+.ext-invocation:last-child { border-bottom: 0; }
+.ext-invocation:hover { background: var(--surface-2); }
+.ext-invocation > span { min-width: 0; overflow-wrap: anywhere; }
+.ext-invocation-state { color: var(--ink-2); flex-shrink: 0; max-width: 42%; text-align: right; }
+.ext-invocation small { display: block; color: var(--ink-2); margin-top: 4px; }
+.ext-form { display: grid; gap: 18px; min-width: 0; }
+.ext-form > div:empty { display: none; }
+.ext-form-intro { padding: 12px 14px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-s); }
+.ext-form-intro p { margin: 5px 0 0; font-size: 13px; }
+.ext-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.ext-form-grid .field { align-content: start; }
+.ext-fieldset { margin: 0; padding: 12px 14px 14px; border: 1px solid var(--line); border-radius: var(--r-s); min-width: 0; }
+.ext-fieldset legend { font-size: 14px; font-weight: 650; padding: 0 5px; }
+.ext-fieldset > .field-hint { margin-bottom: 10px; }
+.ext-form .field-hint { color: var(--ink-2); }
+.ext-disclosure { border: 1px solid var(--line); border-radius: var(--r-s); }
+.ext-disclosure summary { padding: 12px 14px; cursor: pointer; color: var(--ink-2); font-size: 14px; font-weight: 600; }
+.ext-details-body { display: grid; gap: 14px; padding: 0 14px 14px; }
+.ext-details-body > .btn { justify-self: start; }
+.ext-scope-options { display: flex; flex-wrap: wrap; gap: 8px 16px; max-height: 200px; overflow: auto; }
+.ext-scope-options label { display: flex; align-items: center; gap: 7px; font-size: 13px; min-height: 32px; overflow-wrap: anywhere; }
+.ext-access { display: grid; gap: 14px; padding: 16px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-s); }
+.ext-access label { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.ext-access > .btn { justify-self: start; }
+.ext-access label:has(input:disabled) { cursor: default; }
+.ext-access input { margin: 4px 0 0; }
+.ext-access strong { font-size: 14px; display: block; }
+.ext-access small { display: block; color: var(--ink-2); line-height: 1.6; margin-top: 3px; }
+.ext-form textarea { resize: vertical; min-height: 88px; }
+@media (max-width: 640px) { .ext-intro { flex-wrap: wrap; } .ext-form-grid { grid-template-columns: minmax(0, 1fr); } .ext-preset-grid, .ext-connections { grid-template-columns: minmax(0, 1fr); } .ext-connection { padding: 14px; } }

@@ -2,7 +2,7 @@ import type {Row} from './schema.ts';
 import {type HandoffRole} from '../shared/task-handoff.ts';
 
 /** Workbench records advice; client authorization and truthful evidence remain separate. */
-export const workflowGuidance='工作台负责引导、记录和汇总。流程顺序、资源快照、模型、阅读清单与预算是建议，不是操作许可。按当前用户要求自主推进；回答中途追问后继续整体目标，完成已授权收尾再交用户试用。补充事实用append_note，实际改范围才amend；整合负责人可显式关联主Run与协作Run办理收尾。结果、来源和未验证项如实回报。';
+export const workflowGuidance='工作台负责引导、记录和汇总。流程顺序、资源快照、模型、阅读清单与预算是建议，不是操作许可。按当前用户要求自主推进；回答中途追问后继续整体目标，完成已授权收尾再交用户试用。已授权的常规只读核验由工作台准备最小能力并自动回收，不重复索要用户批准；设施缺口由执行者处理，真实越界与系统拒绝仍如实记录。补充事实用append_note，实际改范围才amend；整合负责人可显式关联主Run与协作Run办理收尾。结果、来源和未验证项如实回报。';
 
 export function preview(value:unknown,limit=700):string {
   const text=typeof value==='string'?value:JSON.stringify(value??null);

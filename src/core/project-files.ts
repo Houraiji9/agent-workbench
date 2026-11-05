@@ -59,7 +59,7 @@ const categories:FileCategory[]=['deliverable','source','process','test','backup
 const validities:FileValidity[]=['current','historical','invalid','unknown'];
 const retentions:FileRetention[]=['keep','cleanup_candidate','moved'];
 const sourceExtensions=new Set(['.ts','.tsx','.js','.jsx','.mjs','.cjs','.json','.jsonc','.yaml','.yml','.toml','.ini','.cfg','.py','.ps1','.sh','.bat','.cmd','.cs','.cpp','.c','.h','.hpp','.rs','.go','.java','.vue','.svelte','.html','.css','.scss','.sql','.unity','.prefab','.asset','.meta','.sln','.csproj']);
-const internalNames=/^(?:data|\.git|\.codex|node_modules|\.ssh|\.aws|\.gnupg|\.kube|run-keys|review-keys|runs?|reviews?|待清理)$/i;
+const internalNames=/^(?:data|\.git|\.codex|node_modules|\.ssh|\.aws|\.gnupg|\.kube|\.workbench-workgroups|run-keys|review-keys|runs?|reviews?|待清理)$/i;
 const backupNames=/(?:^|[._ -])(?:backup|backups|bak|备份)(?:$|[._ -])|\.(?:bak|backup|old)$/i;
 const sourceNames=/^(?:AGENTS(?:_.*)?\.md|README(?:\..*)?|CHANGELOG(?:\..*)?|LICENSE(?:\..*)?|NOTICE(?:\..*)?|Makefile|Dockerfile(?:\..*)?|CMakeLists\.txt|\.gitignore|\.gitattributes|\.editorconfig|yarn\.lock)$/i;
 const stamp=()=>new Date().toISOString();

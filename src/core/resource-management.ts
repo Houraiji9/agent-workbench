@@ -23,6 +23,7 @@ export function saveAgent(wb:Workbench,aid:string|null,input:unknown):Row{
   const v=agentInput.parse(input);
   return wb.transaction(()=>{
     const old=aid?wb.get('agents',aid):null;
+    assert(old?.preset_id!=='api-agent','请从团队的 API Agent 配置入口编辑此成员',409);
     assert(!old?.archived,'请先恢复这位成员',409);
     assert(v.version===(old?.version||0),'成员资料已更新，请重新打开编辑',409);
     const preset=agentPresets.find(p=>p.id===(old?.preset_id||v.preset_id));
@@ -48,9 +49,10 @@ export function archiveAgent(wb:Workbench,aid:string,input:unknown,restore=false
     const old=wb.get('agents',aid);assert(v.version===old.version,'成员资料已更新，请重新打开后操作',409);
     if(restore){
       assert(old.archived&&old.managed_archived,'这位成员已合并或属于旧入口',409);
-      assert(!wb.all('agents').some(a=>!a.archived&&(a.name.toLocaleLowerCase()===old.name.toLocaleLowerCase()||old.preset_id&&a.preset_id===old.preset_id)),'团队已有同名成员或相同预设，请先调整',409);
+      assert(!wb.all('agents').some(a=>!a.archived&&(a.name.toLocaleLowerCase()===old.name.toLocaleLowerCase()||old.preset_id&&old.preset_id!=='api-agent'&&a.preset_id===old.preset_id)),'团队已有同名成员或相同预设，请先调整',409);
     }else{
       assert(!old.archived,'这位成员已删除',409);
+      if(old.preset_id==='api-agent'){const jobs=wb.db.prepare("SELECT data FROM workgroup_jobs WHERE status IN ('queued','launching','running')").all() as {data:string}[];assert(!jobs.some(row=>JSON.parse(row.data).agent_id===aid),'这位 API Agent 仍有群任务，请先停止并等调用结束',409);}
       const open=wb.all('tasks').filter(t=>!['accepted','cancelled','rework_linked'].includes(t.status)&&((t.current_run_id?wb.get('runs',t.current_run_id).agent_id:t.agent_id)===aid||t.reviewer_id===aid));
       assert(!open.length,`还有 ${open.length} 项任务关联此成员，请先完成、改派或取消：${open.slice(0,3).map(t=>t.title).join('、')}`,409);
     }

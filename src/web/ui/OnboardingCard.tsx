@@ -79,7 +79,7 @@ export function OnboardingCard() {
     aside={<button className="btn small ghost" disabled={pending} onClick={() => setRevision(v => v + 1)}><RefreshCw size={15} aria-hidden="true" />刷新记录</button>}>
     <p>复制提示词交给 Codex，接通工作台 MCP，并核对这台电脑的团队、原生模型 ID 和审查入口。已配置过也可用它核对或修复。</p>
     <div className="tool-row"><button className="btn primary" disabled={pending || copying || !data?.prompt} onClick={() => void copy()}><Copy size={16} aria-hidden="true" />{copying ? '正在复制…' : '复制首次配置提示词'}</button><span className="muted small">复制后由 Codex 执行；复制本身不会安装、探测或调用。</span></div>
-    <Notice>Claude / Claude Code：按用户要求跳过。本流程不探测、安装或调用，保留已有团队及历史记录。</Notice>
+    <Notice>本页首次接入诊断保留原有的 Claude 跳过设置。项目工作群可单独选择 Claude 担任负责人或成员，使用已配置的本机客户端。</Notice>
     <div role="status" aria-live="polite" aria-busy={pending}>{pending && <p className="muted small">正在读取配置与核对记录…</p>}</div>
     {error && <Notice tone="error">{error}。请用“刷新记录”重试。</Notice>}
     {data && <>

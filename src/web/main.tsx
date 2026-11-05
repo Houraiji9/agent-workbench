@@ -2,7 +2,7 @@ import {pendingDecisions} from './ui/UserDecision.js';
 // 工作台入口：左侧导航 + 顶部快捷栏 + 页面 + 任务抽屉 + 对话框。
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Sun, Moon, Search, Plus, Menu, X, House, FolderKanban, Users, Gauge, History, Settings as Cog, Inbox } from 'lucide-react';
+import { Sun, Moon, Search, Plus, Menu, X, House, FolderKanban, Users, Gauge, History, Settings as Cog, Inbox, MessagesSquare } from 'lucide-react';
 import './styles.css';
 const appIcon = new URL('./assets/workbench-icon.png', import.meta.url).href;
 import { StoreProvider, useStore } from './app/store.js';
@@ -17,11 +17,13 @@ import { Settings } from './views/Settings.js';
 import { TaskDrawer } from './views/TaskDrawer.js';
 import { Dialogs } from './views/Dialogs.js';
 import { Palette } from './views/Palette.js';
+import { Workgroups } from './views/Workgroups.js';
 
 const NAV: [string, string, React.ComponentType<{ size?: number }>][] = [
   ['today', '今天', House],
   ['requests', '需求箱', Inbox],
   ['projects', '项目', FolderKanban],
+  ['workgroups', '工作群', MessagesSquare],
   ['team', '团队', Users],
   ['resources', '额度与订阅', Gauge],
   ['records', '记录', History],
@@ -65,6 +67,7 @@ function Shell() {
   if (page === 'projects') body = route.id ? <ProjectView id={route.id} /> : <Projects />;
   else if (page === 'requests') body = <Requests />;
   else if (page === 'team') body = <Team />;
+  else if (page === 'workgroups') body = <Workgroups />;
   else if (page === 'resources') body = <Resources />;
   else if (page === 'records') body = <Records key={route.id === 'q' ? 'q:' + route.tab : 'all'} />;
   else if (page === 'settings') body = <Settings />;

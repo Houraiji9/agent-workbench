@@ -10,7 +10,7 @@ export type {ClientKind, ClientStatus, ClientRecord, ClientCapability, Discovery
 export {parseAgentOutput, createAgentOutputParser} from './agent-output.ts';
 export type {ParsedAgentOutput, AgentUsage} from './agent-output.ts';
 
-export type AgentInvocationOptions = {role: 'execution' | 'review'; cwd: string; artifactDir: string; model?: string | null; provider?: string; sessionId?: string; promptFile: string};
+export type AgentInvocationOptions = {role: 'execution' | 'review'; cwd: string; artifactDir: string; model?: string | null; provider?: string; sessionId?: string; promptFile: string; imageToolsPatch?:unknown[]; resolvedHarnessRoute?:{provider:string;model:string;source:string}};
 export type AgentInvocation = {command: string; args: string[]; stdin?: string; env?: Record<string, string>; resolvedRoute?: {provider:string;model:string;source:string};routeDiagnostics?:ReturnType<typeof staticRouteDiagnostics>};
 function scalar(value: string, name: string) {
   if (!value.trim() || value.length > 1024 || /[\x00-\x1f\x7f]/.test(value)) throw new Error(`${name} 无效`);
@@ -40,16 +40,19 @@ export async function buildAgentInvocation(record: ClientRecord, options: AgentI
     case 'dsh': {
       requireFlags(record, ['--profile', '--patch', '--json', ...(sessionId ? ['--session-id'] : [])]);
       const explicitProvider=options.provider?scalar(options.provider,'provider'):undefined;
+      const resolved=options.resolvedHarnessRoute;
+      if(resolved&&(resolved.model!==model||resolved.provider!==explicitProvider||!['native_headless_config','native_desktop_config'].includes(resolved.source)))throw Error('Harness 内部解析路由与调用配置不一致');
       // A failed read must not turn an explicit user route into a new permission gate.
-      const evidence=model||explicitProvider?await readHarnessConfigurationEvidence(record).catch(error=>{if(model&&!explicitProvider)throw error;return {routes:[],adapters:[]};}):{routes:[],adapters:[]};
+      const evidence=!resolved&&(model||explicitProvider)?await readHarnessConfigurationEvidence(record).catch(error=>{if(model&&!explicitProvider)throw error;return {routes:[],adapters:[]};}):{routes:[],adapters:[]};
       const provider = explicitProvider || (model ? resolveHarnessProvider(model,evidence.routes) : undefined);
       result.routeDiagnostics=staticRouteDiagnostics(record,{client:record.kind,model,provider},evidence.adapters);
-      if(model&&provider)result.resolvedRoute={provider,model,source:options.provider?'explicit':'native_headless_config'};
+      if(model&&provider)result.resolvedRoute={provider,model,source:resolved?.source||(options.provider?'explicit':'native_headless_config')};
       const patches: unknown[] = [
         {id: 'credentials', name: '@deepseek-ai/dsh-credentials-local', disabled: false},
         {id: 'authorization', name: '@deepseek-ai/dsh-authorization', disabled: false},
         ...(provider === 'deepseek-account' ? [{id: 'deepseek-account', name: '@deepseek-ai/dsh-deepseek-account-platform', disabled: false}] : []),
         ...(model ? [{id: 'agent-default-model', name: '@deepseek-ai/dsh-agent-default-model', config: {provider, model}}] : []),
+        ...(options.imageToolsPatch||[]),
       ];
       await fs.mkdir(options.artifactDir, {recursive: true});
       const overlay = path.join(options.artifactDir, `dsh-overlay-${randomUUID()}.yml`);
@@ -67,9 +70,16 @@ export async function buildAgentInvocation(record: ClientRecord, options: AgentI
       break;
     case 'claude':
       requireFlags(record, ['--print', '--output-format', '--verbose', ...(model ? ['--model'] : []), '--permission-mode', ...(sessionId ? ['--resume'] : [])]);
-      result.args.push('--print', '--output-format', 'stream-json', '--verbose', ...modelArgs, '--permission-mode', 'default');
+      result.args.push('--print', '--output-format', 'stream-json', '--verbose', ...modelArgs, '--permission-mode', /--permission-mode[\s\S]{0,512}?"manual"/.test(record.help||'') ? 'manual' : 'default');
       if (sessionId) result.args.push('--resume', sessionId);
       result.stdin = prompt;
+      break;
+    case 'codex':
+      requireFlags(record,['--json','--config','--sandbox',...(model?['--model']:[])]);
+      result.args.push('exec','--json','-c','approval_policy="never"','-c',`sandbox_mode=${JSON.stringify(options.role==='review'?'read-only':'workspace-write')}`,...modelArgs);
+      if(sessionId){if(!/exec resume/.test(record.help||''))throw Error('Codex 未确认支持明确会话续接');result.args.push('resume',sessionId,'-');}
+      else result.args.push('-');
+      result.stdin=prompt;
       break;
     case 'cursor':
       if (options.role === 'execution') throw new Error('Cursor CLI 当前安全调用仅支持审查与建议；自动修改需要额外权限，本程序不会默认启用 --force');

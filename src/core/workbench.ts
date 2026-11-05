@@ -68,6 +68,12 @@ export class Workbench extends EventEmitter {
     this.db.prepare('INSERT OR IGNORE INTO migrations VALUES(13,?)').run(now());
     this.db.exec(fs.readFileSync(path.join(ROOT,'migrations/014_project_management.sql'),'utf8'));
     this.db.prepare('INSERT OR IGNORE INTO migrations VALUES(14,?)').run(now());
+    this.db.exec(fs.readFileSync(path.join(ROOT,'migrations/015_external_services.sql'),'utf8'));
+    this.db.prepare('INSERT OR IGNORE INTO migrations VALUES(15,?)').run(now());
+    this.db.exec(fs.readFileSync(path.join(ROOT,'migrations/016_workgroups.sql'),'utf8'));
+    this.db.prepare('INSERT OR IGNORE INTO migrations VALUES(16,?)').run(now());
+    this.db.exec(fs.readFileSync(path.join(ROOT,'migrations/017_api_agents.sql'),'utf8'));
+    this.db.prepare('INSERT OR IGNORE INTO migrations VALUES(17,?)').run(now());
     this.seed();
     if(!this.db.prepare('SELECT 1 FROM migrations WHERE version=4').get())this.transaction(()=>{this.db.exec(fs.readFileSync(path.join(ROOT,'migrations/004_team_roster.sql'),'utf8'));this.db.prepare('INSERT INTO migrations VALUES(4,?)').run(now())});
     if(!this.db.prepare('SELECT 1 FROM migrations WHERE version=5').get())this.transaction(()=>{this.db.exec(fs.readFileSync(path.join(ROOT,'migrations/005_antigravity_name.sql'),'utf8'));this.db.prepare('INSERT INTO migrations VALUES(5,?)').run(now())});

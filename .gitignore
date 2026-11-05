@@ -29,3 +29,8 @@ releases/
 Thumbs.db
 .DS_Store
 待清理/
+# Local plans contain machine-specific execution and verification records.
+/docs/plans/
+.workbench-review-checks/
+.workbench-workgroups/
+/.cursor/cli.json

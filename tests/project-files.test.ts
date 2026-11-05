@@ -40,7 +40,7 @@ test('分类必须显式保存，用途、效力、保留策略独立，重扫�
   assert.throws(()=>saveProjectFile(e.wb,'p',row.id,user,{category:'process',validity:'current',retention:'keep',purpose:'',path:e.data} as any),/仅接受/);
 });
 test('跳过内部data 凭据 node_modules 历史RUN 备份数据库，不读取内容',()=>{
-  const e=env();for(const name of ['data/private.txt','.git/config','node_modules/pkg/a.txt','.codex/session.txt','.env','credentials.json','runs/RUN.md','secret.key','store.db'])e.write(name);
+  const e=env();for(const name of ['data/private.txt','.git/config','node_modules/pkg/a.txt','.codex/session.txt','.workbench-workgroups/WG-test/prompt.txt','.env','credentials.json','runs/RUN.md','secret.key','store.db'])e.write(name);
   e.write('visible.txt');const result=e.scan();assert.deepEqual(result.files.map(f=>path.basename(f.path)),['visible.txt']);assert.ok(result.coverage.skipped>=9);assert.match(result.coverage.scope,/未读取内容/);
 });
 test('目录links与悬空links均跳过，打开与扫描根拒绝junction',()=>{

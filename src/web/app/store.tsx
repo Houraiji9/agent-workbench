@@ -11,7 +11,7 @@ export function parseHash(hash: string): Route {
   const [pathPart, queryPart = ''] = hash.replace(/^#\/?/, '').split('?');
   const [page = 'today', id] = pathPart.split('/').filter(Boolean).map(decodeURIComponent);
   const q = new URLSearchParams(queryPart);
-  const pages = ['today', 'requests', 'projects', 'team', 'resources', 'records', 'settings'];
+  const pages = ['today', 'requests', 'projects', 'workgroups', 'team', 'resources', 'records', 'settings'];
   return { page: pages.includes(page) ? page : 'today', id, tab: q.get('tab') || undefined, task: q.get('task') || undefined };
 }
 

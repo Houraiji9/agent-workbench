@@ -96,6 +96,7 @@ export function ProjectView({ id }: { id: string }) {
         <h1>{p.name}{p.archived&&<> <Pill tone="quiet">已归档</Pill></>}</h1>
       </div>
       <div className="head-actions">
+        <button className="btn" onClick={() => s.go({ page: 'workgroups', id: p.id })}><MessagesSquare size={17} aria-hidden="true" />项目工作群</button>
         <button className="btn primary" disabled={!!p.archived} onClick={() => s.openDialog('request', { projectId: p.id })}><Plus size={17} />提需求</button>
         <button className="btn" onClick={() => s.openDialog('project-edit', { project: p })}><PencilLine size={16} />编辑资料</button>
         <MoreMenu>

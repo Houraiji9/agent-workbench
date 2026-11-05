@@ -1,4 +1,6 @@
 import {peerDispatchInput,peerJobInput} from '../core/open-review-handoff.ts';
+import {registerWorkgroupTools} from './workgroup-tools.ts';
+import {externalInvokeInput,externalQueryInput,externalArtifactInput} from '../core/external-service-schema.ts';
 import {randomUUID} from 'node:crypto';
 import {onboardingModelsInput} from '../core/onboarding-models.ts';
 import {onboardingRefreshInput,onboardingDiagnosticInput} from '../core/onboarding-diagnostics.ts';
@@ -38,9 +40,17 @@ if(runner&&!/^R-[a-f0-9-]{36}$/.test(runner))throw new Error('WORKBENCH_RUN_ID �
 const credentials=JSON.parse(fs.readFileSync(path.join(c.dataDir,reviewer?'review-keys/'+reviewer+'.json':runner?'run-keys/'+runner+'.json':'keys.json'),'utf8'));
 const token=reviewer||runner?credentials.token:manager?credentials.manager:chatPlanner?credentials.chat_planner:credentials.planner;
 if(!token)throw Error('工作台后台需要升级：请从托盘退出并重新打开工作台，然后重连 MCP。');
-const server=new McpServer({name:'agent-workbench',version:'0.1.0'},{instructions:'工作台记录项目流转，模型负责理解用户要求。当前执行或审查会话可直接办理本项目管理：先读 get_management_context 获取版本，用 request_id 幂等、user_instruction 记录用户原话；历史保留实际办理者。审查成员、模型和任务补充可在同任务修改，无须新开关联单或让用户重复转述。主执行启动仍由用户控制；本人获直接做授权可接单；执行者可直接调用独立审查和获准子代理。审查者用 submit_review_report 回传本人结论。多人意见分别保留，负责人记录继续、返修或补审决定。用户最终验收仍由用户确认，不能代填他人报告。按需读取 brief/delta，缺失时补读必要资料，不重复读取全项目。'});
+const server=new McpServer({name:'agent-workbench',version:'0.1.0'},{instructions:'工作台记录项目流转，模型负责理解用户要求。当前执行或审查会话可直接办理本项目管理：先读 get_management_context 获取版本，用 request_id 幂等、user_instruction 记录用户原话；历史保留实际办理者。审查成员、模型和任务补充可在同任务修改，无须新开关联单或让用户重复转述。主执行启动仍由用户控制；本人获直接做授权可接单；执行者可直接调用独立审查和获准子代理。用户已授权的项目工作群可由 Codex、Claude 等负责人直接派活，成员自动执行与回报，不要求用户逐次批准或转述；群工具身份和目录范围由后台核验。审查者用 submit_review_report 回传本人结论。多人意见分别保留，负责人记录继续、返修或补审决定。用户最终验收仍由用户确认，不能代填他人报告。按需读取 brief/delta，缺失时补读必要资料，不重复读取全项目。'});
 const call=async(name:string,input:any)=>{if(runner)input={...input,run_id:runner};if(reviewer)input={...input,review_id:reviewer};try{const res=await fetch(`http://127.0.0.1:${c.port}/api/mcp/${name}`,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json','x-workbench-mcp-instance':instanceId,'x-workbench-mcp-client':server.server.getClientVersion()?.name||'unknown','x-workbench-mcp-client-version':server.server.getClientVersion()?.version||'unknown',...(runner&&process.env.WORKBENCH_EXECUTION_JOB_ID&&process.env.WORKBENCH_EXECUTION_JOB_TOKEN?{'x-workbench-execution-job-id':process.env.WORKBENCH_EXECUTION_JOB_ID,'x-workbench-execution-job-token':process.env.WORKBENCH_EXECUTION_JOB_TOKEN}:{})},body:JSON.stringify(input),signal:AbortSignal.timeout(['submit_grok_review','create_workbench_backup','refresh_integration','refresh_onboarding_models'].includes(name)?120000:name==='run_onboarding_diagnostic'?180000:name==='create_project_diagram'?100000:['wait_run_update','get_agent_job'].includes(name)?40000:['get_dispatch_context','get_agent_clients','get_review_candidates'].includes(name)?120000:15000)});const data=await res.json();return {content:[{type:'text' as const,text:JSON.stringify(data,null,2)}],isError:!res.ok}}catch(error){console.error('工作台 MCP 请求失败：',(error as Error).message);return {content:[{type:'text' as const,text:'后台不可用，请先启动工作台；没有创建第二份账本。'}],isError:true}}};
 function register(name:string,description:string,schema:z.ZodRawShape){server.tool(name,description,schema,async input=>call(name,input))}
+if(manager||runner)registerWorkgroupTools(register,true);
+if(manager||runner||reviewer){
+  register('list_external_services','发现当前项目/Agent获准的API、CLI和MCP能力；不返回密钥，不执行生成',{project_id:z.string().optional()});
+  register('get_external_calling','读取某一已授权连接的准确调用方式、操作和官方资料',{service_id:z.string(),project_id:z.string().optional()});
+  register('invoke_external_service','通过工作台已配置连接调用；UUID幂等，收费开关和项目/Agent权限由后台核验。受理后用查询工具取结果，不重复创建',externalInvokeInput.shape);
+  register('get_external_invocation','查询本人发起的外部调用，异步受理不等于成功',externalQueryInput.shape);
+  register('get_external_artifact','取得本人调用已经安全落盘的产物位置与校验信息',externalArtifactInput.shape);
+}
 if(manager){
   register('get_onboarding_context','只读首次接入状态与引导提示词，不探测客户端或调用模型',{});
   register('verify_workbench_connection','由目标 Codex 新 MCP 会话记录实际握手和工具连通；本地转接脚本不能代填',{});

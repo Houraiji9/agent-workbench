@@ -1,3 +1,16 @@
+import {ExternalServices} from '../core/external-services.ts';
+import {ApiAgents} from '../core/api-agents.ts';
+import type {ExternalVault} from '../core/external-vault.ts';
+import {createApiWorkgroupRunner} from '../core/api-agent-workgroup.ts';
+import {registerApiAgentRoutes} from './api-agent-routes.ts';
+import {Workgroups} from '../core/workgroups.ts';
+import {runWorkgroupTurn} from '../core/workgroup-runtime.ts';
+import type {WorkgroupRunner} from '../core/workgroup-schema.ts';
+import {WORKGROUP_EXTERNAL_TOOL_DEFINITIONS} from '../core/workgroup-external-tools.ts';
+import {registerWorkgroupRoutes} from './workgroup-routes.ts';
+import {callWorkgroupTool,workgroupToolNames} from '../mcp/workgroup-tools.ts';
+import {externalTools} from '../core/external-service-schema.ts';
+import {registerExternalServiceRoutes,callExternalTool} from './external-service-routes.ts';
 import {applyReviewEdit} from '../core/review-replacement.ts';
 import {setTaskReviewArrangement} from '../core/review-workflow.ts';
 import {getOnboardingContext,verifyWorkbenchConnection,onboardingConnectionInput} from '../core/onboarding.ts';
@@ -11,7 +24,7 @@ import {projectMemories} from '../core/project-memory.ts';
 import {registerProjectManagementRoutes} from './project-management-routes.ts';
 import {recoverNativeReview} from '../core/native-review-recovery.ts';
 import {chatPlanningContext,chatPlanningBrief} from '../core/chat-planning.ts';
-import {registerDelegation,reportDelegation} from '../core/workflow-policy.ts';
+import {registerDelegation,reportDelegation,runTask} from '../core/workflow-policy.ts';
 import {AgentOrchestrator,agentClientKind} from '../core/agent-orchestration.ts';
 import {mainExecutionControlSummary,setMainExecutionControl} from '../core/main-execution-control.ts';
 import {discoverAgentClients,readClientCapabilities,setClientOverride} from '../core/agent-clients.ts';
@@ -55,9 +68,22 @@ import {updateReviewMember,decideReviewCollaboration,setReviewArrangement} from 
 // 下载文件名：ASCII 兜底名 + UTF-8 中文名，兼容不同浏览器与桌面窗口。
 export function disposition(name:string){const clean=name.replace(/[\r\n"\\/:*?<>|]/g,'_');const ext=(clean.match(/\.[A-Za-z0-9]{1,8}$/)||[''])[0];const ascii=(clean.slice(0,clean.length-ext.length).replace(/[^\x20-\x7e]/g,'').replace(/\s+/g,' ').trim()||'workbench-file')+ext;return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(clean)}`}
 
-export async function createApp(config:Config,{background=true,revealArtifact=revealFile,grokTraceReader}: {background?:boolean;revealArtifact?:typeof revealFile;grokTraceReader?:TraceReader}={}){
+export async function createApp(config:Config,{background=true,revealArtifact=revealFile,grokTraceReader,workgroupRunner,apiAgentVault,apiAgentFetch}: {background?:boolean;revealArtifact?:typeof revealFile;grokTraceReader?:TraceReader;workgroupRunner?:WorkgroupRunner;apiAgentVault?:ExternalVault;apiAgentFetch?:typeof fetch}={}){
   const wb=new Workbench(config),integrations=new Integrations(wb),app=Fastify({logger:false,bodyLimit:2*1024*1024});
-  const archify=new Archify(wb),agents=new AgentOrchestrator(wb);
+  const archify=new Archify(wb),agents=new AgentOrchestrator(wb),externalServices=new ExternalServices(wb);
+  const apiAgents=new ApiAgents(wb,{vault:apiAgentVault});
+  let workgroups:Workgroups;
+  const apiRunner=createApiWorkgroupRunner(wb,apiAgents,async(input,name,args,signal)=>{
+    assert(!signal.aborted,'API 调用已停止',409);
+    const caller=workgroups.authenticate(input.mcp.token);assert(caller,'工作群调用凭据已失效',403);
+    if(workgroupToolNames.has(name))return callWorkgroupTool(workgroups,name,args,caller);
+    assert(externalTools.has(name),'此工具不在 API Agent 的调用范围',403);
+    const {room,member,job}=workgroups.authContext(caller);
+    return callExternalTool(externalServices,name,args,{id:caller.id,kind:'workgroup',agent_id:member.agent_id,project_id:room.project_id,allowed_paths:room.allowed_paths,...(job.run_id?{run_id:job.run_id}:{})});
+  },{fetch:apiAgentFetch});
+  workgroups=new Workgroups(wb,{runner:workgroupRunner||(async input=>input.clientId==='api-agent'?apiRunner(input):runWorkgroupTurn({...input,clientId:input.clientId})),autoStart:false,additionalTools:WORKGROUP_EXTERNAL_TOOL_DEFINITIONS,apiAgents});
+  app.addHook('onListen',async()=>{if(background)workgroups.start();});
+  agents.imageTools=(runId,reviewId)=>externalServices.headlessPatch(runId,reviewId);
   const graph=(pid:string,view='tasks',history=true)=>{wb.roots(wb.get('projects',pid));assert(['tasks','execution','sessions'].includes(view),'关系图类型无效');return relationshipGraph(wb.executionTasks(),wb.all('runs'),wb.all('reviews'),wb.all('sessions'),pid,view,history)};
   const readReviewTrace=grokTraceReader||((sid:string)=>readGrokTrace(sid,config.review?.grokExecutable||process.env.WORKBENCH_GROK_EXECUTABLE||'grok'));
   const importingReviews=new Set<string>();
@@ -85,6 +111,9 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
   app.get('/api/state',async()=>wb.snapshot());
   app.get('/api/onboarding',async()=>getOnboardingContext(wb));
   registerProjectManagementRoutes(app,wb,revealArtifact);
+  registerExternalServiceRoutes(app,externalServices);
+  registerWorkgroupRoutes(app,workgroups);
+  registerApiAgentRoutes(app,wb,apiAgents);
   app.get('/api/agent-clients',async()=>agents.capabilities());
   app.post('/api/agent-clients/refresh',async()=>{await discoverAgentClients({dataDir:config.dataDir,force:true});return agents.capabilities()});
   app.post('/api/agent-clients/override',async req=>{const v=z.object({kind:clientKindSchema,executable:z.string().min(1).max(2000)}).strict().parse(req.body);await setClientOverride({dataDir:config.dataDir,...v});return agents.capabilities()});
@@ -198,7 +227,16 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
     res.type(types[a.extension]||'application/octet-stream');if(req.query.download||!types[a.extension])res.header('Content-Disposition',disposition(a.label));return bytes;
   });
   app.post<{Params:{tool:string};Body:Row}>('/api/mcp/:tool',async req=>{
-    const token=req.headers.authorization?.replace(/^Bearer /,'')||'';let role:string|undefined,scope:string|undefined;if(same(token,wb.keys.manager))role='manager';else if(same(token,wb.keys.planner))role='planner';else if(same(token,wb.keys.chat_planner))role='chat_planner';else if(typeof req.body?.run_id==='string'){const rid=req.body.run_id;assert(/^R-[a-f0-9-]{36}$/.test(rid),'MCP Run ID 无效',401);const run=wb.maybe('runs',rid);if(run){const f=path.join(config.dataDir,'run-keys',rid+'.json');if(fs.existsSync(f)&&same(token,JSON.parse(fs.readFileSync(f,'utf8')).token)){role='runner';scope=rid}}}if(!role&&typeof req.body?.review_id==='string'&&reviewId.safeParse(req.body.review_id).success){const aid=req.body.review_id;const file=safePath(path.join(config.dataDir,'review-keys',aid+'.json'),[config.dataDir],true);if(wb.maybe('review_assignments',aid)&&fs.existsSync(file)&&same(token,JSON.parse(fs.readFileSync(file,'utf8')).token)){role='reviewer';scope=aid}}if(!role&&handoffId.safeParse(req.body?.handoff_id).success){const hid=req.body.handoff_id,file=handoffCredentialPath(wb,hid);if(fs.existsSync(file)&&same(token,JSON.parse(fs.readFileSync(file,'utf8')).token)){role='review_handoff';scope=hid;}}assert(role,'MCP 认证失败',401);
+    // Per-turn capabilities expose only the group's tools and the existing external-service
+    // contract. They never enter the manager/runner/reviewer branches below.
+    const groupCaller=workgroups.authenticate(req.headers.authorization?.replace(/^Bearer /,'')||'');
+    if(groupCaller){
+      if(workgroupToolNames.has(req.params.tool))return callWorkgroupTool(workgroups,req.params.tool,req.body,groupCaller);
+      assert(externalTools.has(req.params.tool),'工作群凭据仅可调用本群工具与已授权外部服务',403);
+      const {room,member,job}=workgroups.authContext(groupCaller);
+      return callExternalTool(externalServices,req.params.tool,req.body,{id:groupCaller.id,kind:'workgroup',agent_id:member.agent_id,project_id:room.project_id,allowed_paths:room.allowed_paths,...(job.run_id?{run_id:job.run_id}:{})});
+    }
+    const token=req.headers.authorization?.replace(/^Bearer /,'')||'';let role:string|undefined,scope:string|undefined;if(same(token,wb.keys.manager))role='manager';else if(same(token,wb.keys.planner))role='planner';else if(same(token,wb.keys.chat_planner))role='chat_planner';else if(typeof req.body?.run_id==='string'){const rid=req.body.run_id;assert(/^R-[a-f0-9-]{36}$/.test(rid),'MCP Run ID 无效',401);const run=wb.maybe('runs',rid);if(run){const f=path.join(config.dataDir,'run-keys',rid+'.json');if(fs.existsSync(f)&&same(token,JSON.parse(fs.readFileSync(f,'utf8')).token)){role='runner';scope=rid}}}if(!role&&typeof req.body?.review_id==='string'&&reviewId.safeParse(req.body.review_id).success){const aid=req.body.review_id;const file=safePath(path.join(config.dataDir,'review-keys',aid+'.json'),[config.dataDir],true);if(wb.maybe('review_assignments',aid)&&fs.existsSync(file)&&same(token,JSON.parse(fs.readFileSync(file,'utf8')).token)){role='reviewer';scope=aid}}if(!role&&handoffId.safeParse(req.body?.handoff_id).success){const hid=req.body.handoff_id,file=handoffCredentialPath(wb,hid);if(fs.existsSync(file)&&same(token,JSON.parse(fs.readFileSync(file,'utf8')).token)){role='review_handoff';scope=hid;}}if(!role){const externalCaller=externalServices.authenticate(token);if(externalCaller){assert(externalTools.has(req.params.tool),'该凭据仅可调用外部图像工具',403);return callExternalTool(externalServices,req.params.tool,req.body,externalCaller);}}assert(role,'MCP 认证失败',401);
     const tool=req.params.tool,b={...req.body};
     if(role==='review_handoff'){
       assert(b.handoff_id===scope&&['get_open_review_context','claim_review_handoff'].includes(tool),'交接连接仅用于读取本轮资料和以本人身份接单',403);
@@ -211,6 +249,19 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
     }
     const callerJob=role==='runner'?authenticateExecutionJob(wb,scope!,req.headers['x-workbench-execution-job-id'],req.headers['x-workbench-execution-job-token']):undefined;
     if(role==='runner'){scope=tool==='continue_run'?resolveRunnerContinuationScope(wb,scope!,b.request_id):resolveRunnerRun(wb,scope!);if(['report_run_event','submit_run_result'].includes(tool))assert(b.run_id===scope,'旧执行的完整回执不能提交到新Run；请读取当前上下文并使用report_run_activity',409);else b.run_id=scope;}
+    if(workgroupToolNames.has(tool)){
+      assert(role==='manager'||role==='runner','此身份不能操作工作群',403);
+      const payload={...b};if(role==='runner'){delete payload.run_id;delete payload.review_id;}
+      if(role==='manager')return callWorkgroupTool(workgroups,tool,payload,{kind:'manager',id:'manager',management:true});
+      const caller=sessionCaller(wb,'runner',scope!),run=wb.get('runs',caller.run_id!),task=runTask(wb.get('tasks',run.task_id),run);
+      return callWorkgroupTool(workgroups,tool,payload,{kind:tool==='manage_workgroups'?'manager':'agent',id:caller.id,management:tool==='manage_workgroups',agent_id:run.agent_id,project_ids:caller.project_ids,allowed_paths:task.allowed_paths});
+    }
+    if(externalTools.has(tool)){
+      assert(['manager','runner','reviewer'].includes(role),'此身份不能调用外部服务',403);
+      if(role==='manager')return callExternalTool(externalServices,tool,b,{id:'manager',agent_id:'manager',kind:'manager'});
+      const caller=sessionCaller(wb,role as 'runner'|'reviewer',scope!),run=wb.get('runs',caller.run_id!),assignment=role==='reviewer'?wb.get('review_assignments',scope!):null;
+      return callExternalTool(externalServices,tool,b,{id:caller.id,agent_id:assignment?.reviewer_id||run.agent_id,project_id:caller.project_id,run_id:run.id,kind:role as 'runner'|'reviewer'});
+    }
     if(role==='planner'&&tool==='get_project_memories')return projectMemories(wb,b);
     if(['get_onboarding_context','verify_workbench_connection','record_onboarding_models','refresh_onboarding_models','run_onboarding_diagnostic'].includes(tool)){
       assert(role==='manager','首次接入与全机团队核对请使用管理连接',403);
@@ -292,5 +343,5 @@ export async function createApp(config:Config,{background=true,revealArtifact=re
   });
   const dist=path.join(config.root,'dist');if(fs.existsSync(dist)){await app.register(fastifyStatic,{root:dist,wildcard:false});app.setNotFoundHandler((req,res)=>(req.url.startsWith('/api/')||path.extname(req.url.split('?')[0]))?res.code(404).send({error:'接口不存在'}):res.type('text/html').send(fs.readFileSync(path.join(dist,'index.html'))))}
   let receiptTimer:NodeJS.Timeout|undefined;if(background){agents.start();wb.scanReceipts();receiptTimer=setInterval(()=>wb.scanReceipts(),1500);receiptTimer.unref();integrations.start()}
-  app.addHook('onClose',async()=>{clearInterval(receiptTimer);integrations.stop();await agents.close();await archify.close();wb.close()});return {app,wb,integrations,agents};
+  app.addHook('onClose',async()=>{clearInterval(receiptTimer);integrations.stop();await workgroups.close();await agents.close();await archify.close();await externalServices.close();wb.close()});return {app,wb,integrations,agents,externalServices,workgroups,apiAgents};
 }

@@ -48,6 +48,14 @@ export function parseAgentOutput(kind: ClientKind, line: string): ParsedAgentOut
   let value: ObjectValue | undefined;
   try {value = object(JSON.parse(line.replace(/^\uFEFF/, '')));} catch {return ignored();}
   if (!value) return ignored();
+  if(kind==='codex') {
+    if(value.type==='thread.started') {const id=session(value.thread_id);return id?{recognized:true,terminal:false,eventType:'codex/thread.started',sessionId:id}:ignored();}
+    const item=object(value.item);
+    if(value.type==='item.completed'&&item?.type==='agent_message'&&text(item.text)!==undefined)return {recognized:true,terminal:false,eventType:'codex/agent_message',resetText:true,textDelta:String(item.text)};
+    if(value.type==='turn.completed')return {recognized:true,terminal:true,eventType:'codex/turn.completed',success:true,usage:usage(value.usage,'reported_total')};
+    if(value.type==='turn.failed'||value.type==='error')return {recognized:true,terminal:true,eventType:'codex/error',success:false};
+    return ignored();
+  }
   if (kind === 'dsh') {
     if (value.type === 'session') {
       const id = session(value.sessionId);
@@ -181,7 +189,7 @@ export function createAgentOutputParser(kind: ClientKind) {
         anthropicMessage = false;
         return complete ? {...event, terminal: true, success: true, finalText: body} : {...event, ...(failed ? {success: false} : {})};
       }
-      if (['acp/prompt_result','grok/end'].includes(event.eventType||'') && event.success && currentSession && !failed) return {...event, sessionId: currentSession, finalText: body};
+      if (['acp/prompt_result','grok/end','codex/turn.completed'].includes(event.eventType||'') && event.success && currentSession && !failed) return {...event, sessionId: currentSession, finalText: body};
       if (failed && event.finalText !== undefined) {const {finalText: _ignored, ...rest} = event; return {...rest, success: false};}
       return event;
     },
